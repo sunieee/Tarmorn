@@ -1,0 +1,6 @@
+.idea
+data
+build
+out
+*.jar
+*.tar.gz

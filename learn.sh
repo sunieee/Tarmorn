@@ -1,0 +1,1 @@
+java -Xmx256G -cp tarmorn-25-1.jar src.main.java.tarmorn.Learn config-learn.properties
