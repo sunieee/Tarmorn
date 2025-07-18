@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
 import java.io.IOException;
 import java.text.DecimalFormat;
@@ -10,8 +10,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
 
 public class HitsAtK {
 

@@ -1,10 +1,10 @@
-package src.main.java.tarmorn.structure;
+package tarmorn.structure;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
 
 public class RuleUntyped extends Rule {
 	

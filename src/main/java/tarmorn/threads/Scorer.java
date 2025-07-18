@@ -1,17 +1,17 @@
-package src.main.java.tarmorn.threads;
+package tarmorn.threads;
 
 
 import java.util.ArrayList;
 
 
-import src.main.java.tarmorn.Learn;
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.algorithm.PathSampler;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.structure.Path;
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.structure.RuleFactory;
-import src.main.java.tarmorn.structure.RuleZero;
+import tarmorn.Learn;
+import tarmorn.Settings;
+import tarmorn.algorithm.PathSampler;
+import tarmorn.data.TripleSet;
+import tarmorn.structure.Path;
+import tarmorn.structure.Rule;
+import tarmorn.structure.RuleFactory;
+import tarmorn.structure.RuleZero;
 
 /**
  * 

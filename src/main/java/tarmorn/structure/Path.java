@@ -1,8 +1,8 @@
-package src.main.java.tarmorn.structure;
+package tarmorn.structure;
 
 import java.util.HashSet;
 
-import src.main.java.tarmorn.data.Triple;
+import tarmorn.data.Triple;
 
 public class Path {
 	

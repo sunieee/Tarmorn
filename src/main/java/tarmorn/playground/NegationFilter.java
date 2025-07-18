@@ -1,17 +1,17 @@
-package src.main.java.tarmorn.playground;
+package tarmorn.playground;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.LinkedList;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.eval.CompletionResult;
-import src.main.java.tarmorn.eval.ResultSet;
-import src.main.java.tarmorn.io.RuleReader;
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.structure.RuleAcyclic1;
+import tarmorn.Settings;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.eval.CompletionResult;
+import tarmorn.eval.ResultSet;
+import tarmorn.io.RuleReader;
+import tarmorn.structure.Rule;
+import tarmorn.structure.RuleAcyclic1;
 
 public class NegationFilter {
 

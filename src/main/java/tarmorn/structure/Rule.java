@@ -1,13 +1,13 @@
-package src.main.java.tarmorn.structure;
+package tarmorn.structure;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Random;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
+import tarmorn.Settings;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
 
 public abstract class Rule {
 	

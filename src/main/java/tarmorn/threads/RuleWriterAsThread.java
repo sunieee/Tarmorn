@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.threads;
+package tarmorn.threads;
 
 import java.io.File;
 import java.io.IOException;
@@ -7,10 +7,10 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedList;
 
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.structure.RuleAcyclic;
-import src.main.java.tarmorn.structure.RuleCyclic;
-import src.main.java.tarmorn.structure.RuleZero;
+import tarmorn.structure.Rule;
+import tarmorn.structure.RuleAcyclic;
+import tarmorn.structure.RuleCyclic;
+import tarmorn.structure.RuleZero;
 
 public class RuleWriterAsThread extends Thread {
 	

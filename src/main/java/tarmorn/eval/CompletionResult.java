@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;

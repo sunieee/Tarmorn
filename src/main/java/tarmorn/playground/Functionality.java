@@ -1,10 +1,10 @@
-package src.main.java.tarmorn.playground;
+package tarmorn.playground;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
 
 public class Functionality {
 

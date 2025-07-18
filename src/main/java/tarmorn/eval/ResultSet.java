@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -19,8 +19,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import src.main.java.tarmorn.data.Triple;
-// import src.main.java.tarmorn.rescore.AlphaBeta;
+import tarmorn.data.Triple;
+// import tarmorn.rescore.AlphaBeta;
 
 public class ResultSet implements Iterable<CompletionResult>{
 	

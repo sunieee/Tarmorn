@@ -1,13 +1,13 @@
-package src.main.java.tarmorn.threads;
+package tarmorn.threads;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.algorithm.RuleEngine;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.Settings;
+import tarmorn.algorithm.RuleEngine;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.structure.Rule;
 
 /**
  * The predictor predicts the candidates for a knowledge base completion task.

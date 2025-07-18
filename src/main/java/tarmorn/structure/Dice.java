@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.structure;
+package tarmorn.structure;
 
 import java.io.FileNotFoundException;
 
@@ -9,7 +9,7 @@ import java.util.ArrayList;
 
 import java.util.Random;
 
-import src.main.java.tarmorn.Settings;
+import tarmorn.Settings;
 
 public class Dice {
 	

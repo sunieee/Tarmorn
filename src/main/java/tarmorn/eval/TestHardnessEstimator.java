@@ -1,9 +1,9 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
 import java.util.Set;
 
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
 
 public class TestHardnessEstimator {
 	

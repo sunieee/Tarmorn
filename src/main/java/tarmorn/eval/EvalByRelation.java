@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -7,11 +7,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Properties;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.io.IOHelper;
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.Settings;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.io.IOHelper;
+import tarmorn.structure.Rule;
 
 public class EvalByRelation {
 		

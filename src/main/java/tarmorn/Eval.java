@@ -1,4 +1,4 @@
-package src.main.java.tarmorn;
+package tarmorn;
 
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -7,12 +7,12 @@ import java.util.ArrayList;
 
 import java.util.Properties;
 
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.eval.HitsAtK;
-import src.main.java.tarmorn.eval.ResultSet;
-import src.main.java.tarmorn.io.IOHelper;
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.eval.HitsAtK;
+import tarmorn.eval.ResultSet;
+import tarmorn.io.IOHelper;
+import tarmorn.structure.Rule;
 
 public class Eval {
 		

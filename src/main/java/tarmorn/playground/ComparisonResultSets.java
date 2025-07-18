@@ -1,8 +1,8 @@
-package src.main.java.tarmorn.playground;
+package tarmorn.playground;
 
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.eval.CompletionResult;
-import src.main.java.tarmorn.eval.ResultSet;
+import tarmorn.data.TripleSet;
+import tarmorn.eval.CompletionResult;
+import tarmorn.eval.ResultSet;
 
 public class ComparisonResultSets {
 	

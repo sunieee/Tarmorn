@@ -1,13 +1,13 @@
-package src.main.java.tarmorn.algorithm;
+package tarmorn.algorithm;
 
 import java.util.ArrayList;
 import java.util.Random;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.structure.Path;
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.Settings;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.structure.Path;
+import tarmorn.structure.Rule;
 
 /**
 * This class is responsible for sampling grounded pathes.

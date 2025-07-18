@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.structure;
+package tarmorn.structure;
 
 import java.util.LinkedHashMap;
 

@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.playground;
+package tarmorn.playground;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
@@ -7,11 +7,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.structure.Atom;
-import src.main.java.tarmorn.structure.RuleAcyclic1;
-import src.main.java.tarmorn.structure.RuleUntyped;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.structure.Atom;
+import tarmorn.structure.RuleAcyclic1;
+import tarmorn.structure.RuleUntyped;
 
 public class NegationLearner {
 

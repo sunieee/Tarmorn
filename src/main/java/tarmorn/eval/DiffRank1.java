@@ -1,8 +1,8 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
+import tarmorn.Settings;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
 
 public class DiffRank1 {
 	

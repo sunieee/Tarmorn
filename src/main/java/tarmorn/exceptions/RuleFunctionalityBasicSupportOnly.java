@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.exceptions;
+package tarmorn.exceptions;
 
 /**
  * This exception is thrown if a rule does not support a more complex functionality that goes beyond the 

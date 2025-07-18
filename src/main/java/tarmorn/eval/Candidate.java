@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.eval;
+package tarmorn.eval;
 
 public class Candidate implements Comparable<Candidate>{
 	

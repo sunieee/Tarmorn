@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.io;
+package tarmorn.io;
 
 import java.util.Properties;
 

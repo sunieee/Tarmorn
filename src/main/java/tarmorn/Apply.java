@@ -1,4 +1,4 @@
-package src.main.java.tarmorn;
+package tarmorn;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -9,21 +9,16 @@ import java.text.DecimalFormat;
 import java.util.LinkedList;
 import java.util.Properties;
 
-import src.main.java.tarmorn.algorithm.RuleEngine;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.io.IOHelper;
-import src.main.java.tarmorn.io.RuleReader;
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.structure.RuleAcyclic1;
-import src.main.java.tarmorn.structure.RuleAcyclic2;
-import src.main.java.tarmorn.structure.RuleCyclic;
+import tarmorn.algorithm.RuleEngine;
+import tarmorn.data.TripleSet;
+import tarmorn.io.IOHelper;
+import tarmorn.io.RuleReader;
+import tarmorn.structure.Rule;
+import tarmorn.structure.RuleAcyclic1;
+import tarmorn.structure.RuleAcyclic2;
+import tarmorn.structure.RuleCyclic;
 
 public class Apply {
-	
-	
-
-		
-	
 	private static String CONFIG_FILE = "config-apply.properties";
 	
 

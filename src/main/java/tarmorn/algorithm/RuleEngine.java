@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.algorithm;
+package tarmorn.algorithm;
 
 
 import java.io.PrintWriter;
@@ -15,15 +15,15 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Map.Entry;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.data.*;
-import src.main.java.tarmorn.structure.*;
-import src.main.java.tarmorn.data.Triple;
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.structure.ScoreTree;
-import src.main.java.tarmorn.structure.compare.RuleConfidenceComparator;
-import src.main.java.tarmorn.threads.Predictor;
+import tarmorn.Settings;
+import tarmorn.data.*;
+import tarmorn.structure.*;
+import tarmorn.data.Triple;
+import tarmorn.data.TripleSet;
+import tarmorn.structure.Rule;
+import tarmorn.structure.ScoreTree;
+import tarmorn.structure.compare.RuleConfidenceComparator;
+import tarmorn.threads.Predictor;
 
 public class RuleEngine {
 

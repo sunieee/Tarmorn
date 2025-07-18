@@ -1,8 +1,8 @@
-package src.main.java.tarmorn.structure.compare;
+package tarmorn.structure.compare;
 
 import java.util.Comparator;
 
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.structure.Rule;
 
 public class RuleConfidenceComparator implements Comparator<Rule> {
 

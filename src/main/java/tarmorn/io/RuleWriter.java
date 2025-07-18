@@ -1,9 +1,9 @@
-package src.main.java.tarmorn.io;
+package tarmorn.io;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
 
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.structure.Rule;
 
 public class RuleWriter {
 	

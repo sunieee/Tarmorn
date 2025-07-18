@@ -1,40 +1,34 @@
-package src.main.java.tarmorn;
+package tarmorn;
 
+import org.yaml.snakeyaml.Yaml;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
 import java.text.DecimalFormat;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
-import src.main.java.tarmorn.data.TripleSet;
-import src.main.java.tarmorn.io.IOHelper;
-import src.main.java.tarmorn.structure.Dice;
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.threads.RuleWriterAsThread;
-import src.main.java.tarmorn.threads.Scorer;
+import tarmorn.data.TripleSet;
+import tarmorn.io.IOHelper;
+import tarmorn.structure.Dice;
+import tarmorn.structure.Rule;
+import tarmorn.threads.RuleWriterAsThread;
+import tarmorn.threads.Scorer;
 
 public class Learn {
 	
 	private static long timeStamp = 0;
-	
-	private static String CONFIG_FILE = "config-learn.properties";
-
-	
 	// used at the begging to check if all threads are really available
 	private static HashSet<Integer> availableThreads = new HashSet<Integer>();
 	
 	private static RuleWriterAsThread rwt = null;
-	
-
-	/**
-	 * Path to the file that contains the triple set used for learning the rules.
-	 */
-	
 	
 	/*
 	 * Lets hope that people will not run AnyBURl with more than 100 cores ... up to these 307 buckets should be sufficient
@@ -50,17 +44,6 @@ public class Learn {
 		}
 	}
 	
-	
-	// private static HashSet<Rule> rules = new HashSet<Rule>();
-	// public static Set<Rule> rulesSyn = Collections.synchronizedSet(rules);
-	
-	// public static HashMap<String, RuleCyclic> indexedXYRules = new HashMap<String, RuleCyclic>();
-	
-	
-	// private static HashMap<String, RuleIndex> indexedCL2Rules = new HashMap<String, RuleIndex>();
-	
-	
-	
 	public static int[][] stats;
 	
 	public static Dice dice;
@@ -74,75 +57,35 @@ public class Learn {
 
 
 	public static void main(String[] args) throws FileNotFoundException, InterruptedException {
-		
-		
-		
-		if (args.length == 1) {
-			CONFIG_FILE = args[0];
-			System.out.println("reading params from file " + CONFIG_FILE);
-		}
-		
-		Properties prop = new Properties();
-		InputStream input = null;
+		Yaml yaml = new Yaml();
+        FileInputStream in = new FileInputStream("config.yaml");
+		Map<String, Object> config = yaml.load(in);
 
-		try {
-			input = new FileInputStream(CONFIG_FILE);
-			prop.load(input);
-			Settings.SAFE_PREFIX_MODE = IOHelper.getProperty(prop, "SAFE_PREFIX_MODE", Settings.SAFE_PREFIX_MODE);
-			Settings.SINGLE_RELATIONS = IOHelper.getProperty(prop, "SINGLE_RELATIONS", Settings.SINGLE_RELATIONS);
-			Settings.PATH_TRAINING = IOHelper.getProperty(prop, "PATH_TRAINING",Settings.PATH_TRAINING);
-			Settings.CONSTANTS_OFF = IOHelper.getProperty(prop, "CONSTANTS_OFF",Settings.CONSTANTS_OFF);
-			Settings.PATH_OUTPUT = IOHelper.getProperty(prop, "PATH_OUTPUT", Settings.PATH_OUTPUT);	
-			Settings.PATH_DICE = IOHelper.getProperty(prop, "PATH_DICE",Settings.PATH_DICE);
-			Settings.SNAPSHOTS_AT = IOHelper.getProperty(prop, "SNAPSHOTS_AT", Settings.SNAPSHOTS_AT);
-			Settings.SAMPLE_SIZE = IOHelper.getProperty(prop, "SAMPLE_SIZE", Settings.SAMPLE_SIZE);
-			Settings.TRIAL_SIZE = IOHelper.getProperty(prop, "TRIAL_SIZE", Settings.TRIAL_SIZE);
-			Settings.BATCH_TIME = IOHelper.getProperty(prop, "BATCH_TIME", Settings.BATCH_TIME);
-			Settings.WORKER_THREADS = IOHelper.getProperty(prop, "WORKER_THREADS", Settings.WORKER_THREADS);
-			Settings.ZERO_RULES_ACTIVE = IOHelper.getProperty(prop, "ZERO_RULES_ACTIVE", Settings.ZERO_RULES_ACTIVE);
-			Settings.MAX_LENGTH_CYCLIC = IOHelper.getProperty(prop, "MAX_LENGTH_CYCLIC", Settings.MAX_LENGTH_CYCLIC);
-			Settings.MAX_LENGTH_ACYCLIC = IOHelper.getProperty(prop, "MAX_LENGTH_ACYCLIC", Settings.MAX_LENGTH_ACYCLIC);
-			Settings.THRESHOLD_CORRECT_PREDICTIONS = IOHelper.getProperty(prop, "THRESHOLD_CORRECT_PREDICTIONS", Settings.THRESHOLD_CORRECT_PREDICTIONS);
-			Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO = IOHelper.getProperty(prop, "THRESHOLD_CORRECT_PREDICTIONS_ZERO", Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO);
-			Settings.THRESHOLD_CONFIDENCE = IOHelper.getProperty(prop, "THRESHOLD_CONFIDENCE", Settings.THRESHOLD_CONFIDENCE);
-			Settings.EPSILON = IOHelper.getProperty(prop, "EPSILON", Settings.EPSILON);
-			Settings.SPECIALIZATION_CI = IOHelper.getProperty(prop, "SPECIALIZATION_CI", Settings.SPECIALIZATION_CI);
-			Settings.REWARD = IOHelper.getProperty(prop, "SCORING_REGIME", Settings.REWARD);
-			Settings.POLICY = IOHelper.getProperty(prop, "POLICY", Settings.POLICY);
-			Settings.MAX_LENGTH_GROUNDED_CYCLIC = IOHelper.getProperty(prop, "MAX_LENGTH_GROUNDED_CYCLIC", Settings.MAX_LENGTH_GROUNDED_CYCLIC);
-			Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS = IOHelper.getProperty(prop, "AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS", Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS);
-			
-			Settings.BEAM_SAMPLING_MAX_BODY_GROUNDINGS = IOHelper.getProperty(prop, "BEAM_SAMPLING_MAX_BODY_GROUNDINGS", Settings.BEAM_SAMPLING_MAX_BODY_GROUNDINGS);
-			Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS = IOHelper.getProperty(prop, "BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS", Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS);
-			Settings.BEAM_SAMPLING_MAX_REPETITIONS = IOHelper.getProperty(prop, "BEAM_SAMPLING_MAX_REPETITIONS", Settings.BEAM_SAMPLING_MAX_REPETITIONS);
-			
-			Settings.RULE_AC2_WEIGHT = IOHelper.getProperty(prop, "RULE_AC2_WEIGHT", Settings.RULE_AC2_WEIGHT);
-			Settings.RULE_ZERO_WEIGHT = IOHelper.getProperty(prop, "RULE_ZERO_WEIGHT", Settings.RULE_ZERO_WEIGHT);
-			// Settings.RULE_LENGTH_DEGRADE = IOHelper.getProperty(prop, "RULE_LENGTH_DEGRADE", Settings.RULE_LENGTH_DEGRADE);
-			
-			Settings.REWRITE_REFLEXIV = IOHelper.getProperty(prop, "REWRITE_REFLEXIV", Settings.REWRITE_REFLEXIV);
-			// this one is new for finding out how beneficial AC2 rules are
-			Settings.EXCLUDE_AC2_RULES = IOHelper.getProperty(prop, "EXCLUDE_AC2_RULES", Settings.EXCLUDE_AC2_RULES);
-			
-			
-		}
-		catch (IOException ex) {
-			System.err.println("Could not read relevant parameters from the config file " + CONFIG_FILE);
-			ex.printStackTrace();
-			System.exit(1);
-		}
-		
-		finally {
-			if (input != null) {
+        // 自动赋值到 Settings
+        for (Field field : Settings.class.getFields()) {
+            Object value = config.get(field.getName());
+            if (value != null) {
+                Class<?> type = field.getType();
 				try {
-					input.close();
+					if (type == int.class) {
+						field.setInt(null, Integer.parseInt(value.toString()));
+					} else if (type == double.class) {
+						field.setDouble(null, Double.parseDouble(value.toString()));
+					} else if (type == boolean.class) {
+						field.setBoolean(null, Boolean.parseBoolean(value.toString()));
+					} else if (type == String.class) {
+						field.set(null, value.toString());
+					} else if (type == int[].class && value instanceof List) {
+						List<?> list = (List<?>) value;
+						int[] arr = list.stream().mapToInt(o -> Integer.parseInt(o.toString())).toArray();
+						field.set(null, arr);
+					}
+                // 可扩展支持更多类型
+				} catch (IllegalAccessException e) {
+					throw new RuntimeException("Failed to set field: " + field.getName(), e);
 				}
-				catch (IOException e) {
-					e.printStackTrace();
-					System.exit(1);
-				}
-			}
-		}
+            }
+        }
 		
 		
 		DecimalFormat df = new DecimalFormat("000000.00");
@@ -492,9 +435,6 @@ public class Learn {
 	
 	
 	
-
-
-
 
 
 }

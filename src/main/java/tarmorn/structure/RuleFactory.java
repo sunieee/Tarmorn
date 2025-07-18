@@ -1,8 +1,8 @@
-package src.main.java.tarmorn.structure;
+package tarmorn.structure;
 
 import java.util.ArrayList;
 
-import src.main.java.tarmorn.Settings;
+import tarmorn.Settings;
 
 public class RuleFactory {
 

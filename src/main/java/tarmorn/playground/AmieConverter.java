@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.playground;
+package tarmorn.playground;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -9,8 +9,8 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Scanner;
 
-import src.main.java.tarmorn.io.RuleReader;
-import src.main.java.tarmorn.structure.Rule;
+import tarmorn.io.RuleReader;
+import tarmorn.structure.Rule;
 
 /**
  * Coverts the output of AMIE into the rule format of AnyBURL.

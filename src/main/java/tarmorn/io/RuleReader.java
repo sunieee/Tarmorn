@@ -1,4 +1,4 @@
-package src.main.java.tarmorn.io;
+package tarmorn.io;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -8,14 +8,14 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedList;
 
-import src.main.java.tarmorn.Settings;
-import src.main.java.tarmorn.structure.Atom;
-import src.main.java.tarmorn.structure.Rule;
-import src.main.java.tarmorn.structure.RuleAcyclic1;
-import src.main.java.tarmorn.structure.RuleAcyclic2;
-import src.main.java.tarmorn.structure.RuleCyclic;
-import src.main.java.tarmorn.structure.RuleUntyped;
-import src.main.java.tarmorn.structure.RuleZero;
+import tarmorn.Settings;
+import tarmorn.structure.Atom;
+import tarmorn.structure.Rule;
+import tarmorn.structure.RuleAcyclic1;
+import tarmorn.structure.RuleAcyclic2;
+import tarmorn.structure.RuleCyclic;
+import tarmorn.structure.RuleUntyped;
+import tarmorn.structure.RuleZero;
 
 
 public class RuleReader {
