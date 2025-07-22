@@ -19,9 +19,9 @@ import tarmorn.exceptions.RuleFunctionalityBasicSupportOnly
  */
 class RuleZero(r: RuleUntyped) : Rule(r) {
     override fun computeScores(ts: TripleSet) {
-        val c = this.getHead().getConstant()
-        val tr = this.getTargetRelation()
-        val cIsHead = this.getHead().isLeftC()
+        val c = this.head.constant
+        val tr = this.targetRelation
+        val cIsHead = this.head.isLeftC
 
         val triplesTR = ts.getTriplesByRelation(tr)
         val triplesTRC = ts.getEntities(tr, c, cIsHead)
@@ -31,29 +31,27 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         this.confidence = correctlyPredicted.toDouble() / predicted.toDouble()
     }
 
-    override fun computeTailResults(head: String?, ts: TripleSet?): HashSet<String?> {
-        val results = HashSet<String?>()
-        if (this.getHead().isRightC()) {
-            results.add(this.getHead().getRight())
+    override fun computeTailResults(head: String, ts: TripleSet): HashSet<String> {
+        val results = HashSet<String>()
+        if (this.head.isRightC) {
+            results.add(this.head.right)
         }
         return results
     }
 
-    override fun computeHeadResults(tail: String?, ts: TripleSet?): HashSet<String?> {
-        val results = HashSet<String?>()
-        if (this.getHead().isLeftC()) {
-            results.add(this.getHead().getLeft())
+    override fun computeHeadResults(tail: String, ts: TripleSet): HashSet<String> {
+        val results = HashSet<String>()
+        if (this.head.isLeftC) {
+            results.add(this.head.left)
         }
         return results
     }
 
-
-    override fun getAppliedConfidence(): Double {
-        return Settings.RULE_ZERO_WEIGHT * super.getAppliedConfidence()
-    }
+    override val appliedConfidence: Double
+        get() = Settings.RULE_ZERO_WEIGHT * super.appliedConfidence
 
 
-    override fun isPredictedX(leftValue: String?, rightValue: String?, forbidden: Triple?, ts: TripleSet?): Boolean {
+    override fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean {
         throw RuleFunctionalityBasicSupportOnly()
     }
 
@@ -62,21 +60,21 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     }
 
 
-    override fun getRandomValidPrediction(ts: TripleSet?): Triple? {
+    override fun getRandomValidPrediction(ts: TripleSet): Triple? {
         throw RuleFunctionalityBasicSupportOnly()
     }
 
 
-    override fun getRandomInvalidPrediction(ts: TripleSet?): Triple? {
+    override fun getRandomInvalidPrediction(ts: TripleSet): Triple? {
         throw RuleFunctionalityBasicSupportOnly()
     }
 
 
-    override fun getPredictions(ts: TripleSet?): ArrayList<Triple?>? {
+    override fun getPredictions(ts: TripleSet): ArrayList<Triple?>? {
         throw RuleFunctionalityBasicSupportOnly()
     }
 
-    override fun isSingleton(triples: TripleSet?): Boolean {
+    override fun isSingleton(triples: TripleSet): Boolean {
         throw RuleFunctionalityBasicSupportOnly()
     }
 
@@ -93,17 +91,17 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     override fun getTripleExplanation(
         head: String,
         tail: String,
-        blockedTriples: HashSet<Triple?>,
-        ts: TripleSet?
-    ): HashSet<Triple?> {
-        val groundings = HashSet<Triple?>()
-        val prediction = Triple(head, this.getTargetRelation(), tail)
-        if (blockedTriples.contains(prediction)) return groundings
-        if (this.isXRule() && tail == this.getHead().getRight()) {
+        excludedTriples: HashSet<Triple>,
+        triples: TripleSet
+    ): HashSet<Triple> {
+        val groundings = HashSet<Triple>()
+        val prediction = tarmorn.data.Triple(head, this.targetRelation, tail)
+        if (excludedTriples.contains(prediction)) return groundings
+        if (this.isXRule && tail == this.head.right) {
             groundings.add(prediction)
             return groundings
         }
-        if (this.isYRule() && head == this.getHead().getLeft()) {
+        if (this.isYRule && head == this.head.left) {
             groundings.add(prediction)
             return groundings
         }
@@ -113,7 +111,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     /**
      * Does not recompute the scores of the zeor rule, but simply returns the scores of that rule.
      */
-    override fun computeScores(that: Rule?, triples: TripleSet?): IntArray? {
+    override fun computeScores(that: Rule, triples: TripleSet): IntArray {
         return IntArray(2)
     }
 }

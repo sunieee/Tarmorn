@@ -100,11 +100,11 @@ public class NegationLearner {
 		
 		for (Atom fxa :frequentXAtoms) {
 			if (fxa.isRightC())  {
-				Atom stripped = new Atom(fxa.getLeft(), fxa.getRelation(), "something", false, true);
+				Atom stripped = new Atom(fxa.left, fxa.relation, "something", false, true);
 				strippedXAtomsAsSet.add(stripped);
 			}
 			else {
-				Atom stripped = new Atom("something", fxa.getRelation(), fxa.getRight(), true, false);
+				Atom stripped = new Atom("something", fxa.relation, fxa.right, true, false);
 				strippedXAtomsAsSet.add(stripped);
 			}
 		}
@@ -128,10 +128,10 @@ public class NegationLearner {
 				HashSet<String> distinctJoinValues = new HashSet<String>();
 				
 				counter = 0;
-				ArrayList<Triple> aiTriples = train.getTriplesByRelation(ai.getRelation());
+				ArrayList<Triple> aiTriples = train.getTriplesByRelation(ai.relation);
 				for (Triple aiT : aiTriples) {
 					String joinValue = ai.isRightC() ? aiT.h : aiT.t ;
-					Set<String> result = train.getEntities(aj.getRelation(), joinValue, aj.isRightC());
+					Set<String> result = train.getEntities(aj.relation, joinValue, aj.isRightC());
 					if (result.size() > 0) {
 						distinctJoinValues.add(joinValue);
 						counter++;
@@ -186,8 +186,8 @@ public class NegationLearner {
 					countInstValidNegativePatterns++;
 					// make the count
 			
-					Set<String> xIValues = train.getEntities(ai.getRelation(), ai.getConstant(), ai.isLeftC());
-					Set<String> xJValues = train.getEntities(aj.getRelation(), aj.getConstant(), aj.isLeftC());
+					Set<String> xIValues = train.getEntities(ai.relation, ai.getConstant(), ai.isLeftC());
+					Set<String> xJValues = train.getEntities(aj.relation, aj.getConstant(), aj.isLeftC());
 					Set<String> xIxJValues = new HashSet<String>();
 					xIxJValues.addAll(xIValues);
 					xIxJValues.retainAll(xJValues);

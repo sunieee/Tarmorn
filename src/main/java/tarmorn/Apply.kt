@@ -131,7 +131,7 @@ object Apply {
                 for (r in rules) {
                     // if (r instanceof RuleAcyclic1 && (r.bodysize() == 3 || r.bodysize() == 2) && r.getHead().getConstant().equals(r.getBodyAtom(r.bodysize()-1).getConstant())) continue;
 
-                    if (r.getConfidence() > Settings.THRESHOLD_CONFIDENCE) {
+                    if (r.confidence > Settings.THRESHOLD_CONFIDENCE) {
                         rulesThresholded.add(r)
                     }
                 }

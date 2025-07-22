@@ -19,7 +19,7 @@ import kotlin.math.pow
  * The worker thread responsible for learning rules in the reinforced learning setting.
  *
  */
-class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
+class Scorer(private val triples: TripleSet, id: Int) : Thread() {
     private val sampler: PathSampler
 
 
@@ -128,7 +128,7 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                         } else {
                             for (learnedRule in learnedRules) {
                                 this.createdRules++
-                                if (learnedRule.isTrivial()) continue
+                                if (learnedRule.isTrivial) continue
                                 if (isStored(learnedRule)) {
                                     //long t1 = System.currentTimeMillis();
 
@@ -138,15 +138,15 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                                     //if (t2 - t1 > 500) {
                                     //	System.out.println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
                                     //}
-                                    if (learnedRule.getConfidence() >= Settings.THRESHOLD_CONFIDENCE && learnedRule.getCorrectlyPredicted() >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.getCorrectlyPredicted() > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
+                                    if (learnedRule.confidence >= Settings.THRESHOLD_CONFIDENCE && learnedRule.correctlyPredicted >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.correctlyPredicted > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
                                         if (active) {
                                             storeRule(learnedRule)
                                             // System.out.println(">>> " +  learnedRule);
                                             this.producedScore += getScoringGain(
                                                 learnedRule,
-                                                learnedRule.getCorrectlyPredicted(),
-                                                learnedRule.getConfidence(),
-                                                learnedRule.getAppliedConfidence()
+                                                learnedRule.correctlyPredicted,
+                                                learnedRule.confidence,
+                                                learnedRule.appliedConfidence
                                             )
                                             this.storedRules++
                                         }
@@ -171,7 +171,7 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                 // search for cyclic rules
                 if (mineParamCyclic) {
                     val path = sampler.samplePath(this.mineParamLength + 1, true)
-                    if (path != null && path.isValid()) {
+                    if (path != null && path.isValid) {
                         // System.out.println(path);
                         val learnedRules = RuleFactory.getGeneralizations(path, this.onlyXY)
                         // System.out.println(learnedRules.size());
@@ -184,7 +184,7 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                         } else {
                             for (learnedRule in learnedRules) {
                                 this.createdRules++
-                                if (learnedRule.isTrivial()) continue
+                                if (learnedRule.isTrivial) continue
                                 // if (learnedRule.isRedundantACRule(triples)) continue;
                                 // long l2;
                                 // long l1 = System.currentTimeMillis();
@@ -197,16 +197,16 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                                     //if (t2 - t1 > 500) {
                                     //	System.out.println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
                                     //}
-                                    if (learnedRule.getConfidence() >= Settings.THRESHOLD_CONFIDENCE && learnedRule.getCorrectlyPredicted() >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.getCorrectlyPredicted() > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
+                                    if (learnedRule.confidence >= Settings.THRESHOLD_CONFIDENCE && learnedRule.correctlyPredicted >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.correctlyPredicted > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
                                         if (active) {
                                             storeRule(learnedRule)
 
                                             // this.producedScore += getScoringGain(learnedRule.getCorrectlyPredictedMax(), learnedRule.getConfidenceMax());
                                             this.producedScore += getScoringGain(
                                                 learnedRule,
-                                                learnedRule.getCorrectlyPredicted(),
-                                                learnedRule.getConfidence(),
-                                                learnedRule.getAppliedConfidence()
+                                                learnedRule.correctlyPredicted,
+                                                learnedRule.confidence,
+                                                learnedRule.appliedConfidence
                                             )
                                             this.storedRules++
                                         }
@@ -224,7 +224,7 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                 // search for acyclic rules
                 if (mineParamAcyclic) {
                     val path = sampler.samplePath(mineParamLength + 1, false)
-                    if (path != null && path.isValid()) {
+                    if (path != null && path.isValid) {
                         val learnedRules = RuleFactory.getGeneralizations(path, false)
                         if (!active) {
                             try {
@@ -235,7 +235,7 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                         } else {
                             for (learnedRule in learnedRules) {
                                 this.createdRules++
-                                if (learnedRule.isTrivial()) continue
+                                if (learnedRule.isTrivial) continue
                                 // long l2;
                                 //long l1 = System.currentTimeMillis();
                                 if (isStored(learnedRule)) {
@@ -250,14 +250,14 @@ class Scorer(private val triples: TripleSet?, id: Int) : Thread() {
                                     //if (t2 - t1 > 500) {
                                     //	System.out.println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
                                     //}
-                                    if (learnedRule.getConfidence() >= Settings.THRESHOLD_CONFIDENCE && learnedRule.getCorrectlyPredicted() >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.getCorrectlyPredicted() > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
+                                    if (learnedRule.confidence >= Settings.THRESHOLD_CONFIDENCE && learnedRule.correctlyPredicted >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.correctlyPredicted > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
                                         if (active) {
                                             storeRule(learnedRule)
                                             this.producedScore += getScoringGain(
                                                 learnedRule,
-                                                learnedRule.getCorrectlyPredicted(),
-                                                learnedRule.getConfidence(),
-                                                learnedRule.getAppliedConfidence()
+                                                learnedRule.correctlyPredicted,
+                                                learnedRule.confidence,
+                                                learnedRule.appliedConfidence
                                             )
                                             this.storedRules++
                                         }

@@ -22,7 +22,7 @@ object RuleFactory {
         val leftright = rv.leftRightGeneralization
         if (leftright != null) {
             leftright.replaceAllConstantsByVariables()
-            generalizations.add(RuleCyclic(leftright))
+            generalizations.add(RuleCyclic(leftright, 0.0))
         }
         if (onlyXY) return generalizations
         // acyclic rule

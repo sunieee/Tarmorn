@@ -126,7 +126,7 @@ public class RuleReader {
 			r.addBodyAtom(lit);
 		}
 		if (r.isCyclic()) {
-			if (Settings.READ_CYCLIC_RULES == 1) return new RuleCyclic(r);
+			if (Settings.READ_CYCLIC_RULES == 1) return new RuleCyclic(r, 0.0);
 		}
 		if (r.isAcyclic1()) {
 			if (Settings.READ_ACYCLIC1_RULES == 1) return new RuleAcyclic1(r);
