@@ -3,7 +3,6 @@ package tarmorn.structure
 import tarmorn.Settings
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
-import tarmorn.exceptions.RuleFunctionalityBasicSupportOnly
 
 /**
  * A rule with an empty body, that fires only because something is asked.
@@ -18,6 +17,8 @@ import tarmorn.exceptions.RuleFunctionalityBasicSupportOnly
  *
  */
 class RuleZero(r: RuleUntyped) : Rule(r) {
+    val RuleFunctionalityBasicSupportOnly = "RuleFunctionalityBasicSupportOnly Exception (some specific method is called for a rule type that supports (currently) only basic methods)"
+
     override fun computeScores(ts: TripleSet) {
         val c = this.head.constant
         val tr = this.targetRelation
@@ -52,7 +53,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
 
 
     override fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean {
-        throw RuleFunctionalityBasicSupportOnly()
+        throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
     override fun isRefinable(): Boolean {
@@ -61,21 +62,21 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
 
 
     override fun getRandomValidPrediction(ts: TripleSet): Triple? {
-        throw RuleFunctionalityBasicSupportOnly()
+        throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
 
     override fun getRandomInvalidPrediction(ts: TripleSet): Triple? {
-        throw RuleFunctionalityBasicSupportOnly()
+        throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
 
     override fun getPredictions(ts: TripleSet): ArrayList<Triple?>? {
-        throw RuleFunctionalityBasicSupportOnly()
+        throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
     override fun isSingleton(triples: TripleSet): Boolean {
-        throw RuleFunctionalityBasicSupportOnly()
+        throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
     /**
