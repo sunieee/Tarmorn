@@ -16,8 +16,6 @@ import java.util.Set;
 import java.util.Map.Entry;
 
 import tarmorn.Settings;
-import tarmorn.data.*;
-import tarmorn.structure.*;
 import tarmorn.data.Triple;
 import tarmorn.data.TripleSet;
 import tarmorn.structure.Rule;

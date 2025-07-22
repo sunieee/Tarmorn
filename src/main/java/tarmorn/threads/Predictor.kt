@@ -1,0 +1,31 @@
+package tarmorn.threads
+
+import tarmorn.Settings
+import tarmorn.algorithm.RuleEngine
+import tarmorn.data.TripleSet
+import tarmorn.structure.Rule
+
+/**
+ * The predictor predicts the candidates for a knowledge base completion task.
+ *
+ *
+ */
+class Predictor(
+    private val testSet: TripleSet?,
+    private val trainingSet: TripleSet?,
+    private val validationSet: TripleSet?,
+    private val k: Int,
+    private val relation2Rules4Prediction: HashMap<String?, ArrayList<Rule?>?>?
+) : Thread() {
+    override fun run() {
+        var triple = RuleEngine.getNextPredictionTask()
+        // Rule rule = null;
+        while (triple != null) {
+            // System.out.println(this.getName() + " making prediction for " + triple);
+            if (Settings.AGGREGATION_ID == 1) {
+                RuleEngine.predictMax(testSet, trainingSet, validationSet, k, relation2Rules4Prediction, triple)
+            }
+            triple = RuleEngine.getNextPredictionTask()
+        }
+    }
+}
