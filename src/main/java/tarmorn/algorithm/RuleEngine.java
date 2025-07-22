@@ -229,9 +229,9 @@ public class RuleEngine {
 
 	public static LinkedHashMap<String, Double> predictMaxOLD(TripleSet testSet, TripleSet trainingSet, TripleSet filterSet, int k, HashMap<String, ArrayList<Rule>> relation2Rules, Triple triple, boolean predictHeadNotTail, ScoreTree kTree) {
 
-		String relation = triple.getRelation();
-		String head = triple.getHead();
-		String tail = triple.getTail();
+		String relation = triple.r;
+		String head = triple.h;
+		String tail = triple.t;
 
 		if (relation2Rules.containsKey(relation)) {
 			ArrayList<Rule> relevantRules = relation2Rules.get(relation);
@@ -281,9 +281,9 @@ public class RuleEngine {
 	// NEW SIMPLIFIED VERSION
 	public static LinkedHashMap<String, Double> predictMax(TripleSet testSet, TripleSet trainingSet, TripleSet validationSet, int k, HashMap<String, ArrayList<Rule>> relation2Rules, Triple triple, boolean predictHeadNotTail, ScoreTree kTree) {
 
-		String relation = triple.getRelation();
-		String head = triple.getHead();
-		String tail = triple.getTail();
+		String relation = triple.r;
+		String head = triple.h;
+		String tail = triple.t;
 
 		if (relation2Rules.containsKey(relation)) {
 			ArrayList<Rule> relevantRules = relation2Rules.get(relation);
@@ -317,9 +317,9 @@ public class RuleEngine {
 	
 
 	public static void predictNoisyOr(TripleSet testSet, TripleSet trainingSet, TripleSet validationSet, int k, HashMap<String, ArrayList<Rule>> relation2Rules, Triple triple) {
-		String relation = triple.getRelation();
-		String head = triple.getHead();
-		String tail = triple.getTail();
+		String relation = triple.r;
+		String head = triple.h;
+		String tail = triple.t;
 
 		HashMap<String, ArrayList<Rule>> explainedTailCandidates = new HashMap<String, ArrayList<Rule>>();
 		HashMap<String, ArrayList<Rule>> explainedHeadCandidates = new HashMap<String, ArrayList<Rule>>();
@@ -530,21 +530,21 @@ public class RuleEngine {
 		HashSet<String> filteredEntities = new HashSet<String>();
 		for (String entity : candidateEntities) {
 			if (!tailNotHead) {		
-				if (!validationSet.isTrue(entity, t.getRelation(), t.getTail()) && !trainingSet.isTrue(entity, t.getRelation(), t.getTail()) && !testSet.isTrue(entity, t.getRelation(), t.getTail())) {
+				if (!validationSet.isTrue(entity, t.r, t.t) && !trainingSet.isTrue(entity, t.r, t.t) && !testSet.isTrue(entity, t.r, t.t)) {
 					filteredEntities.add(entity);
 				}
-				if (testSet.isTrue(entity, t.getRelation(), t.getTail())) {
+				if (testSet.isTrue(entity, t.r, t.t)) {
 					// TAKE CARE, remove to reactivate the possibility of storing previous results
-					if (entity.equals(t.getHead())) filteredEntities.add(entity);
+					if (entity.equals(t.h)) filteredEntities.add(entity);
 				}	
 			}
 			if (tailNotHead) {
-				if (!validationSet.isTrue(t.getHead(), t.getRelation(), entity) && !trainingSet.isTrue(t.getHead(), t.getRelation(), entity) && !testSet.isTrue(t.getHead(), t.getRelation(), entity)) {
+				if (!validationSet.isTrue(t.h, t.r, entity) && !trainingSet.isTrue(t.h, t.r, entity) && !testSet.isTrue(t.h, t.r, entity)) {
 					filteredEntities.add(entity);
 				}
-				if (testSet.isTrue(t.getHead(), t.getRelation(), entity)) {
+				if (testSet.isTrue(t.h, t.r, entity)) {
 					// TAKE CARE, remove to reactivate the possibility of storing previous results
-					if (entity.equals(t.getTail())) filteredEntities.add(entity);
+					if (entity.equals(t.t)) filteredEntities.add(entity);
 				}
 			}
 		}
@@ -556,7 +556,7 @@ public class RuleEngine {
 		int i = 0;
 		writer.print("Heads: ");
 		for (Entry<String, Double> entry : kHeadCandidates.entrySet()) {
-			if (t.getHead().equals(entry.getKey()) || !testSet.isTrue(entry.getKey(), t.getRelation(), t.getTail())) {
+			if (t.h.equals(entry.getKey()) || !testSet.isTrue(entry.getKey(), t.r, t.t)) {
 				writer.print(entry.getKey() + "\t" + entry.getValue() + "\t");
 				i++;
 			}
@@ -566,7 +566,7 @@ public class RuleEngine {
 		i = 0;
 		writer.print("Tails: ");
 		for (Entry<String, Double> entry : kTailCandidates.entrySet()) {
-			if (t.getTail().equals(entry.getKey()) || !testSet.isTrue(t.getHead(), t.getRelation(), entry.getKey())) {
+			if (t.t.equals(entry.getKey()) || !testSet.isTrue(t.h, t.r, entry.getKey())) {
 				writer.print(entry.getKey() + "\t" + entry.getValue() + "\t");
 				i++;
 			}

@@ -1,1 +1,1 @@
-java -Xmx256G -cp tarmorn-25-1.jar tarmorn.Learn config-learn.properties
+mvn exec:java -Dexec.mainClass="tarmorn.Learn"

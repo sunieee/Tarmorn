@@ -1,6 +1,12 @@
 package tarmorn;
 
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.io.PrintWriter;
+import java.lang.reflect.Field;
+import java.util.Map;
+
+import org.yaml.snakeyaml.Yaml;
 
 public class Settings {
     public static String PATH_TRAINING;
@@ -67,4 +73,48 @@ public class Settings {
 
 	public static PrintWriter EXPLANATION_WRITER = null;
 	public static String[] SINGLE_RELATIONS = null;
+
+    public static void load() {
+        String yamlPath = "config.yaml";
+        try (FileInputStream in = new FileInputStream(yamlPath)) {
+            Yaml yaml = new Yaml();
+            Map<String, Object> config = yaml.load(in);
+            loadFromYaml(config);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to load config from " + yamlPath, e);
+        }
+
+        if (Settings.AGGREGATION_TYPE.equals("maxplus")) Settings.AGGREGATION_ID = 1;
+        if (Settings.AGGREGATION_TYPE.equals("max2")) Settings.AGGREGATION_ID = 2;
+        if (Settings.AGGREGATION_TYPE.equals("noisyor")) Settings.AGGREGATION_ID = 3;
+        if (Settings.AGGREGATION_TYPE.equals("maxgroup")) Settings.AGGREGATION_ID = 4;
+    }
+
+    public static void loadFromYaml(Map<String, Object> config) {
+        for (Field field : Settings.class.getFields()) {
+            Object value = config.get(field.getName());
+            if (value != null) {
+                Class<?> type = field.getType();
+                try {
+                    if (type == int.class) {
+                        field.setInt(null, Integer.parseInt(value.toString()));
+                    } else if (type == double.class) {
+                        field.setDouble(null, Double.parseDouble(value.toString()));
+                    } else if (type == boolean.class) {
+                        field.setBoolean(null, Boolean.parseBoolean(value.toString()));
+                    } else if (type == String.class) {
+                        field.set(null, value.toString());
+                    } else if (type == int[].class && value instanceof java.util.List) {
+                        java.util.List<?> list = (java.util.List<?>) value;
+                        int[] arr = list.stream().mapToInt(o -> Integer.parseInt(o.toString())).toArray();
+                        field.set(null, arr);
+                    }
+                    // 可扩展支持更多类型
+                } catch (IllegalAccessException e) {
+                    throw new RuntimeException("Failed to set field: " + field.getName(), e);
+                }
+            }
+        }
+    }
+    
 }

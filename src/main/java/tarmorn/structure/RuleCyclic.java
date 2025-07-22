@@ -350,21 +350,21 @@ public class RuleCyclic extends Rule  {
 		// XXX if (!Rule.APPLICATION_MODE && finalResults.size() >= Settings.SAMPLE_SIZE) return;
 		// check if the value has been seen before as grounding of another variable
 		Atom atom = this.body.get(bodyIndex);
-		boolean headNotTail = atom.getLeft().equals(currentVariable);
+		boolean ifHead = atom.getLeft().equals(currentVariable);
 		if (previousValues.contains(value)) return;		
 		// the current atom is the last
 		if ((direction == true && this.body.size() -1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
 			// get groundings
-			for (String v : triples.getEntities(atom.getRelation(), value, headNotTail)) {
+			for (String v : triples.getEntities(atom.getRelation(), value, ifHead)) {
 				if (!previousValues.contains(v) && !value.equals(v)) finalResults.add(v);
 			}
 			return;
 		}
 		// the current atom is not the last
 		else {
-			Set<String> results = triples.getEntities(atom.getRelation(), value, headNotTail);
+			Set<String> results = triples.getEntities(atom.getRelation(), value, ifHead);
 			if (results.size() > Settings.BRANCHINGFACTOR_BOUND && Settings.DFS_SAMPLING_ON == true) return;
-			String nextVariable = headNotTail ? atom.getRight() : atom.getLeft();
+			String nextVariable = ifHead ? atom.getRight() : atom.getLeft();
 			HashSet<String> currentValues = new HashSet<String>();
 			currentValues.addAll(previousValues);
 			if (Settings.OI_CONSTRAINTS_ACTIVE) currentValues.add(value);
@@ -390,17 +390,17 @@ public class RuleCyclic extends Rule  {
 	private SampledPairedResultSet groundBodyCyclic(String firstVariable, String lastVariable, TripleSet triples, boolean samplingOn) {
 		SampledPairedResultSet groundings = new SampledPairedResultSet();
 		Atom atom = this.body.get(0);
-		boolean headNotTail = atom.getLeft().equals(firstVariable);
+		boolean ifHead = atom.getLeft().equals(firstVariable);
 		ArrayList<Triple> rtriples = triples.getTriplesByRelation(atom.getRelation());
 		int counter = 0;
 		for (Triple t : rtriples) {
 			counter++;
 			HashSet<String> lastVariableGroundings = new HashSet<String>();
 			// the call itself
-			this.getCyclic(firstVariable, lastVariable, t.getValue(headNotTail), 0, true, triples, new HashSet<String>(), lastVariableGroundings);
+			this.getCyclic(firstVariable, lastVariable, t.getValue(ifHead), 0, true, triples, new HashSet<String>(), lastVariableGroundings);
 			if (lastVariableGroundings.size() > 0) {
 				if (firstVariable.equals("X")) {
-					groundings.addKey(t.getValue(headNotTail));
+					groundings.addKey(t.getValue(ifHead));
 					for (String lastVariableValue : lastVariableGroundings) {
 						groundings.addValue(lastVariableValue);
 					}
@@ -408,7 +408,7 @@ public class RuleCyclic extends Rule  {
 				else {
 					for (String lastVariableValue : lastVariableGroundings) {
 						groundings.addKey(lastVariableValue);
-						groundings.addValue(t.getValue(headNotTail));
+						groundings.addValue(t.getValue(ifHead));
 					}
 				}
 			}
@@ -423,22 +423,22 @@ public class RuleCyclic extends Rule  {
 	private SampledPairedResultSet beamBodyCyclic(String firstVariable, String lastVariable, TripleSet triples) {
 		SampledPairedResultSet groundings = new SampledPairedResultSet();
 		Atom atom = this.body.get(0);
-		boolean headNotTail = atom.getLeft().equals(firstVariable);
+		boolean ifHead = atom.getLeft().equals(firstVariable);
 		Triple t;
 		int attempts = 0;
 		int repetitions = 0;
 		while ((t = triples.getRandomTripleByRelation(atom.getRelation())) != null) {
 			attempts++;
-			String lastVarGrounding = this.beamCyclic(firstVariable, t.getValue(headNotTail), 0, true, triples, new HashSet<String>());
+			String lastVarGrounding = this.beamCyclic(firstVariable, t.getValue(ifHead), 0, true, triples, new HashSet<String>());
 			if (lastVarGrounding != null) {
 				if (firstVariable.equals("X")) {
-					groundings.addKey(t.getValue(headNotTail));
+					groundings.addKey(t.getValue(ifHead));
 					if (groundings.addValue(lastVarGrounding)) repetitions = 0;
 					else repetitions++;
 				}
 				else {
 					groundings.addKey(lastVarGrounding);
-					if (groundings.addValue(t.getValue(headNotTail))) repetitions = 0;
+					if (groundings.addValue(t.getValue(ifHead))) repetitions = 0;
 					else repetitions++;
 				}
 			}
@@ -453,9 +453,9 @@ public class RuleCyclic extends Rule  {
 	private SampledPairedResultSet beamBodyCyclicEDIS(String firstVariable, String lastVariable, TripleSet triples) {
 		SampledPairedResultSet groundings = new SampledPairedResultSet();
 		Atom atom = this.body.get(0);
-		boolean headNotTail = atom.getLeft().equals(firstVariable);
+		boolean ifHead = atom.getLeft().equals(firstVariable);
 		int repetitions = 0;
-		ArrayList<String> entities = triples.getNRandomEntitiesByRelation(atom.getRelation(), headNotTail, Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS);
+		ArrayList<String> entities = triples.getNRandomEntitiesByRelation(atom.getRelation(), ifHead, Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS);
 		for (String e : entities) {
 			String lastVarGrounding = this.beamCyclic(firstVariable, e, 0, true, triples, new HashSet<String>());
 			if (lastVarGrounding != null) {
@@ -488,22 +488,22 @@ public class RuleCyclic extends Rule  {
 	private SampledPairedResultSet beamBodyCyclicReverse(String firstVariable, String lastVariable, TripleSet triples) {
 		SampledPairedResultSet groundings = new SampledPairedResultSet();
 		Atom atom = this.body.getLast();
-		boolean headNotTail = atom.getLeft().equals(lastVariable);
+		boolean ifHead = atom.getLeft().equals(lastVariable);
 		Triple t;
 		int attempts = 0;
 		int repetitions = 0;
 		while ((t = triples.getRandomTripleByRelation(atom.getRelation())) != null) {
 			attempts++;
-			String firstVarGrounding = this.beamCyclic(lastVariable, t.getValue(headNotTail), this.bodysize()-1, false, triples, new HashSet<String>());
+			String firstVarGrounding = this.beamCyclic(lastVariable, t.getValue(ifHead), this.bodysize()-1, false, triples, new HashSet<String>());
 			// until here
 			if (firstVarGrounding != null) {
 				if (firstVariable.equals("X")) {
 					groundings.addKey(firstVarGrounding);
-					if (groundings.addValue(t.getValue(headNotTail))) repetitions = 0;
+					if (groundings.addValue(t.getValue(ifHead))) repetitions = 0;
 					else repetitions++;
 				}
 				else {
-					groundings.addKey(t.getValue(headNotTail));
+					groundings.addKey(t.getValue(ifHead));
 					if (groundings.addValue(firstVarGrounding)) repetitions = 0;
 					else repetitions++;
 				}
@@ -518,9 +518,9 @@ public class RuleCyclic extends Rule  {
 	private SampledPairedResultSet beamBodyCyclicReverseEDIS(String firstVariable, String lastVariable, TripleSet triples) {
 		SampledPairedResultSet groundings = new SampledPairedResultSet();
 		Atom atom = this.body.getLast();
-		boolean headNotTail = atom.getLeft().equals(lastVariable);
+		boolean ifHead = atom.getLeft().equals(lastVariable);
 		int repetitions = 0;
-		ArrayList<String> entities = triples.getNRandomEntitiesByRelation(atom.getRelation(), headNotTail, Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS);
+		ArrayList<String> entities = triples.getNRandomEntitiesByRelation(atom.getRelation(), ifHead, Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS);
 		for (String e : entities) {
 			// System.out.println("e="+ e);
 			String firstVarGrounding = this.beamCyclic(lastVariable, e, this.bodysize()-1, false, triples, new HashSet<String>());
@@ -550,11 +550,11 @@ public class RuleCyclic extends Rule  {
 	private HashSet<String> beamPGBodyCyclic(String firstVariable, String lastVariable, String value, int bodyIndex, boolean direction, TripleSet triples) {
 		HashSet<String> groundings = new HashSet<String>();
 		Atom atom = this.body.get(bodyIndex);
-		boolean headNotTail = atom.getLeft().equals(firstVariable);
+		boolean ifHead = atom.getLeft().equals(firstVariable);
 		int attempts = 0;
 		int repetitions = 0;
-		// System.out.println("startsFine: " + atom.getRelation() + " - " + value + " - " + headNotTail);
-		boolean startFine = !triples.getEntities(atom.getRelation(), value, headNotTail).isEmpty();
+		// System.out.println("startsFine: " + atom.getRelation() + " - " + value + " - " + ifHead);
+		boolean startFine = !triples.getEntities(atom.getRelation(), value, ifHead).isEmpty();
 		//System.out.println("startsFine=" + startFine);
 		while (startFine) {
 			attempts++;
@@ -593,13 +593,13 @@ public class RuleCyclic extends Rule  {
 		if (value == null) return null;
 		// check if the value has been seen before as grounding of another variable
 		Atom atom = this.body.get(bodyIndex);
-		boolean headNotTail = atom.getLeft().equals(currentVariable);
+		boolean ifHead = atom.getLeft().equals(currentVariable);
 		// OI-OFF
 		if (previousValues.contains(value)) return null;		
 		// the current atom is the last
 		if ((direction == true && this.body.size() -1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
-			String finalValue = triples.getRandomEntity(atom.getRelation(), value, headNotTail);
-			// System.out.println("Y = " + finalValue + " out of " + triples.getEntities(atom.getRelation(), value, headNotTail).size());
+			String finalValue = triples.getRandomEntity(atom.getRelation(), value, ifHead);
+			// System.out.println("Y = " + finalValue + " out of " + triples.getEntities(atom.getRelation(), value, ifHead).size());
 			
 			// OI-OFF
 			if (previousValues.contains(finalValue)) return null;
@@ -609,8 +609,8 @@ public class RuleCyclic extends Rule  {
 		}
 		// the current atom is not the last
 		else {
-			String nextValue = triples.getRandomEntity(atom.getRelation(), value, headNotTail);
-			String nextVariable = headNotTail ? atom.getRight() : atom.getLeft();
+			String nextValue = triples.getRandomEntity(atom.getRelation(), value, ifHead);
+			String nextVariable = ifHead ? atom.getRight() : atom.getLeft();
 			// OI-OFF
 			if (Settings.OI_CONSTRAINTS_ACTIVE) previousValues.add(value);
 			int updatedBodyIndex = (direction) ? bodyIndex + 1 : bodyIndex - 1;

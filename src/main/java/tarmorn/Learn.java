@@ -1,7 +1,5 @@
 package tarmorn;
 
-import org.yaml.snakeyaml.Yaml;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -57,36 +55,7 @@ public class Learn {
 
 
 	public static void main(String[] args) throws FileNotFoundException, InterruptedException {
-		Yaml yaml = new Yaml();
-        FileInputStream in = new FileInputStream("config.yaml");
-		Map<String, Object> config = yaml.load(in);
-
-        // 自动赋值到 Settings
-        for (Field field : Settings.class.getFields()) {
-            Object value = config.get(field.getName());
-            if (value != null) {
-                Class<?> type = field.getType();
-				try {
-					if (type == int.class) {
-						field.setInt(null, Integer.parseInt(value.toString()));
-					} else if (type == double.class) {
-						field.setDouble(null, Double.parseDouble(value.toString()));
-					} else if (type == boolean.class) {
-						field.setBoolean(null, Boolean.parseBoolean(value.toString()));
-					} else if (type == String.class) {
-						field.set(null, value.toString());
-					} else if (type == int[].class && value instanceof List) {
-						List<?> list = (List<?>) value;
-						int[] arr = list.stream().mapToInt(o -> Integer.parseInt(o.toString())).toArray();
-						field.set(null, arr);
-					}
-                // 可扩展支持更多类型
-				} catch (IllegalAccessException e) {
-					throw new RuntimeException("Failed to set field: " + field.getName(), e);
-				}
-            }
-        }
-		
+		Settings.load();
 		
 		DecimalFormat df = new DecimalFormat("000000.00");
 		PrintWriter log = new PrintWriter(Settings.PATH_OUTPUT + "_log");

@@ -199,16 +199,16 @@ public abstract class RuleAcyclic extends Rule {
 	
 	protected boolean isBodyTrueAcyclic(String variable, String value, int bodyIndex, HashSet<String> previousValues, TripleSet triples) {
 		Atom atom = this.body.get(bodyIndex);
-		boolean headNotTail = atom.getLeft().equals(variable);
+		boolean ifHead = atom.getLeft().equals(variable);
 		// the current atom is the last
 		if (this.body.size() -1 == bodyIndex) {
-			boolean constant = headNotTail ? atom.isRightC() : atom.isLeftC();
+			boolean constant = ifHead ? atom.isRightC() : atom.isLeftC();
 			// get groundings
 			// fixed by a constant
 			if (constant) {
-				String constantValue = headNotTail ? atom.getRight() : atom.getLeft();
+				String constantValue = ifHead ? atom.getRight() : atom.getLeft();
 				if (previousValues.contains(constantValue) && !constantValue.equals(this.head.getConstant())) return false;
-				if (headNotTail) {
+				if (ifHead) {
 					return triples.isTrue(value, atom.getRelation(), constantValue);
 				}
 				else {
@@ -217,7 +217,7 @@ public abstract class RuleAcyclic extends Rule {
 			}
 			// existential quantification
 			else {
-				Set<String> results = triples.getEntities(atom.getRelation(), value, headNotTail);
+				Set<String> results = triples.getEntities(atom.getRelation(), value, ifHead);
 				for (String r : results) {
 					if (!previousValues.contains(r)) return true;
 				}
@@ -226,8 +226,8 @@ public abstract class RuleAcyclic extends Rule {
 		}
 		// the current atom is not the last
 		else {
-			Set<String> results = triples.getEntities(atom.getRelation(), value, headNotTail);
-			String nextVariable = headNotTail ? atom.getRight() : atom.getLeft();
+			Set<String> results = triples.getEntities(atom.getRelation(), value, ifHead);
+			String nextVariable = ifHead ? atom.getRight() : atom.getLeft();
 			for (String nextValue : results) {
 				if (previousValues.contains(nextValue)) continue;
 				previousValues.add(nextValue);
@@ -242,16 +242,16 @@ public abstract class RuleAcyclic extends Rule {
 	
 	private boolean isBodyTrueAcyclicX(String variable, String value, int bodyIndex, Triple forbidden, HashSet<String> previousValues, TripleSet triples) {
 		Atom atom = this.body.get(bodyIndex);
-		boolean headNotTail = atom.getLeft().equals(variable);
+		boolean ifHead = atom.getLeft().equals(variable);
 		// the current atom is the last
 		if (this.body.size() -1 == bodyIndex) {
-			boolean constant = headNotTail ? atom.isRightC() : atom.isLeftC();
+			boolean constant = ifHead ? atom.isRightC() : atom.isLeftC();
 			// get groundings
 			// fixed by a constant
 			if (constant) {
-				String constantValue = headNotTail ? atom.getRight() : atom.getLeft();
+				String constantValue = ifHead ? atom.getRight() : atom.getLeft();
 				if (previousValues.contains(constantValue) && !constantValue.equals(this.head.getConstant())) return false;
-				if (headNotTail) {
+				if (ifHead) {
 					return triples.isTrue(value, atom.getRelation(), constantValue);
 				}
 				else {
@@ -260,7 +260,7 @@ public abstract class RuleAcyclic extends Rule {
 			}
 			// existential quantification
 			else {
-				Set<String> results = triples.getEntities(atom.getRelation(), value, headNotTail);
+				Set<String> results = triples.getEntities(atom.getRelation(), value, ifHead);
 				for (String r : results) {
 					if (!previousValues.contains(r)) return true;
 				}
@@ -269,10 +269,10 @@ public abstract class RuleAcyclic extends Rule {
 		}
 		// the current atom is not the last
 		else {
-			Set<String> results = triples.getEntities(atom.getRelation(), value, headNotTail);
-			String nextVariable = headNotTail ? atom.getRight() : atom.getLeft();
+			Set<String> results = triples.getEntities(atom.getRelation(), value, ifHead);
+			String nextVariable = ifHead ? atom.getRight() : atom.getLeft();
 			for (String nextValue : results) {
-				if (!forbidden.equals(headNotTail, value, atom.getRelation(), nextValue)) {
+				if (!forbidden.equals(ifHead, value, atom.getRelation(), nextValue)) {
 					if (previousValues.contains(nextValue)) continue;
 					previousValues.add(nextValue);
 					if (isBodyTrueAcyclicX(nextVariable, nextValue, bodyIndex+1, forbidden, previousValues, triples)) {

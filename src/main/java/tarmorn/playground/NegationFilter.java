@@ -64,7 +64,7 @@ public class NegationFilter {
 			String[] token = tripleAsString.split("\\s+");
 			Triple triple = new Triple(token[0], token[1], token[2]);
 			
-			LinkedList<Rule> relevantRules = relation2Rules.get(triple.getRelation());
+			LinkedList<Rule> relevantRules = relation2Rules.get(triple.r);
 			if (relevantRules == null) relevantRules = new LinkedList<Rule>();
 			
 			// System.out.println(t);
@@ -79,7 +79,7 @@ public class NegationFilter {
 				for (Rule r : relevantRules) {
 					if (r instanceof RuleAcyclic1) {
 						RuleAcyclic1 rule = (RuleAcyclic1)r;
-						filter = rule.validates(h, triple.getRelation(), triple.getTail(), train);
+						filter = rule.validates(h, triple.r, triple.t, train);
 						
 						// if (filter && (h.equals(triple.getHead()))) {
 						//if (filter) {
@@ -101,7 +101,7 @@ public class NegationFilter {
 					hi--;					
 
 					filteredHead++;
-					if (!h.equals(triple.getHead())) {
+					if (!h.equals(triple.h)) {
 						correctlyFilteredHead++;
 					}
 					else {
@@ -119,7 +119,7 @@ public class NegationFilter {
 				for (Rule r : relevantRules) {
 					if (r instanceof RuleAcyclic1) {
 						RuleAcyclic1 rule = (RuleAcyclic1)r;
-						filter = rule.validates(triple.getHead(), triple.getRelation(), t, train);
+						filter = rule.validates(triple.h, triple.r, t, train);
 						
 						/*
 						if (filter && (t.equals(triple.getHead()))) {
@@ -139,7 +139,7 @@ public class NegationFilter {
 					ti--;
 
 					filteredTail++;
-					if (!t.equals(triple.getTail())) {
+					if (!t.equals(triple.t)) {
 						correctlyFilteredTail++;
 					}
 				}

@@ -66,7 +66,7 @@ public class PathSampler {
 		else triple = chosenHeadTriple;
 
 		// TODO hardcoded test to avoid reflexive relations in the head
-		if (triple.getHead().equals(triple.getTail())) return null;
+		if (triple.h.equals(triple.t)) return null;
 		double dice = this.rand.nextDouble();
 		if (ruleToBeExtended != null) {
 			if (ruleToBeExtended.isXRule()) dice = 1;
@@ -74,15 +74,15 @@ public class PathSampler {
 		}
 		if (dice < 0.5) {
 			markers[0] = '+';
-			nodes[0] = triple.getHead();
-			nodes[1] = triple.getRelation();
-			nodes[2] = triple.getTail();
+			nodes[0] = triple.h;
+			nodes[1] = triple.r;
+			nodes[2] = triple.t;
 		}
 		else {
 			markers[0] = '-';
-			nodes[2] = triple.getHead();
-			nodes[1] = triple.getRelation();
-			nodes[0] = triple.getTail();
+			nodes[2] = triple.h;
+			nodes[1] = triple.r;
+			nodes[0] = triple.t;
 		}
 		
 		// add next hop
@@ -95,7 +95,7 @@ public class PathSampler {
 				if (cyclic && index + 1 == steps) {
 					ArrayList<Triple> cyclicCandidateTriples = new ArrayList<>();
 					for (Triple t : candidateTriples) {
-						if (t.getTail().equals(nodes[0])) cyclicCandidateTriples.add(t);
+						if (t.t.equals(nodes[0])) cyclicCandidateTriples.add(t);
 					}
 					if (cyclicCandidateTriples.size() == 0) return null;
 					nextTriple = cyclicCandidateTriples.get(this.rand.nextInt(cyclicCandidateTriples.size()));
@@ -103,8 +103,8 @@ public class PathSampler {
 				else {
 					nextTriple = candidateTriples.get(this.rand.nextInt(candidateTriples.size()));
 				}
-				nodes[index*2+1] = nextTriple.getRelation();
-				nodes[index*2+2] = nextTriple.getTail();
+				nodes[index*2+1] = nextTriple.r;
+				nodes[index*2+2] = nextTriple.t;
 				markers[index] = '+';
 			}
 			else {
@@ -114,7 +114,7 @@ public class PathSampler {
 				if (cyclic && index + 1 == steps) {
 					ArrayList<Triple> cyclicCandidateTriples = new ArrayList<>();
 					for (Triple t : candidateTriples) {
-						if (t.getHead().equals(nodes[0])) cyclicCandidateTriples.add(t);
+						if (t.h.equals(nodes[0])) cyclicCandidateTriples.add(t);
 					}
 					if (cyclicCandidateTriples.size() == 0) return null;
 					nextTriple = cyclicCandidateTriples.get(this.rand.nextInt(cyclicCandidateTriples.size()));
@@ -122,8 +122,8 @@ public class PathSampler {
 				else {
 					nextTriple = candidateTriples.get(this.rand.nextInt(candidateTriples.size()));
 				}
-				nodes[index*2+1] = nextTriple.getRelation();
-				nodes[index*2+2] = nextTriple.getHead();
+				nodes[index*2+1] = nextTriple.r;
+				nodes[index*2+2] = nextTriple.h;
 				markers[index] = '-';
 			}
 			index++;

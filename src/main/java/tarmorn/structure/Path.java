@@ -78,8 +78,8 @@ public class Path {
 		// System.out.println("path:   " + this);
 		// System.out.println("triple: " + t);
 		for (int i = 4; i < nodes.length;  i += 2) {
-			if (t.getHead().equals(nodes[i])) return false;
-			if (t.getTail().equals(nodes[i])) return false;
+			if (t.h.equals(nodes[i])) return false;
+			if (t.t.equals(nodes[i])) return false;
 		}
 		return true;
 	}

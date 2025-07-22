@@ -171,7 +171,7 @@ public class Dice {
 				d -= relevantScores[i];
 			}
 		}
-		return 0; // should never happen
+		return -1; // should never happen
 	}
 	
 	

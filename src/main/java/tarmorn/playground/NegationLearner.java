@@ -130,7 +130,7 @@ public class NegationLearner {
 				counter = 0;
 				ArrayList<Triple> aiTriples = train.getTriplesByRelation(ai.getRelation());
 				for (Triple aiT : aiTriples) {
-					String joinValue = ai.isRightC() ? aiT.getHead() : aiT.getTail() ;
+					String joinValue = ai.isRightC() ? aiT.h : aiT.t ;
 					Set<String> result = train.getEntities(aj.getRelation(), joinValue, aj.isRightC());
 					if (result.size() > 0) {
 						distinctJoinValues.add(joinValue);

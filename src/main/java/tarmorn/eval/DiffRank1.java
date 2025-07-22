@@ -37,25 +37,25 @@ public class DiffRank1 {
 				
 				
 				
-				if (!proposedHead1.equals(t.getHead()) && proposedHead2.equals(t.getHead())) {
+				if (!proposedHead1.equals(t.h) && proposedHead2.equals(t.h)) {
 					//if (rs2.getHeadConfidences(triple).get(0) -  rs1.getHeadConfidences(triple).get(0) > distance) {
 					
 						System.out.println(triple);
-						System.out.println(">>> head 1: " + proposedHead1 + ", " + (proposedHead1.equals(t.getHead())));	
-						System.out.println(">>> head 2: " + proposedHead2 + ", " + (proposedHead2.equals(t.getHead())));		
+						System.out.println(">>> head 1: " + proposedHead1 + ", " + (proposedHead1.equals(t.h)));	
+						System.out.println(">>> head 2: " + proposedHead2 + ", " + (proposedHead2.equals(t.h)));		
 						deltaPosHead++;
 						System.out.println(rs2.getName() + ": " + rs2.getHeadConfidences(triple).get(0) + " <- " + rs1.getName() + ": " + rs1.getHeadConfidences(triple).get(0) + "\n");
 					//}
 					
 				}
 				
-				if (proposedHead1.equals(t.getHead()) && !proposedHead2.equals(t.getHead())) {
+				if (proposedHead1.equals(t.h) && !proposedHead2.equals(t.h)) {
 					// change to the worse
 					//if (rs2.getHeadConfidences(triple).get(0) -  rs1.getHeadConfidences(triple).get(0) >  distance) {
 						System.out.println(triple);
-						System.out.println(">>> head 1: " + proposedHead1 + ", " + (proposedHead1.equals(t.getHead())));	
-						System.out.println(">>> head 2: " + proposedHead2 + ", " + (proposedHead2.equals(t.getHead())));
-						System.out.println("    position of hit = " + rs2.getHeadCandidates(triple).indexOf(t.getHead()) +  " size = " + rs2.getHeadCandidates(triple).size());
+						System.out.println(">>> head 1: " + proposedHead1 + ", " + (proposedHead1.equals(t.h)));	
+						System.out.println(">>> head 2: " + proposedHead2 + ", " + (proposedHead2.equals(t.h)));
+						System.out.println("    position of hit = " + rs2.getHeadCandidates(triple).indexOf(t.h) +  " size = " + rs2.getHeadCandidates(triple).size());
 						deltaNegHead++;
 						System.out.println(rs2.getName() + ": " + rs2.getHeadConfidences(triple).get(0) + " <- " + rs1.getName() + ": " + rs1.getHeadConfidences(triple).get(0) + "\n");
 						
@@ -66,22 +66,22 @@ public class DiffRank1 {
 			String proposedTail2 = (rs2.getTailCandidates(triple).size() > 0) ? rs2.getTailCandidates(triple).get(0) : "-";
 			if (!proposedTail2.equals("-")&& !proposedTail1.equals("-") && !proposedTail1.equals(proposedTail2)) {
 				
-				if (!proposedTail1.equals(t.getTail()) && proposedTail2.equals(t.getTail())) {
+				if (!proposedTail1.equals(t.t) && proposedTail2.equals(t.t)) {
 					//if (rs2.getTailConfidences(triple).get(0) -  rs1.getTailConfidences(triple).get(0) >  distance) {
 						System.out.println(triple);
-						System.out.println(">>> tail 1: " + proposedTail1  + ", " + (proposedTail1.equals(t.getTail())));	
-						System.out.println(">>> tail 2: " + proposedTail2  + ", " + (proposedTail2.equals(t.getTail())));
+						System.out.println(">>> tail 1: " + proposedTail1  + ", " + (proposedTail1.equals(t.t)));	
+						System.out.println(">>> tail 2: " + proposedTail2  + ", " + (proposedTail2.equals(t.t)));
 						deltaPosTail++;
 						System.out.println(rs2.getTailConfidences(triple).get(0) + " <- " + rs1.getTailConfidences(triple).get(0) + "\n");
 					//}
 				}
 				
-				if (proposedTail1.equals(t.getTail()) && !proposedTail2.equals(t.getTail())) {
+				if (proposedTail1.equals(t.t) && !proposedTail2.equals(t.t)) {
 					//if (rs2.getTailConfidences(triple).get(0) -  rs1.getTailConfidences(triple).get(0) > distance) {
 						System.out.println(triple);
-						System.out.println(">>> tail 1: " + proposedTail1  + ", " + (proposedTail1.equals(t.getTail())));	
-						System.out.println(">>> tail 2: " + proposedTail2  + ", " + (proposedTail2.equals(t.getTail())));
-						System.out.println("    position of hit = " + rs2.getTailCandidates(triple).indexOf(t.getTail()) +  " size = " + rs2.getTailCandidates(triple).size());
+						System.out.println(">>> tail 1: " + proposedTail1  + ", " + (proposedTail1.equals(t.t)));	
+						System.out.println(">>> tail 2: " + proposedTail2  + ", " + (proposedTail2.equals(t.t)));
+						System.out.println("    position of hit = " + rs2.getTailCandidates(triple).indexOf(t.t) +  " size = " + rs2.getTailCandidates(triple).size());
 						deltaNegTail++;
 						System.out.println(rs2.getTailConfidences(triple).get(0) + " <- " + rs1.getTailConfidences(triple).get(0) + "\n");
 					//}

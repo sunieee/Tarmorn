@@ -25,8 +25,8 @@ public class Functionality {
 			HashSet<String> rHeads = new HashSet<String>();
 			HashSet<String> rTails = new HashSet<String>();
 			for (Triple rtriple : rTriples) {
-				rHeads.add(rtriple.getHead());
-				rTails.add(rtriple.getTail());
+				rHeads.add(rtriple.h);
+				rTails.add(rtriple.t);
 			}
 			int tailsPerHeadAll = 0;
 			int headsPerTailAll = 0;		

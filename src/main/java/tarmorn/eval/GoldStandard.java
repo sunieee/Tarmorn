@@ -54,8 +54,8 @@ public class GoldStandard {
 		}
 	}
 	
-	public String getCategory(String triple, boolean headNotTail) {
-		if (headNotTail) {
+	public String getCategory(String triple, boolean ifHead) {
+		if (ifHead) {
 			return this.headTriplesToCat.get(triple);
 		}
 		else {

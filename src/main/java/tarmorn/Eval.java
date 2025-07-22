@@ -1,17 +1,12 @@
 package tarmorn;
 
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
-
-import java.util.Properties;
 
 import tarmorn.data.Triple;
 import tarmorn.data.TripleSet;
 import tarmorn.eval.HitsAtK;
 import tarmorn.eval.ResultSet;
-import tarmorn.io.IOHelper;
 import tarmorn.structure.Rule;
 
 public class Eval {
@@ -63,39 +58,8 @@ public class Eval {
 		}
 		
 		Rule.applicationMode();
-		
+		Settings.load();
 		Settings.REWRITE_REFLEXIV = false;
-		Properties prop = new Properties();
-		InputStream input = null;
-		try {
-			input = new FileInputStream(CONFIG_FILE);
-			prop.load(input);
-			Settings.SAFE_PREFIX_MODE = IOHelper.getProperty(prop, "SAFE_PREFIX_MODE", Settings.SAFE_PREFIX_MODE);
-			PATH_TRAINING = IOHelper.getProperty(prop, "PATH_TRAINING",PATH_TRAINING);
-			PATH_TEST = IOHelper.getProperty(prop, "PATH_TEST", PATH_TEST);
-			PATH_VALID = IOHelper.getProperty(prop, "PATH_VALID",PATH_VALID);
-			PATH_PREDICTIONS = IOHelper.getProperty(prop, "PATH_PREDICTIONS", PATH_PREDICTIONS);
-			TOP_K = IOHelper.getProperty(prop, "TOP_K", TOP_K);
-		}
-		catch (IOException ex) {
-			System.err.println("Could not read relevant parameters from the config file " + CONFIG_FILE);
-			ex.printStackTrace();
-			System.exit(1);
-		}
-		
-		finally {
-			if (input != null) {
-				try {
-					input.close();
-				}
-				catch (IOException e) {
-					e.printStackTrace();
-					System.exit(1);
-				}
-			}
-		}
-		
-		
 		
 		TripleSet trainingSet =  new TripleSet(PATH_TRAINING);
 		TripleSet validationSet = new TripleSet(PATH_VALID);

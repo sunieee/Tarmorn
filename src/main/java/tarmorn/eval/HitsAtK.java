@@ -178,7 +178,7 @@ public class HitsAtK {
 		for (int rank = 0; rank < candidates.size() && rank < ATKMAX; rank++) {
 			String candidate = candidates.get(rank);
 
-			if (candidate.equals(triple.getHead()) || (this.am != null && this.am.sameAs(triple.getHead(), candidate))) {
+			if (candidate.equals(triple.h) || (this.am != null && this.am.sameAs(triple.h, candidate))) {
 				for (int index = rank; index  - filterCount < ATKMAX; index++) {
 					if (index < ATKMAX) hitsADnHead[index]++;
 					hitsADnHeadFiltered[index - filterCount]++;
@@ -188,7 +188,7 @@ public class HitsAtK {
 				break;
 			} else {
 				for (TripleSet filterSet : filterSets) {
-					if (filterSet.isTrue(candidate, triple.getRelation(), triple.getTail())) {
+					if (filterSet.isTrue(candidate, triple.r, triple.t)) {
 						filterCount++;
 						break;
 					}
@@ -200,7 +200,7 @@ public class HitsAtK {
 		boolean ranked = false;
 		for (String candidate : candidates) {
 			counter++;
-			if (candidate.equals(triple.getHead())) {
+			if (candidate.equals(triple.h)) {
 				this.headRanks.add(counter);
 				ranked = true;
 				break;
@@ -218,7 +218,7 @@ public class HitsAtK {
 		for (int rank = 0; rank < candidates.size() && rank < ATKMAX; rank++) {
 			String candidate = candidates.get(rank);
 
-			if (candidate.equals(triple.getTail()) || (this.am != null && this.am.sameAs(triple.getTail(), candidate))) {
+			if (candidate.equals(triple.t) || (this.am != null && this.am.sameAs(triple.t, candidate))) {
 				for (int index = rank; index  - filterCount < ATKMAX; index++) {
 					if (index < ATKMAX) hitsADnTail[index]++;
 					hitsADnTailFiltered[index - filterCount]++;
@@ -229,7 +229,7 @@ public class HitsAtK {
 				break;
 			} else {
 				for (TripleSet filterSet : filterSets) {
-					if (filterSet.isTrue(triple.getHead(), triple.getRelation(), candidate)) {
+					if (filterSet.isTrue(triple.h, triple.r, candidate)) {
 						filterCount++;
 						break;
 					}
@@ -241,7 +241,7 @@ public class HitsAtK {
 		boolean ranked = false;
 		for (String candidate : candidates) {
 			counter++;
-			if (candidate.equals(triple.getTail())) {
+			if (candidate.equals(triple.t)) {
 				this.tailRanks.add(counter);
 				ranked = true;
 				break;

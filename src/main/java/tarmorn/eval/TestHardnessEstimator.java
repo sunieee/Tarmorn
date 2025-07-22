@@ -40,9 +40,9 @@ public class TestHardnessEstimator {
 			
 			//System.out.print(t);
 			
-			String head = t.getHead();
-			String tail = t.getTail();
-			String relation = t.getRelation();
+			String head = t.h;
+			String tail = t.t;
+			String relation = t.r;
 			
 			Set<String> heads = all.getHeadEntities(relation, tail);
 			Set<String> tails = all.getTailEntities(relation, head);

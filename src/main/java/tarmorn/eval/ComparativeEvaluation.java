@@ -732,7 +732,7 @@ public class ComparativeEvaluation {
 	private static void computeScores(ResultSet rs, TripleSet gold, HitsAtK hitsAtK) {
 		for (Triple t : gold.getTriples()) {
 			if (RELATION_FILTER.size() > 0) {
-				if (!RELATION_FILTER.contains(t.getRelation())) continue;
+				if (!RELATION_FILTER.contains(t.r)) continue;
 			}
 			// System.out.print(t+ "\t");
 			
@@ -760,13 +760,13 @@ public class ComparativeEvaluation {
 				ArrayList<String> cand = rs.getHeadCandidates(triple);
 				String c = cand.size() > 0 ? cand.get(0) : "-";
 				int foundAt = hitsAtK.evaluateHead(cand, t);
-				if (foundAt < 0) System.out.println(t.getHead() + " headX" + t.getRelation() + " " + t.getTail());
+				if (foundAt < 0) System.out.println(t.h + " headX" + t.r + " " + t.t);
 			}
 			if (gold.getCategory(triple, false) != null) {
 				ArrayList<String> cand = rs.getTailCandidates(triple);
 				String c = cand.size() > 0 ? cand.get(0) : "-";
 				int foundAt = hitsAtK.evaluateTail(cand, t);
-				if (foundAt < 0) System.out.println(t.getHead() + " tailX" + t.getRelation() + " " + t.getTail());
+				if (foundAt < 0) System.out.println(t.h + " tailX" + t.r + " " + t.t);
 			}
 		}
 	}
@@ -781,11 +781,11 @@ public class ComparativeEvaluation {
 				ArrayList<String> cand2 = rs2.getHeadCandidates(triple);
 				boolean foundBy1 = false;
 				for (String c1 : cand1) {
-					if (t.getHead().equals(c1)) foundBy1 = true;
+					if (t.h.equals(c1)) foundBy1 = true;
 				}
 				boolean foundBy2 = false;
 				for (String c2 : cand2) {
-					if (t.getHead().equals(c2)) foundBy2 = true;
+					if (t.h.equals(c2)) foundBy2 = true;
 				}
 				if (foundBy1 != foundBy2) {
 					System.out.println("H " + rs1.getName() + "=" + foundBy1 + " " + rs2.getName() + "=" + foundBy2 + " " + triple);
@@ -797,11 +797,11 @@ public class ComparativeEvaluation {
 				ArrayList<String> cand2 = rs2.getTailCandidates(triple);;
 				boolean foundBy1 = false;
 				for (String c1 : cand1) {
-					if (t.getTail().equals(c1)) foundBy1 = true;
+					if (t.t.equals(c1)) foundBy1 = true;
 				}
 				boolean foundBy2 = false;
 				for (String c2 : cand2) {
-					if (t.getTail().equals(c2)) foundBy2 = true;
+					if (t.t.equals(c2)) foundBy2 = true;
 				}
 				if (foundBy1 != foundBy2) {
 					System.out.println("T " + rs1.getName() + "=" + foundBy1 + " " + rs2.getName() + "=" + foundBy2 + " " + triple);

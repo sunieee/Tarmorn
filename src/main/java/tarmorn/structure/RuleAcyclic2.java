@@ -86,7 +86,7 @@ public class RuleAcyclic2  extends RuleAcyclic {
 		if (last.getRight().equals(unboundVariable)) {
 			HashSet<String> values = new HashSet<String>();
 			for (Triple t : triples.getTriplesByRelation(last.getRelation())) {
-				values.add(t.getHead());
+				values.add(t.h);
 				if (values.size() >= Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) return values.size(); 
 			}
 			return values.size();
@@ -95,7 +95,7 @@ public class RuleAcyclic2  extends RuleAcyclic {
 		else {
 			HashSet<String> values = new HashSet<String>();
 			for (Triple t : triples.getTriplesByRelation(last.getRelation())) {
-				values.add(t.getTail());
+				values.add(t.t);
 				if (values.size() >= Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) return values.size(); 
 			}
 			return values.size();
