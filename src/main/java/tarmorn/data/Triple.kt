@@ -10,12 +10,9 @@ import tarmorn.Settings
 class Triple(h: String, r: String, t: String) {
     var invalid: Boolean = false
 
-    @JvmField
-    val h: String // subject
-    @JvmField
-    val t: String // object
-    @JvmField
-    val r: String
+        val h: String // subject
+        val t: String // object
+        val r: String
 
     private var hash = 0
 

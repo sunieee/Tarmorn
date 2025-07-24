@@ -190,7 +190,7 @@ class Body : Iterable<Atom> {
      */
     fun detach() {
         for (i in this.literals.indices) {
-            val atom = this.literals.get(i).createCopy()
+            val atom = this.literals.get(i).copy()
             this.literals.set(i, atom!!)
         }
     }

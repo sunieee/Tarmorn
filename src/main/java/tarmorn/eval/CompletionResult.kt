@@ -34,10 +34,8 @@ class CompletionResult(/*
     var heads: MutableList<String>
     var tails: MutableList<String>
 
-    @JvmField
-    var headConfidences: MutableList<Double>
-    @JvmField
-    var tailConfidences: MutableList<Double>
+        var headConfidences: MutableList<Double>
+        var tailConfidences: MutableList<Double>
 
     init {
         this.heads = mutableListOf<String>()

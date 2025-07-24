@@ -90,9 +90,9 @@ class RuleUntyped : Rule {
 
 
     fun createCopy(): RuleUntyped {
-        val copy = RuleUntyped(this.head.createCopy())
+        val copy = RuleUntyped(this.head.copy())
         for (bodyLiteral in this.body) {
-            copy.body.add(bodyLiteral.createCopy())
+            copy.body.add(bodyLiteral.copy())
         }
         copy.nextFreeVariable = this.nextFreeVariable
         return copy

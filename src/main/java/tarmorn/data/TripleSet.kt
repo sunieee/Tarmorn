@@ -11,8 +11,7 @@ import java.util.Random
 import java.util.Collections
 
 class TripleSet() {
-    @JvmField
-	val triples: MutableList<Triple>
+    	val triples: MutableList<Triple>
     private val rand: Random
 
 

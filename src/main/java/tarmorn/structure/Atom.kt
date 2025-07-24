@@ -1,272 +1,141 @@
 package tarmorn.structure
 
-class Atom {
-    @JvmField
-    var relation: String
-    @JvmField
-    var left: String
-    @JvmField
+data class Atom(
+    var left: String,
+    var relation: String,
     var right: String
-
-    var isLeftC: Boolean
-    var isRightC: Boolean
-
-    private var hashcode = 0
-    private var hashcodeInitialized = false
-
-    constructor(left: String, relation: String, right: String, leftC: Boolean, rightC: Boolean) {
-        this.left = left
-        this.right = right
-        this.relation = relation
-        this.isLeftC = leftC
-        this.isRightC = rightC
-    }
+) {
+    val isLeftC: Boolean
+        get() = left.length != 1
+    val isRightC: Boolean
+        get() = right.length != 1
 
     val xYGeneralization: Atom
-        get() {
-            val copy = this.createCopy()
-            copy.left = "X"
-            copy.isLeftC = false
-            copy.right = "Y"
-            copy.isRightC = false
-            return copy
-        }
+        get() = this.copy(left = "X", right = "Y")
 
-    constructor(a: String) {
-        var a = a
-        if (a.endsWith(" ")) a = a.substring(0, a.length - 1)
-        if (a.endsWith(",")) a = a.substring(0, a.length - 1)
-        if (a.endsWith(";")) a = a.substring(0, a.length - 1)
-
-        var left: String = ""
-        var right: String = ""
-
-
-        val t1 = a.split("\\(".toRegex(), limit = 2).toTypedArray()
-        val relation = t1[0]
-        val aa = t1[1]
-
-        if (aa.matches("[A-Z],.*\\)".toRegex())) {
-            left = aa.substring(0, 1)
-            right = aa.substring(2, aa.length - 1)
+    constructor(input: String) : this("", "", "") {
+        // 清理输入字符串，移除尾部的空格、逗号和分号
+        val cleanInput = input.trimEnd(' ', ',', ';')
+        
+        // 分割关系和参数部分
+        val (relation, argsWithParen) = cleanInput.split('(', limit = 2)
+        val args = argsWithParen.removeSuffix(")")
+        
+        // 解析参数
+        val (left, right) = if (args.matches(Regex("[A-Z],.+"))) {
+            // 单字符变量格式: "X,entity"
+            args[0].toString() to args.substring(2)
         } else {
-            left = aa.substring(0, aa.length - 3)
-            right = aa.substring(aa.length - 2, aa.length - 1)
+            // 标准格式: "entity1,X" 
+            val lastCommaIndex = args.lastIndexOf(',')
+            args.substring(0, lastCommaIndex) to args.substring(lastCommaIndex + 1)
         }
+        
         this.relation = relation.intern()
         this.left = left.intern()
         this.right = right.intern()
-        this.isLeftC = if (this.left.length == 1) false else true
-        this.isRightC = if (this.right.length == 1) false else true
     }
 
 
     fun toString(indent: Int): String {
-        var l = this.left
-        var r = this.right
-        if (indent > 0) {
-            if (!this.isLeftC && (this.left != "X") && (this.left != "Y")) {
-                val li: Int = Rule.variables2Indices.get(this.left)!!
-                l = Rule.variables[li + indent]
-            }
-            if (!this.isRightC && (this.right != "X") && (this.right != "Y")) {
-                val ri: Int = Rule.variables2Indices.get(this.right)!!
-                r = Rule.variables[ri + indent]
-            }
-        }
-        return this.relation + "(" + l + "," + r + ")"
+        val l = if (indent > 0 && !isLeftC && left !in setOf("X", "Y")) {
+            val li = Rule.variables2Indices[left]!!
+            Rule.variables[li + indent]
+        } else left
+        
+        val r = if (indent > 0 && !isRightC && right !in setOf("X", "Y")) {
+            val ri = Rule.variables2Indices[right]!!
+            Rule.variables[ri + indent]
+        } else right
+        
+        return "$relation($l,$r)"
     }
-
-    override fun equals(thatObject: Any?): Boolean {
-        if (thatObject is Atom) {
-            val that = thatObject
-            if (this.relation == that.relation && this.left == that.left && this.right == that.right) {
-                return true
-            }
-        }
-        return false
-    }
-
-
-    fun equals(that: Atom, vThis: String, vThat: String): Boolean {
-        if (this.relation != that.relation) return false
-        if ((this.left == vThis && that.left == vThat) || (this.left == vThis && that.left == vThat)) return true
-        return false
-    }
-
 
     /**
      * Returns true if this is more special than the given atom g.
-     *
-     * @param g
-     * @return
+     * An atom is more special if it has the same relation and:
+     * 1. They are equal, or
+     * 2. Same left side but this has constant right while g has variable right, or  
+     * 3. Same right side but this has constant left while g has variable left, or
+     * 4. This has constants on both sides while g has variables on both sides
      */
     fun moreSpecial(g: Atom): Boolean {
-        if (this.relation == g.relation) {
-            if (this == g) {
-                return true
-            }
-
-            if (this.left == g.left) {
-                if (!g.isRightC && this.isRightC) return true
-                return false
-            }
-            if (this.right == g.right) {
-                if (!g.isLeftC && this.isLeftC) return true
-                return false
-            }
-            if (!g.isLeftC && !g.isRightC && this.isLeftC && this.isRightC) return true
-            return false
+        if (this.relation != g.relation) return false
+        
+        return when {
+            this == g -> true
+            this.left == g.left -> !g.isRightC && this.isRightC
+            this.right == g.right -> !g.isLeftC && this.isLeftC
+            else -> !g.isLeftC && !g.isRightC && this.isLeftC && this.isRightC
         }
-        return false
-    }
-
-    /**
-     * Returns true if this is more special than the given atom g, given that vThis is substituted by vThat.
-     *
-     * @param g The more general atom.
-     * @return
-     */
-    fun moreSpecial(that: Atom, vThis: String, vThat: String): Boolean {
-        if (this.relation == that.relation) {
-            if ((this.left == vThis && that.left == vThat)) {
-                if (!that.isRightC && this.isRightC) return true
-                if (that.right == this.right) return true
-                return false
-            }
-            if ((this.right == vThis && that.right == vThat)) {
-                if (!that.isLeftC && this.isLeftC) return true
-                if (that.left == this.left) return true
-                return false
-            }
-            return false
-        }
-        return false
-    }
-
-
-    override fun hashCode(): Int {
-        if (!this.hashcodeInitialized) {
-            this.hashcode = this.toString().hashCode()
-            this.hashcodeInitialized = true
-        }
-        return this.hashcode
-    }
-
-
-    /**
-     * Creates and returns a deep copy of this atom.
-     *
-     * @return A deep copy of this atom.
-     */
-    fun createCopy(): Atom {
-        val copy = Atom(this.left, this.relation, this.right, this.isLeftC, this.isRightC)
-        return copy
     }
 
     fun replaceByVariable(constant: String, variable: String): Int {
-        var i = 0
-        if (this.isLeftC && this.left == constant) {
-            this.isLeftC = false
-            this.left = variable
-            i++
+        var count = 0
+        if (isLeftC && left == constant) {
+            left = variable
+            count++
         }
-        if (this.isRightC && this.right == constant) {
-            this.isRightC = false
-            this.right = variable
-            i++
+        if (isRightC && right == constant) {
+            right = variable
+            count++
         }
-        return i
+        return count
     }
 
-    fun replace(vOld: String, vNew: String, block: Int): Int {
-        if (this.left == vOld && block != -1) {
-            this.left = vNew
-            return -1
+    fun replace(vOld: String, vNew: String, block: Int): Int = when {
+        left == vOld && block != -1 -> {
+            left = vNew
+            -1
         }
-        if (this.right == vOld && block != 1) {
-            this.right = vNew
-            return 1
+        right == vOld && block != 1 -> {
+            right = vNew
+            1
         }
-        return 0
+        else -> 0
     }
 
-    fun replace(vOld: String, vNew: String) {
-        this.replace(vOld, vNew, 0)
-    }
+    fun replace(vOld: String, vNew: String) = replace(vOld, vNew, 0)
 
-    fun uses(constantOrVariable: String): Boolean {
-        if (this.left == constantOrVariable) {
-            return true
-        }
-        if (this.right == constantOrVariable) {
-            return true
-        }
-        return false
-    }
+    fun uses(constantOrVariable: String): Boolean = 
+        left == constantOrVariable || right == constantOrVariable
 
-    fun isLRC(leftNotRight: Boolean): Boolean {
-        if (leftNotRight) return this.isLeftC
-        else return this.isRightC
-    }
+    fun isLRC(leftNotRight: Boolean): Boolean = 
+        if (leftNotRight) isLeftC else isRightC
 
-    fun getLR(leftNotRight: Boolean): String {
-        if (leftNotRight) return this.left
-        else return this.right
-    }
+    fun getLR(leftNotRight: Boolean): String = 
+        if (leftNotRight) left else right
 
-    fun contains(term: String): Boolean {
-        if (this.left == term || this.right == term) return true
-        return false
-    }
+    fun contains(term: String): Boolean = 
+        left == term || right == term
 
     val constant: String
-        get() {
-            if (this.isLeftC) return this.left
-            if (this.isRightC) return this.right
-            return ""
+        get() = when {
+            isLeftC -> left
+            isRightC -> right
+            else -> ""
         }
 
     fun isInverse(pos: Int): Boolean {
-        val inverse: Boolean
-        if (this.isRightC || this.isLeftC) {
-            if (this.isRightC) inverse = false
-            else inverse = true
-        } else {
-            if (this.right.compareTo(this.left) < 0) inverse = true
-            else inverse = false
-            if (pos == 0) return !inverse
+        val inverse = when {
+            isRightC || isLeftC -> !isRightC
+            else -> {
+                val baseInverse = right < left
+                if (pos == 0) !baseInverse else baseInverse
+            }
         }
         return inverse
     }
 
 
     val variables: MutableSet<String>
-        get() {
-            val vars = HashSet<String>()
-            if (!this.isLeftC && (this.left != "X") && (this.left != "Y")) {
-                vars.add(this.left)
-            }
-            if (!this.isRightC && (this.right != "X") && (this.right != "Y")) {
-                vars.add(this.right)
-            }
-            return vars
+        get() = mutableSetOf<String>().apply {
+            if (!isLeftC && left !in setOf("X", "Y")) add(left)
+            if (!isRightC && right !in setOf("X", "Y")) add(right)
         }
 
-//    fun getOtherTerm(v: String): String {
-//        if (this.left == v) {
-//            return this.right
-//        } else if (this.right == v) {
-//            return this.left
-//        }
-//        return null
-//    }
+    fun toString(c: String, v: String): String = 
+        "$relation(${if (left == c) v else left},${if (right == c) v else right})"
 
-    fun toString(c: String, v: String): String {
-        return this.relation + "(" + (if (this.left == c) v else this.left) + "," + (if (this.right == c) v else this.right) + ")"
-    }
-
-    override fun toString(): String {
-        return this.relation + "(" + this.left + "," + this.right + ")"
-    }
+    override fun toString(): String = "$relation($left,$right)"
 }

@@ -66,7 +66,7 @@ object NegationLearner {
             for (h in headCount.keys) {
                 if (headCount.get(h)!! >= MIN_USAGE_XATOM) {
                     // println(headCount.get(h) + ": " + r + "(" + h + ",?)");
-                    val atom = Atom(h, r, "X", true, false)
+                    val atom = Atom(h, r, "X")
                     frequentXAtoms.add(atom)
                 }
             }
@@ -74,7 +74,7 @@ object NegationLearner {
             for (t in tailCount.keys) {
                 if (tailCount.get(t)!! >= MIN_USAGE_XATOM) {
                     // println(tailCount.get(t) + ": " + r + "(?, " + t + ")");
-                    val atom = Atom("X", r, t, false, true)
+                    val atom = Atom("X", r, t)
                     frequentXAtoms.add(atom)
                 }
             }
@@ -89,10 +89,10 @@ object NegationLearner {
 
         for (fxa in frequentXAtoms) {
             if (fxa.isRightC) {
-                val stripped = Atom(fxa.left, fxa.relation, "something", false, true)
+                val stripped = Atom(fxa.left, fxa.relation, "something")
                 strippedXAtomsAsSet.add(stripped)
             } else {
-                val stripped = Atom("something", fxa.relation, fxa.right, true, false)
+                val stripped = Atom("something", fxa.relation, fxa.right)
                 strippedXAtomsAsSet.add(stripped)
             }
         }
@@ -162,9 +162,9 @@ object NegationLearner {
                 val ai = frequentXAtoms.get(i)
                 val aj = frequentXAtoms.get(j)
 
-                val sai = ai.createCopy()
+                val sai = ai.copy()
                 sai.replace(ai.constant, "something")
-                val saj = aj.createCopy()
+                val saj = aj.copy()
                 saj.replace(aj.constant, "something")
 
                 if (validNegativePatterns.containsKey(sai) && validNegativePatterns.get(sai)!!.contains(saj)) {

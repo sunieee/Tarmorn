@@ -7,15 +7,15 @@ object RuleFactory {
         val rv = RuleUntyped()
         rv.body = Body()
         if (p.markers[0] == '+') {
-            rv.head = Atom(p.nodes[0], p.nodes[1], p.nodes[2], true, true)
+            rv.head = Atom(p.nodes[0], p.nodes[1], p.nodes[2])
         } else {
-            rv.head = Atom(p.nodes[2], p.nodes[1], p.nodes[0], true, true)
+            rv.head = Atom(p.nodes[2], p.nodes[1], p.nodes[0])
         }
         for (i in 1..<p.markers.size) {
             if (p.markers[i] == '+') {
-                rv.body.add(Atom(p.nodes[i * 2], p.nodes[i * 2 + 1], p.nodes[i * 2 + 2], true, true))
+                rv.body.add(Atom(p.nodes[i * 2], p.nodes[i * 2 + 1], p.nodes[i * 2 + 2]))
             } else {
-                rv.body.add(Atom(p.nodes[i * 2 + 2], p.nodes[i * 2 + 1], p.nodes[i * 2], true, true))
+                rv.body.add(Atom(p.nodes[i * 2 + 2], p.nodes[i * 2 + 1], p.nodes[i * 2]))
             }
         }
         val generalizations = ArrayList<Rule>()

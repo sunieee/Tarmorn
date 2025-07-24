@@ -516,7 +516,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
      * Then corrects a rule which uses X in the head at the Y position by replacing X by Y in the head as well as all occurrences
      */
     fun detachAndPolish() {
-        val h = this.head.createCopy()
+        val h = this.head.copy()
         this.head = h
         this.body.detach()
         if (this.head.right == "X") {
