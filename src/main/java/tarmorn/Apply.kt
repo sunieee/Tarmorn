@@ -3,7 +3,7 @@ package tarmorn
 import tarmorn.Settings.load
 import tarmorn.algorithm.RuleEngine
 import tarmorn.data.TripleSet
-import tarmorn.io.IOHelper
+//import tarmorn.io.IOHelper
 import tarmorn.io.RuleReader
 import tarmorn.structure.Rule
 import tarmorn.structure.RuleAcyclic1
@@ -12,13 +12,12 @@ import tarmorn.structure.RuleCyclic
 import java.io.File
 import java.io.IOException
 import java.io.PrintWriter
-import java.util.*
 
 object Apply {
-    private var CONFIG_FILE: String? = "config-apply.properties"
+    private var CONFIG_FILE: String = "config-apply.properties"
 
 
-    private var PW_JOINT_FILE: String? = ""
+    private var PW_JOINT_FILE: String = ""
 
 
     /**
@@ -52,7 +51,7 @@ object Apply {
         Settings.REWRITE_REFLEXIV = false
         assert(Settings.PREDICTION_TYPE == "aRx")
 
-        val values = Apply.getMultiProcessing(Settings.PATH_RULES!!)
+        val values = Apply.getMultiProcessing(Settings.PATH_RULES)
 
         var log: PrintWriter? = null
 
@@ -62,11 +61,11 @@ object Apply {
         log.println("Logfile")
         log.println("~~~~~~~\n")
         log.println()
-        log.println(IOHelper.getParams())
+//        log.println(IOHelper.params)
         log.flush()
 
         val rr = RuleReader()
-        var base = LinkedList<Rule>()
+        var base = mutableListOf<Rule>()
 
 
         if (Settings.PATH_RULES_BASE != "") {
@@ -81,13 +80,12 @@ object Apply {
 
 
             // long indexStartTime = System.currentTimeMillis();
-            var path_output_used: String? = null
-            var path_rules_used: String? = null
+            var path_output_used: String
+            var path_rules_used: String
             if (value == null) {
                 path_output_used = Settings.PATH_OUTPUT
                 path_rules_used = Settings.PATH_RULES
-            }
-            if (value != null) {
+            } else {
                 path_output_used = Settings.PATH_OUTPUT!!.replaceFirst("\\|.*\\|".toRegex(), "" + value)
                 path_rules_used = Settings.PATH_RULES!!.replaceFirst("\\|.*\\|".toRegex(), "" + value)
             }
@@ -98,7 +96,7 @@ object Apply {
             val pw = PrintWriter(File(path_output_used))
 
 
-            if (Settings.PATH_EXPLANATION != null) Settings.EXPLANATION_WRITER =
+             if (Settings.PATH_EXPLANATION != "") Settings.EXPLANATION_WRITER =
                 PrintWriter(File(Settings.PATH_EXPLANATION))
             println("* writing prediction to " + path_output_used)
 
@@ -118,15 +116,15 @@ object Apply {
 
 
             //DecimalFormat df = new DecimalFormat("0.0000");
-            //System.out.println("MEMORY REQUIRED (before reading rules): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
+            //println("MEMORY REQUIRED (before reading rules): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
             var rules = rr.read(path_rules_used)
 
             rules.addAll(base)
 
 
-            //System.out.println("MEMORY REQUIRED (after reading rules): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
+            //println("MEMORY REQUIRED (after reading rules): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
             val rulesSize = rules.size
-            val rulesThresholded = LinkedList<Rule>()
+            val rulesThresholded = mutableListOf<Rule>()
             if (Settings.THRESHOLD_CONFIDENCE > 0.0) {
                 for (r in rules) {
                     // if (r instanceof RuleAcyclic1 && (r.bodysize() == 3 || r.bodysize() == 2) && r.getHead().getConstant().equals(r.getBodyAtom(r.bodysize()-1).getConstant())) continue;
@@ -144,7 +142,7 @@ object Apply {
 
 
             val endTime = System.currentTimeMillis()
-            println("* evaluated " + rulesSize + " rules to propose candiates for " + testSet.getTriples().size + "*2 completion tasks")
+            println("* evaluated " + rulesSize + " rules to propose candiates for " + testSet.triples.size + "*2 completion tasks")
             println("* finished in " + (endTime - startTime) + "ms.")
 
 
@@ -162,7 +160,7 @@ object Apply {
     }
 
 
-    private fun filterTSA(TSA: Array<String?>, TSAindex: Int, rulesThresholded: LinkedList<Rule?>, r: Rule?) {
+    private fun filterTSA(TSA: Array<String>, TSAindex: Int, rulesThresholded: MutableList<Rule>, r: Rule) {
         when (TSA[TSAindex]) {
             "ALL" -> rulesThresholded.add(r)
             "C-1" -> if (r is RuleCyclic && r.bodysize() == 1) rulesThresholded.add(r)
@@ -193,18 +191,18 @@ object Apply {
 			if (rule.isXRule()) xCounter++;
 			if (rule.isYRule()) yCounter++;
 		}
-		System.out.println("XY=" + xyCounter + " X="+ xCounter + " Y=" + yCounter);
+		println("XY=" + xyCounter + " X="+ xCounter + " Y=" + yCounter);
 		
 	}
 	*/
-    fun getMultiProcessing(path1: String): Array<String?> {
-        val token: Array<String?>? = path1.split("\\|".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+    fun getMultiProcessing(path1: String): Array<String> {
+        val token: Array<String>? = path1.split("\\|".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
         if (token!!.size < 2) {
-            return arrayOf<String?>(null)
+            return arrayOf<String>()
         } else {
-            val values: Array<String?>? =
-                token[1]!!.split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
-            return values!!
+            val values: Array<String> =
+                token[1].split(",".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
+            return values
         }
     }
 }

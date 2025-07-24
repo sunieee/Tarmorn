@@ -265,7 +265,7 @@ abstract class Rule {
      * @param ts The triple set used for predicting.
      * @return A list of triples that are predicted,
      */
-    abstract fun getPredictions(ts: TripleSet): ArrayList<Triple?>?
+    abstract fun getPredictions(ts: TripleSet): ArrayList<Triple>?
 
 
     /**
@@ -306,7 +306,7 @@ abstract class Rule {
         val variables: Array<String> =
             arrayOf<String>("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P")
         @JvmField
-        var variables2Indices: HashMap<String?, Int?> = HashMap<String?, Int?>()
+        var variables2Indices: HashMap<String, Int> = HashMap<String, Int>()
 
 
         // ********************

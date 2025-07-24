@@ -38,8 +38,8 @@ class Atom {
         if (a.endsWith(",")) a = a.substring(0, a.length - 1)
         if (a.endsWith(";")) a = a.substring(0, a.length - 1)
 
-        var left: String? = null
-        var right: String? = null
+        var left: String = ""
+        var right: String = ""
 
 
         val t1 = a.split("\\(".toRegex(), limit = 2).toTypedArray()
@@ -88,7 +88,7 @@ class Atom {
     }
 
 
-    fun equals(that: Atom, vThis: String?, vThat: String?): Boolean {
+    fun equals(that: Atom, vThis: String, vThat: String): Boolean {
         if (this.relation != that.relation) return false
         if ((this.left == vThis && that.left == vThat) || (this.left == vThis && that.left == vThat)) return true
         return false
@@ -127,7 +127,7 @@ class Atom {
      * @param g The more general atom.
      * @return
      */
-    fun moreSpecial(that: Atom, vThis: String?, vThat: String?): Boolean {
+    fun moreSpecial(that: Atom, vThis: String, vThat: String): Boolean {
         if (this.relation == that.relation) {
             if ((this.left == vThis && that.left == vThat)) {
                 if (!that.isRightC && this.isRightC) return true
@@ -164,7 +164,7 @@ class Atom {
         return copy
     }
 
-    fun replaceByVariable(constant: String?, variable: String): Int {
+    fun replaceByVariable(constant: String, variable: String): Int {
         var i = 0
         if (this.isLeftC && this.left == constant) {
             this.isLeftC = false
@@ -179,7 +179,7 @@ class Atom {
         return i
     }
 
-    fun replace(vOld: String?, vNew: String, block: Int): Int {
+    fun replace(vOld: String, vNew: String, block: Int): Int {
         if (this.left == vOld && block != -1) {
             this.left = vNew
             return -1
@@ -191,11 +191,11 @@ class Atom {
         return 0
     }
 
-    fun replace(vOld: String?, vNew: String) {
+    fun replace(vOld: String, vNew: String) {
         this.replace(vOld, vNew, 0)
     }
 
-    fun uses(constantOrVariable: String?): Boolean {
+    fun uses(constantOrVariable: String): Boolean {
         if (this.left == constantOrVariable) {
             return true
         }
@@ -215,16 +215,16 @@ class Atom {
         else return this.right
     }
 
-    fun contains(term: String?): Boolean {
+    fun contains(term: String): Boolean {
         if (this.left == term || this.right == term) return true
         return false
     }
 
-    val constant: String?
+    val constant: String
         get() {
             if (this.isLeftC) return this.left
             if (this.isRightC) return this.right
-            return null
+            return ""
         }
 
     fun isInverse(pos: Int): Boolean {
@@ -253,16 +253,16 @@ class Atom {
             return vars
         }
 
-    fun getOtherTerm(v: String?): String? {
-        if (this.left == v) {
-            return this.right
-        } else if (this.right == v) {
-            return this.left
-        }
-        return null
-    }
+//    fun getOtherTerm(v: String): String {
+//        if (this.left == v) {
+//            return this.right
+//        } else if (this.right == v) {
+//            return this.left
+//        }
+//        return null
+//    }
 
-    fun toString(c: String?, v: String?): String {
+    fun toString(c: String, v: String): String {
         return this.relation + "(" + (if (this.left == c) v else this.left) + "," + (if (this.right == c) v else this.right) + ")"
     }
 

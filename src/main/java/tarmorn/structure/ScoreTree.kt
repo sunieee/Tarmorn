@@ -1,14 +1,15 @@
 package tarmorn.structure
 
 import tarmorn.Settings
-import java.util.*
 import kotlin.math.pow
+import java.util.LinkedList
+import java.util.LinkedHashMap
 
 class ScoreTree {
-    var children: ArrayList<ScoreTree>
+    var children: MutableList<ScoreTree>
     private var score = 0.0
     private val explanation: Rule?
-    private var storedValues: HashSet<String>?
+    private var storedValues: MutableSet<String>?
     private var numOfValues: Int
     private var index = 0
     private val root: Boolean
@@ -17,7 +18,7 @@ class ScoreTree {
 
     //private numOf
     constructor() {
-        this.children = ArrayList<ScoreTree>()
+        this.children = mutableListOf<ScoreTree>()
         this.storedValues = null
         this.closed = false
         this.numOfValues = 0
@@ -29,8 +30,8 @@ class ScoreTree {
     constructor(score: Double, values: MutableSet<String>, explanation: Rule?) {
         this.score = score
         this.explanation = explanation
-        this.children = ArrayList<ScoreTree>()
-        this.storedValues = HashSet<String>()
+        this.children = mutableListOf<ScoreTree>()
+        this.storedValues = mutableSetOf<String>()
         this.storedValues!!.addAll(values)
         if (this.storedValues!!.size <= 1) this.closed = true
         else this.closed = false
@@ -41,7 +42,7 @@ class ScoreTree {
 
     fun addValues(score: Double, values: MutableSet<String>, explanation: Rule?) {
         //for(String v : values) {
-        //	System.out.println(score + ": " + v);
+        //	println(score + ": " + v);
         //}
         this.addValues(score, values, explanation, 0)
     }
@@ -110,7 +111,7 @@ class ScoreTree {
         return rep
     }
 
-    private fun toString(indent: String?): String {
+    private fun toString(indent: String): String {
         var rep = ""
         val closingSign = if (this.closed) "X" else "O"
         rep += indent + closingSign + " " + this.score + " [" + this.index + "](" + this.numOfValues + ") -> { "
@@ -126,7 +127,7 @@ class ScoreTree {
         return rep
     }
 
-    fun print(ss: String?, set: HashSet<String?>) {
+    fun print(ss: String, set: HashSet<String>) {
         print(ss + ": ")
         for (s in set) {
             print(s + ",")
@@ -138,7 +139,7 @@ class ScoreTree {
     fun fine(): Boolean {
         if (this.root && this.children.size > 0) {
             val i = this.children.get(children.size - 1).index
-            // System.out.println(i);
+            // println(i);
             if (i >= LOWER_BOUND && i <= UPPER_BOUND) {
                 return this.isFirstUnique
             }
@@ -155,7 +156,7 @@ class ScoreTree {
             return tree.closed
         }
 
-    fun getAsLinkedList(list: LinkedHashMap<String?, Double?>, ps: Double, level: Int, myself: String?) {
+    fun getAsLinkedList(list: LinkedHashMap<String, Double>, ps: Double, level: Int, myself: String) {
         if (this.children.size > 0) {
             for (child in children) {
                 if (this.root) {
@@ -170,29 +171,29 @@ class ScoreTree {
             val psUpdated = ps + EPSILON.pow((level - 1).toDouble()) * this.score
             // print("" + psUpdated, this.storedValues);
             for (v in this.storedValues!!) {
-                var value: String? = v
+                var value: String = v
                 if (v == Settings.REWRITE_REFLEXIV_TOKEN) value = myself
                 list.put(value, psUpdated)
             }
         }
     }
 
-    fun getAsLinkedList(list: LinkedHashMap<String?, Double?>, myself: String?) {
+    fun getAsLinkedList(list: LinkedHashMap<String, Double>, myself: String) {
         this.getAsLinkedList(list, 0.0, 0, myself)
     }
 
 
-    val explainedCandidates: HashMap<String?, HashSet<Rule?>?>
+    val explainedCandidates: HashMap<String, HashSet<Rule>>
         get() {
             val explainedCandidates =
-                HashMap<String?, HashSet<Rule?>?>()
+                HashMap<String, HashSet<Rule>>()
             val explanations = LinkedList<Rule>()
             this.getExplainedCandidates(explainedCandidates, explanations, 0)
             return explainedCandidates
         }
 
     fun getExplainedCandidates(
-        explainedCandidates: HashMap<String?, HashSet<Rule?>?>,
+        explainedCandidates: HashMap<String, HashSet<Rule>>,
         explanations: LinkedList<Rule>,
         level: Int
     ) {
@@ -209,7 +210,7 @@ class ScoreTree {
             }
         }
         if (!this.root) {
-            val collectedExplanations = HashSet<Rule?>()
+            val collectedExplanations = HashSet<Rule>()
             collectedExplanations.addAll(explanations)
             for (v in this.storedValues!!) {
                 explainedCandidates.put(v, collectedExplanations)
@@ -372,7 +373,7 @@ class ScoreTree {
             println(tree)
             println("precise enough " + tree.fine())
 
-            val list = LinkedHashMap<String?, Double?>()
+            val list = LinkedHashMap<String, Double>()
             tree.getAsLinkedList(list, 0.0, 0, "blubber")
 
             for (e in list.entries) {

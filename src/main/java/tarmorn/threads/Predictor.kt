@@ -11,21 +11,21 @@ import tarmorn.structure.Rule
  *
  */
 class Predictor(
-    private val testSet: TripleSet?,
-    private val trainingSet: TripleSet?,
-    private val validationSet: TripleSet?,
+    private val testSet: TripleSet,
+    private val trainingSet: TripleSet,
+    private val validationSet: TripleSet,
     private val k: Int,
-    private val relation2Rules4Prediction: HashMap<String?, ArrayList<Rule?>?>?
+    private val relation2Rules4Prediction: MutableMap<String, MutableList<Rule>>
 ) : Thread() {
     override fun run() {
-        var triple = RuleEngine.getNextPredictionTask()
+        var triple = RuleEngine.nextPredictionTask
         // Rule rule = null;
         while (triple != null) {
-            // System.out.println(this.getName() + " making prediction for " + triple);
+            // println(this.getName() + " making prediction for " + triple);
             if (Settings.AGGREGATION_ID == 1) {
                 RuleEngine.predictMax(testSet, trainingSet, validationSet, k, relation2Rules4Prediction, triple)
             }
-            triple = RuleEngine.getNextPredictionTask()
+            triple = RuleEngine.nextPredictionTask
         }
     }
 }

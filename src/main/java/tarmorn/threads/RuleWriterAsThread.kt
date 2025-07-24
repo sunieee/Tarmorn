@@ -7,27 +7,26 @@ import tarmorn.structure.RuleZero
 import java.io.File
 import java.io.IOException
 import java.io.PrintWriter
-import java.util.*
 
 class RuleWriterAsThread : Thread {
-    private val rules: LinkedList<Rule>
-    private val filepath: String?
+    private val rules: MutableList<Rule>
+    private val filepath: String
     private val elapsedSeconds: Int
     private val log: PrintWriter?
     private val snapshotCounter: Int
 
     constructor(
-        filepath: String?,
+        filepath: String,
         snapshotCounter: Int,
-        rules307: Array<HashSet<Rule?>>,
+        rules307: Array<MutableSet<Rule>>,
         log: PrintWriter?,
         elapsedSeconds: Int
     ) {
-        this.rules = LinkedList<Rule>()
+        this.rules = mutableListOf<Rule>()
         for (i in 0..306) {
             val ruleSet = rules307[i]
             for (r in ruleSet) {
-                this.rules.add(r!!)
+                this.rules.add(r)
             }
         }
         this.filepath = filepath
@@ -37,16 +36,16 @@ class RuleWriterAsThread : Thread {
     }
 
     constructor(
-        filepath: String?,
+        filepath: String,
         snapshotCounter: Int,
-        ruless: ArrayList<HashSet<Rule?>>,
+        ruless: MutableList<MutableSet<Rule>>,
         log: PrintWriter?,
         elapsedSeconds: Int
     ) {
-        this.rules = LinkedList<Rule>()
+        this.rules = mutableListOf<Rule>()
         for (ruleSet in ruless) {
             for (r in ruleSet) {
-                this.rules.add(r!!)
+                this.rules.add(r)
             }
         }
         this.filepath = filepath
@@ -61,7 +60,7 @@ class RuleWriterAsThread : Thread {
 
     /*
 	private void write() throws FileNotFoundException {
-		System.out.println("* starting to write rules to " + filepath);
+		println("* starting to write rules to " + filepath);
 		long start = System.currentTimeMillis();
 		
 		int i = 0;
@@ -74,7 +73,7 @@ class RuleWriterAsThread : Thread {
 		pw.close();
 		long stop = System.currentTimeMillis();
 		long elapsed = stop - start;
-		System.out.println("* wrote " + i + " rules to " + filepath + " within " + elapsed +  " ms");
+		println("* wrote " + i + " rules to " + filepath + " within " + elapsed +  " ms");
 	}
 	*/
     private fun storeRules() {

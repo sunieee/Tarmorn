@@ -98,7 +98,7 @@ class RuleUntyped : Rule {
         return copy
     }
 
-    protected fun replaceByVariable(constant: String?, variable: String): Int {
+    protected fun replaceByVariable(constant: String, variable: String): Int {
         var count = this.head.replaceByVariable(constant, variable)
         for (batom in this.body) {
             val bcount = batom.replaceByVariable(constant, variable)
@@ -178,7 +178,7 @@ class RuleUntyped : Rule {
         return null
     }
 
-    override fun getPredictions(ts: TripleSet): ArrayList<Triple?>? {
+    override fun getPredictions(ts: TripleSet): ArrayList<Triple>? {
         System.err.println("method not available for an untyped rule")
         return null
     }

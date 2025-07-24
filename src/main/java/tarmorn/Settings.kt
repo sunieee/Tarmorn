@@ -8,23 +8,23 @@ import java.io.PrintWriter
 object Settings {
     // Path to the file that contains the triple set used for learning the rules.
     @JvmField
-    var PATH_TRAINING: String? = "data/FB15k/train.txt"
+    var PATH_TRAINING: String = "data/FB15k/train.txt"
     // Path to the file that contains the triple set used for to test the rules.
     @JvmField
-    var PATH_TEST: String? = "data/FB15k/test.txt"
+    var PATH_TEST: String = "data/FB15k/test.txt"
     // Path to the file that contains the triple set used validation purpose (e.g. learning hyper parameter).
     @JvmField
-    var PATH_VALID: String? = "data/FB15k/valid.txt"
+    var PATH_VALID: String = "data/FB15k/valid.txt"
     // Path to the file that contains the rules that will be refined or will be sued for prediction.
     @JvmField
-    var PATH_RULES: String? = "out/FB15k/rules-100"
+    var PATH_RULES: String = "out/FB15k/rules-100"
     // Path to the file that contains the rules that will be used as base,
     // i.e. this rule set will be added to all other rule sets loaded.
     @JvmField
-    var PATH_RULES_BASE: String? = ""
+    var PATH_RULES_BASE: String = ""
     // Path to the output file where the rules / predictions  will be stored.
     @JvmField
-    var PATH_OUTPUT: String? = "out/FB15k/preds-100"
+    var PATH_OUTPUT: String = "out/FB15k/preds-100"
     // The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
     @JvmField
     var WORKER_THREADS: Int = 20
@@ -43,7 +43,7 @@ object Settings {
     var REWRITE_REFLEXIV: Boolean = true
 
     @JvmField
-    var REWRITE_REFLEXIV_TOKEN: String? = "me_myself_i"
+    var REWRITE_REFLEXIV_TOKEN: String = "me_myself_i"
 
     @JvmField
     var BEAM_NOT_DFS: Boolean = true
@@ -63,9 +63,9 @@ object Settings {
     var SAFE_PREFIX_MODE: Boolean = false
 
     @JvmField
-    var PREFIX_ENTITY: String? = "e"
+    var PREFIX_ENTITY: String = "e"
     @JvmField
-    var PREFIX_RELATION: String? = "r"
+    var PREFIX_RELATION: String = "r"
 
     // Suppresses any rules with constants.
     @JvmField
@@ -114,16 +114,16 @@ object Settings {
     // Defines the prediction type which also influences the usage of the other parameters.
     // Possible values are currently aRx and xRy.
     @JvmField
-    var PREDICTION_TYPE: String? = "aRx"
+    var PREDICTION_TYPE: String = "aRx"
 
     // Path to the output file where statistics of the dice are stored.
-    // Can be used in reinforcement learning only. If the null value is not overwritten, nothing is stored.
+    // Can be used in reinforcement learning only. If "", nothing is stored.
     @JvmField
-    var PATH_DICE: String? = null
+    var PATH_DICE: String = ""
 
-    // Path to the output file where the explanations are stored. If not set no explanations are stored.
+    // Path to the output file where the explanations are stored. If "", no explanations are stored.
     @JvmField
-    var PATH_EXPLANATION: String? = null
+    var PATH_EXPLANATION: String = ""
 
     // Takes a snapshot of the rules refined after each time interval specified in seconds.
     @JvmField
@@ -223,7 +223,7 @@ object Settings {
     // Defines how to combine probabilities that come from different rules
     // Possible values are: maxplus, max2, noisyor, maxgroup (not yet implemented)
     @JvmField
-    var AGGREGATION_TYPE: String? = "maxplus"
+    var AGGREGATION_TYPE: String = "maxplus"
 
     // This value is overwritten by the choice made vie the AGGREGATION_TYPE parameter
     @JvmField
@@ -281,7 +281,7 @@ object Settings {
     @JvmField
     var EXPLANATION_WRITER: PrintWriter? = null
     @JvmField
-    var SINGLE_RELATIONS: Array<String?>? = null
+    var SINGLE_RELATIONS: Array<String>? = null
 
     @JvmStatic
     fun load() {
@@ -289,7 +289,7 @@ object Settings {
         try {
             FileInputStream(yamlPath).use { `in` ->
                 val yaml = Yaml()
-                val config = yaml.load<MutableMap<String?, Any?>>(`in`)
+                val config = yaml.load<MutableMap<String, Any>>(`in`)
                 loadFromYaml(config)
             }
         } catch (e: IOException) {
@@ -302,7 +302,7 @@ object Settings {
         if (AGGREGATION_TYPE == "maxgroup") AGGREGATION_ID = 4
     }
 
-    fun loadFromYaml(config: MutableMap<String?, Any?>) {
+    fun loadFromYaml(config: MutableMap<String, Any>) {
         for (field in Settings::class.java.getFields()) {
             val value = config.get(field.getName())
             if (value != null) {

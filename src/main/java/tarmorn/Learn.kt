@@ -2,7 +2,7 @@ package tarmorn
 
 import tarmorn.Settings.load
 import tarmorn.data.TripleSet
-import tarmorn.io.IOHelper
+//import tarmorn.io.IOHelper
 import tarmorn.structure.Dice
 import tarmorn.structure.Rule
 import tarmorn.threads.RuleWriterAsThread
@@ -10,14 +10,14 @@ import tarmorn.threads.Scorer
 import java.io.FileNotFoundException
 import java.io.PrintWriter
 import java.text.DecimalFormat
-import java.util.*
+import java.util.Collections
 import kotlin.math.abs
 
 object Learn {
     private var timeStamp: Long = 0
 
     // used at the begging to check if all threads are really available
-    private val availableThreads = HashSet<Int?>()
+    private val availableThreads = mutableSetOf<Int>()
 
     private var rwt: RuleWriterAsThread? = null
 
@@ -25,16 +25,11 @@ object Learn {
 	 * Lets hope that people will not run AnyBURl with more than 100 cores ... up to these 307 buckets should be sufficient
 	 * I somehow like the number 307
 	 */
-    private val rules307: Array<HashSet<Rule?>?> = arrayOfNulls<HashSet<Rule?>>(307)
-
-    init {
-        for (i in 0..306) {
-            val anonymRuleSet = HashSet<Rule?>()
-            rules307[i] = HashSet<Rule?>(Collections.synchronizedSet<Rule?>(anonymRuleSet))
-        }
+    private val rules307: Array<MutableSet<Rule>> = Array(307) {
+        Collections.synchronizedSet(mutableSetOf<Rule>())
     }
 
-    var stats: Array<IntArray?> = arrayOf()
+    var stats: Array<IntArray> = arrayOf()
 
     var dice: Dice? = null
 
@@ -64,18 +59,18 @@ object Learn {
 
 
         //DecimalFormat df = new DecimalFormat("0.0000");
-        //System.out.println("MEMORY REQUIRED (before precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
+        //println("MEMORY REQUIRED (before precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
         ts.setupListStructure()
         ts.precomputeNRandomEntitiesPerRelation(Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS)
         println(" done.")
 
 
-        //System.out.println("MEMORY REQUIRED (after precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
+        //println("MEMORY REQUIRED (after precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
         val indexEndTime = System.currentTimeMillis()
         log.println("indexing dataset: " + Settings.PATH_TRAINING)
         log.println("time elapsed: " + (indexEndTime - indexStartTime) + "ms")
         log.println()
-        log.println(IOHelper.getParams())
+//        log.println(IOHelper.params)
         log.flush()
 
 
@@ -89,7 +84,7 @@ object Learn {
 
         // new
         activeThread = BooleanArray(Settings.WORKER_THREADS)
-        stats = Array<IntArray?>(Settings.WORKER_THREADS) { IntArray(3) }
+        stats = Array<IntArray>(Settings.WORKER_THREADS) { IntArray(3) }
 
         val scorer = arrayOfNulls<Scorer>(Settings.WORKER_THREADS)
         for (threadCounter in 0..<Settings.WORKER_THREADS) {
@@ -126,7 +121,7 @@ object Learn {
         var snapshotIndex = 0
         var batchStart = System.currentTimeMillis()
         while (done == false) {
-            // System.out.println("main thread sleeps for 10 ms");
+            // println("main thread sleeps for 10 ms");
             Thread.sleep(10)
 
             now = System.currentTimeMillis()
@@ -141,8 +136,8 @@ object Learn {
                 // this needs t be done to avoid that a zeror time batch conducted because of long rule storage times
                 batchStart = System.currentTimeMillis()
                 now = System.currentTimeMillis()
-                // System.out.println("currentIndex=" +  currentIndex +  " snapshotIndex=" + snapshotIndex);
-                // System.out.println("now: " + now);
+                // println("currentIndex=" +  currentIndex +  " snapshotIndex=" + snapshotIndex);
+                // println("now: " + now);
             }
 
 
@@ -150,9 +145,9 @@ object Learn {
                 report = true
                 active = false
 
-                /** System.out.println(">>> set status to inactive"); */
+                /** println(">>> set status to inactive"); */
                 do {
-                    // System.out.println(">>> waiting for threads to report");
+                    // println(">>> waiting for threads to report");
                     Thread.sleep(10)
                 } while (!allThreadsReported())
                 batchCounter++
@@ -168,7 +163,7 @@ object Learn {
 
                 // System.out.print(">>> Batch #" + batchCounter + " [" + numOfRules + " mined in " + (now - startTime) + "ms] ");
                 // System.out.print(">>> Batch #" + batchCounter + " ");
-                // System.out.println("MEMORY REQUIRED: " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
+                // println("MEMORY REQUIRED: " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
                 for (t in scorer.indices) {
                     val type = dice!!.ask(batchCounter)
                     // System.out.print(type + "|");
@@ -225,7 +220,7 @@ object Learn {
             rwt = RuleWriterAsThread(
                 Settings.PATH_OUTPUT,
                 if (done) 0 else Settings.SNAPSHOTS_AT!![snapshotIndex],
-                rules307.map { it!! }.toTypedArray(), // 转换为非空数组
+                rules307,
                 log,
                 elapsedSeconds
             )
@@ -303,10 +298,10 @@ object Learn {
         if (active) return true
         if (!report) return true
         else if (activeThread[threadId]) {
-            // System.out.println("retrieved message from thread " + threadId + " created=" + createdRules + " stored=" + storedRules + " produced=" +producedScore);
+            // println("retrieved message from thread " + threadId + " created=" + createdRules + " stored=" + storedRules + " produced=" +producedScore);
 
             val type = Dice.encode(zero, cyclic, acyclic, len)
-            // System.out.println("type of thread: " + type + " cyclic=" + cyclic + " len=" + len);
+            // println("type of thread: " + type + " cyclic=" + cyclic + " len=" + len);
             stats[threadId]!![0] = storedRules
             stats[threadId]!![1] = createdRules
             // connect to the dice 
@@ -336,7 +331,7 @@ object Learn {
      *
      * @param scorer The set of threads to be activated.
      */
-    fun activateAllThreads(scorer: Array<Scorer?>?) {
+    fun activateAllThreads(scorer: Array<Scorer?>) {
         for (i in activeThread.indices) {
             activeThread[i] = true
         }
@@ -344,7 +339,7 @@ object Learn {
     }
 
 
-    fun showElapsedMoreThan(duration: Long, message: String?) {
+    fun showElapsedMoreThan(duration: Long, message: String) {
         val now = System.currentTimeMillis()
         val elapsed = now - timeStamp
         if (elapsed > duration) {
@@ -404,7 +399,7 @@ object Learn {
 
     @JvmStatic
     fun areAllThere(): Boolean {
-        // System.out.println("there are " + availableThreads.size() + " threads here" );
+        // println("there are " + availableThreads.size() + " threads here" );
         if (availableThreads.size == Settings.WORKER_THREADS) return true
         return false
     }

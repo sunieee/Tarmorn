@@ -8,7 +8,7 @@ import tarmorn.structure.Rule
 import java.io.IOException
 
 object Eval {
-    private var CONFIG_FILE: String? = "config-eval.properties"
+    private var CONFIG_FILE: String = "config-eval.properties"
 
 
     /**
@@ -67,14 +67,14 @@ object Eval {
         if (values.size == 1) {
             val rs = ResultSet(PATH_PREDICTIONS, true, TOP_K)
             computeScores(rs, testSet, hitsAtK)
-            println(hitsAtK.getHitsAtK(0) + "   " + hitsAtK.getHitsAtK(2) + "   " + hitsAtK.getHitsAtK(9) + "   " + hitsAtK.getApproxMRR())
+            println(hitsAtK.getHitsAtK(0) + "   " + hitsAtK.getHitsAtK(2) + "   " + hitsAtK.getHitsAtK(9) + "   " + hitsAtK.approxMRR)
         } else {
             for (value in values) {
                 val rsPath = PATH_PREDICTIONS.replaceFirst("\\|.*\\|".toRegex(), "" + value)
                 val rs = ResultSet(rsPath, true, TOP_K)
                 computeScores(rs, testSet, hitsAtK)
-                println(hitsAtK.getHitsAtK(0) + "   " + hitsAtK.getHitsAtK(2) + "   " + hitsAtK.getHitsAtK(9) + "   " + hitsAtK.getApproxMRR())
-                sb.append(value + "   " + hitsAtK.getHitsAtK(0) + "   " + hitsAtK.getHitsAtK(9) + "   " + hitsAtK.getApproxMRR() + "\n")
+                println(hitsAtK.getHitsAtK(0) + "   " + hitsAtK.getHitsAtK(2) + "   " + hitsAtK.getHitsAtK(9) + "   " + hitsAtK.approxMRR)
+                sb.append(value + "   " + hitsAtK.getHitsAtK(0) + "   " + hitsAtK.getHitsAtK(9) + "   " + hitsAtK.approxMRR + "\n")
             }
             println("-----")
             println(sb)
@@ -83,7 +83,7 @@ object Eval {
 
 
     private fun computeScores(rs: ResultSet, gold: TripleSet, hitsAtK: HitsAtK) {
-        for (t in gold.getTriples()) {
+        for (t in gold.triples) {
             val cand1 = rs.getHeadCandidates(t.toString())
             // String c1 = cand1.size() > 0 ? cand1.get(0) : "-";
             hitsAtK.evaluateHead(cand1, t)

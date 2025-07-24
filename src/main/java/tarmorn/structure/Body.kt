@@ -75,8 +75,8 @@ class Body : Iterable<Atom> {
         if (thatObject is Body) {
             val that = thatObject
             if (this.literals.size == that.literals.size) {
-                val variablesThis2That = HashMap<String?, String?>()
-                val variablesThat2This = HashMap<String?, String?>()
+                val variablesThis2That = HashMap<String, String>()
+                val variablesThat2This = HashMap<String, String>()
                 for (i in this.literals.indices) {
                     val atom1 = this.literals.get(i)
                     val atom2 = that.literals.get(i)
@@ -108,8 +108,8 @@ class Body : Iterable<Atom> {
     }
 
     private fun checkValuesAndVariables(
-        variablesThis2That: HashMap<String?, String?>,
-        variablesThat2This: HashMap<String?, String?>,
+        variablesThis2That: HashMap<String, String>,
+        variablesThat2This: HashMap<String, String>,
         atom1: Atom,
         atom2: Atom,
         leftNotRight: Boolean
@@ -149,7 +149,7 @@ class Body : Iterable<Atom> {
 
     val numOfVariables: Int
         get() {
-            val variables = HashSet<String?>()
+            val variables = HashSet<String>()
             for (a in this.literals) {
                 variables.addAll(a.variables)
             }

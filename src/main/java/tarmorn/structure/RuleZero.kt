@@ -71,7 +71,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     }
 
 
-    override fun getPredictions(ts: TripleSet): ArrayList<Triple?>? {
+    override fun getPredictions(ts: TripleSet): ArrayList<Triple>? {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 

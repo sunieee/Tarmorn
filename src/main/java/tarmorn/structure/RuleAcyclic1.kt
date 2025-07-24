@@ -60,7 +60,7 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
         }
 
 
-    fun toXYString(): String? {
+    fun toXYString(): String {
         if (this.head.left == "X") {
             val c = this.head.right
             val sb = StringBuilder()
@@ -83,7 +83,7 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
         }
         System.err.println("toXYString of the following rule not implemented: " + this)
         System.exit(1)
-        return null
+        return ""
     }
 
 

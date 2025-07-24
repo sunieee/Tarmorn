@@ -4,16 +4,16 @@ import tarmorn.Settings
 import java.io.FileNotFoundException
 import java.io.PrintWriter
 import java.text.DecimalFormat
-import java.util.*
+import java.util.Random
 
-class Dice @JvmOverloads constructor(filePath: String? = null) {
-    private var OUTPUT_PATH: String? = null
+class Dice @JvmOverloads constructor(filePath: String = "") {
+    private var OUTPUT_PATH: String = ""
 
     // [batch][type]
-    private val timestamps = ArrayList<Long?>()
+    private val timestamps = ArrayList<Long>()
 
-    private val scores = ArrayList<Array<Double?>?>()
-    private val freqs = ArrayList<Array<Int?>?>()
+    private val scores = ArrayList<Array<Double>>()
+    private val freqs = ArrayList<Array<Int>>()
 
     private val currentScores = DoubleArray(SUPPORTED_TYPES)
     private val currentFreqs = IntArray(SUPPORTED_TYPES)
@@ -99,7 +99,7 @@ class Dice @JvmOverloads constructor(filePath: String? = null) {
         }
         this.relevantScoresComputed = true
 
-        // System.out.println();
+        // println();
     }
 
     fun resetScores() {
@@ -112,15 +112,15 @@ class Dice @JvmOverloads constructor(filePath: String? = null) {
 
     @Synchronized
     fun addScore(index: Int, score: Double) {
-        // System.out.println("type=" + index + " scored:" + score);
+        // println("type=" + index + " scored:" + score);
         this.currentScores[index] += score
         this.currentFreqs[index] += 1
         if (score == 0.0) this.currentScores[index] += GAMMA
     }
 
     fun saveScores() {
-        this.scores.add(arrayOfNulls<Double>(SUPPORTED_TYPES))
-        this.freqs.add(arrayOfNulls<Int>(SUPPORTED_TYPES))
+        this.scores.add(DoubleArray(SUPPORTED_TYPES).toTypedArray())
+        this.freqs.add(IntArray(SUPPORTED_TYPES).toTypedArray())
         this.timestamps.add(System.currentTimeMillis())
         val lastScores = this.scores.get(this.scores.size - 1)!!
         val lastFreqs = this.freqs.get(this.scores.size - 1)!!
@@ -132,9 +132,9 @@ class Dice @JvmOverloads constructor(filePath: String? = null) {
     }
 
 
-    fun write(suffix: String?) {
-        // System.out.println("writing to " + this.OUTPUT_PATH + suffix);
-        if (this.OUTPUT_PATH == null) return
+    fun write(suffix: String) {
+        // println("writing to " + this.OUTPUT_PATH + suffix);
+        if (this.OUTPUT_PATH == "") return
         try {
             val pw = PrintWriter(this.OUTPUT_PATH + "_" + suffix)
 

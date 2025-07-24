@@ -62,7 +62,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 this.onlyXY = true
             }
         }
-        //System.out.println("THREAD-" + this.id + " using parameters C=" + this.mineParamCyclic + " L=" + this.mineParamLength);
+        //println("THREAD-" + this.id + " using parameters C=" + this.mineParamCyclic + " L=" + this.mineParamLength);
     }
 
     private val type: String
@@ -83,7 +83,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 // TODO Auto-generated catch block
                 e.printStackTrace()
             }
-            // System.out.println("THREAD-" + this.id + " waiting for the others");
+            // println("THREAD-" + this.id + " waiting for the others");
         }
         println("THREAD-" + this.id + " starts to work with L=" + this.mineParamLength + " C=" + this.type + " ")
 
@@ -116,7 +116,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 if (mineParamZero) {
                     val path = sampler.samplePath(this.mineParamLength + 1, false)
 
-                    // System.out.println("zero (sample with steps=" + (this.mineParamLength+1) + "):" + path);
+                    // println("zero (sample with steps=" + (this.mineParamLength+1) + "):" + path);
                     if (path != null) {
                         val learnedRules = RuleFactory.getGeneralizations(path, false)
                         if (!active) {
@@ -136,12 +136,12 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
                                     //long t2 = System.currentTimeMillis();
                                     //if (t2 - t1 > 500) {
-                                    //	System.out.println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
+                                    //	println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
                                     //}
                                     if (learnedRule.confidence >= Settings.THRESHOLD_CONFIDENCE && learnedRule.correctlyPredicted >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.correctlyPredicted > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
                                         if (active) {
                                             storeRule(learnedRule)
-                                            // System.out.println(">>> " +  learnedRule);
+                                            // println(">>> " +  learnedRule);
                                             this.producedScore += getScoringGain(
                                                 learnedRule,
                                                 learnedRule.correctlyPredicted,
@@ -172,9 +172,9 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 if (mineParamCyclic) {
                     val path = sampler.samplePath(this.mineParamLength + 1, true)
                     if (path != null && path.isValid) {
-                        // System.out.println(path);
+                        // println(path);
                         val learnedRules = RuleFactory.getGeneralizations(path, this.onlyXY)
-                        // System.out.println(learnedRules.size());
+                        // println(learnedRules.size());
                         if (!active) {
                             try {
                                 sleep(10)
@@ -195,7 +195,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
                                     //long t2 = System.currentTimeMillis();
                                     //if (t2 - t1 > 500) {
-                                    //	System.out.println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
+                                    //	println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
                                     //}
                                     if (learnedRule.confidence >= Settings.THRESHOLD_CONFIDENCE && learnedRule.correctlyPredicted >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.correctlyPredicted > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
                                         if (active) {
@@ -216,7 +216,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                                 }
 
 
-                                // if (l2 - l1 > 100) System.out.println("uppps");
+                                // if (l2 - l1 > 100) println("uppps");
                             }
                         }
                     }
@@ -248,7 +248,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
                                     //long t2 = System.currentTimeMillis();
                                     //if (t2 - t1 > 500) {
-                                    //	System.out.println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
+                                    //	println("* elapsed: " + (t2 - t1) + " >>> " + learnedRule);
                                     //}
                                     if (learnedRule.confidence >= Settings.THRESHOLD_CONFIDENCE && learnedRule.correctlyPredicted >= Settings.THRESHOLD_CORRECT_PREDICTIONS && (learnedRule !is RuleZero || learnedRule.correctlyPredicted > Settings.THRESHOLD_CORRECT_PREDICTIONS_ZERO)) {
                                         if (active) {
@@ -264,7 +264,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                                     }
                                 } else {
                                 }
-                                // if (l2 - l1 > 200) System.out.println("uppps");
+                                // if (l2 - l1 > 200) println("uppps");
                             }
                         }
                     }

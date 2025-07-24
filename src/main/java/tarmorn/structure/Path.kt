@@ -42,7 +42,7 @@ class Path(var nodes: Array<String>, var markers: CharArray) {
         get() {
             val xconst = this.nodes[0]
             val yconst = this.nodes[2]
-            val visitedEntities = HashSet<String?>()
+            val visitedEntities = HashSet<String>()
             run {
                 var i = 4
                 while (i < nodes.size - 2) {
@@ -70,8 +70,8 @@ class Path(var nodes: Array<String>, var markers: CharArray) {
      *
      */
     fun isNonCyclic(t: Triple): Boolean {
-        // System.out.println("path:   " + this);
-        // System.out.println("triple: " + t);
+        // println("path:   " + this);
+        // println("triple: " + t);
         var i = 4
         while (i < nodes.size) {
             if (t.h == nodes[i]) return false

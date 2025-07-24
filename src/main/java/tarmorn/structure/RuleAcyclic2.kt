@@ -11,7 +11,7 @@ class RuleAcyclic2(r: RuleUntyped) : RuleAcyclic(r) {
         get() {
         if (this.unboundVariable0 != null) return this.unboundVariable0
         // if (this.body.get(this.body.size()-1).isLeftC() || this.body.get(this.body.size()-1).isRightC()) return null;
-        val counter = HashMap<String?, Int?>()
+        val counter = HashMap<String, Int>()
         for (atom in this.body) {
             if (atom.left != "X" && atom.left != "Y") {
                 if (counter.containsKey(atom.left)) counter.put(atom.left, 2)
@@ -68,14 +68,14 @@ class RuleAcyclic2(r: RuleUntyped) : RuleAcyclic(r) {
         val unboundVariable = this.unboundVariable
         val last = this.body.last
         if (last.right == unboundVariable) {
-            val values = HashSet<String?>()
+            val values = HashSet<String>()
             for (t in triples.getTriplesByRelation(last.relation)) {
                 values.add(t.h)
                 if (values.size >= Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) return values.size
             }
             return values.size
         } else {
-            val values = HashSet<String?>()
+            val values = HashSet<String>()
             for (t in triples.getTriplesByRelation(last.relation)) {
                 values.add(t.t)
                 if (values.size >= Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) return values.size
