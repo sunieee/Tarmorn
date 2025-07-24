@@ -16,30 +16,26 @@ import kotlin.math.abs
 object Learn {
     private var timeStamp: Long = 0
 
-    // used at the begging to check if all threads are really available
+    // used at the beginning to check if all threads are really available
     private val availableThreads = mutableSetOf<Int>()
 
     private var rwt: RuleWriterAsThread? = null
 
     /*
-	 * Lets hope that people will not run AnyBURl with more than 100 cores ... up to these 307 buckets should be sufficient
-	 * I somehow like the number 307
-	 */
+     * Lets hope that people will not run AnyBURl with more than 100 cores... 
+     * up to these 307 buckets should be sufficient. I somehow like the number 307
+     */
     private val rules307: Array<MutableSet<Rule>> = Array(307) {
         Collections.synchronizedSet(mutableSetOf<Rule>())
     }
 
-    var stats: Array<IntArray> = arrayOf()
-
+    var stats: Array<IntArray> = emptyArray()
     var dice: Dice? = null
-
 
     @JvmField
     var active: Boolean = true
     var report: Boolean = false
-
     var activeThread: BooleanArray = BooleanArray(0)
-
     var finished: Boolean = false
 
 
@@ -49,14 +45,12 @@ object Learn {
         load()
 
         val df = DecimalFormat("000000.00")
-        val log = PrintWriter(Settings.PATH_OUTPUT + "_log")
+        val log = PrintWriter("${Settings.PATH_OUTPUT}_log")
         log.println("Logfile")
         log.println("~~~~~~~\n")
 
         val indexStartTime = System.currentTimeMillis()
-
         val ts = TripleSet(Settings.PATH_TRAINING, true)
-
 
         //DecimalFormat df = new DecimalFormat("0.0000");
         //println("MEMORY REQUIRED (before precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
@@ -64,32 +58,30 @@ object Learn {
         ts.precomputeNRandomEntitiesPerRelation(Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS)
         println(" done.")
 
-
         //println("MEMORY REQUIRED (after precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
         val indexEndTime = System.currentTimeMillis()
-        log.println("indexing dataset: " + Settings.PATH_TRAINING)
-        log.println("time elapsed: " + (indexEndTime - indexStartTime) + "ms")
+        log.println("indexing dataset: ${Settings.PATH_TRAINING}")
+        log.println("time elapsed: ${indexEndTime - indexStartTime}ms")
         log.println()
 //        log.println(IOHelper.params)
         log.flush()
 
-
         var now = System.currentTimeMillis()
 
-
         // Thread[] scorer = new Thread[Learn.WORKER_THREADS];
-        dice = Dice(Settings.PATH_DICE)
-        dice!!.computeRelevenatScores()
-        dice!!.saveScores()
+        dice = Dice(Settings.PATH_DICE).apply {
+            computeRelevenatScores()
+            saveScores()
+        }
 
         // new
         activeThread = BooleanArray(Settings.WORKER_THREADS)
-        stats = Array<IntArray>(Settings.WORKER_THREADS) { IntArray(3) }
+        stats = Array(Settings.WORKER_THREADS) { IntArray(3) }
 
-        val scorer = arrayOfNulls<Scorer>(Settings.WORKER_THREADS)
-        for (threadCounter in 0..<Settings.WORKER_THREADS) {
+        val scorer = Array<Scorer?>(Settings.WORKER_THREADS) { null }
+        repeat(Settings.WORKER_THREADS) { threadCounter ->
             Thread.sleep(50)
-            println("* creating worker thread #" + threadCounter)
+            println("* creating worker thread #$threadCounter")
             val s = Scorer(ts, threadCounter)
 
             val type = dice!!.ask(0)
@@ -104,11 +96,9 @@ object Learn {
             activeThread[threadCounter] = true
         }
 
-
         dice!!.resetScores()
 
         val done = false
-
         var batchCounter = 0
 
 
@@ -156,15 +146,12 @@ object Learn {
                 dice!!.computeRelevenatScores()
                 dice!!.saveScores()
 
-
-                var numOfRules = 0
-                for (i in 0..306) numOfRules += rules307[i]!!.size
-
+                val numOfRules = rules307.sumOf { it.size }
 
                 // System.out.print(">>> Batch #" + batchCounter + " [" + numOfRules + " mined in " + (now - startTime) + "ms] ");
                 // System.out.print(">>> Batch #" + batchCounter + " ");
                 // println("MEMORY REQUIRED: " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
-                for (t in scorer.indices) {
+                scorer.indices.forEach { t ->
                     val type = dice!!.ask(batchCounter)
                     // System.out.print(type + "|");
                     val zero = Dice.decodedDiceZero(type)
@@ -209,14 +196,13 @@ object Learn {
                 e1.printStackTrace()
             }
 
-
             // ArrayList<Set<? extends Rule>> allUsefulRules = new ArrayList<Set<? extends Rule>>();
 
-
             // ...
-            if (!done) println("\n>>> CREATING SNAPSHOT " + snapshotIndex + " after " + elapsedSeconds + " seconds")
-            else println("\n>>> CREATING FINAL SNAPSHOT 0 after " + elapsedSeconds + " seconds")
-            val suffix = "" + (if (done) 0 else Settings.SNAPSHOTS_AT!![snapshotIndex])
+            if (!done) println("\n>>> CREATING SNAPSHOT $snapshotIndex after $elapsedSeconds seconds")
+            else println("\n>>> CREATING FINAL SNAPSHOT 0 after $elapsedSeconds seconds")
+            
+            val suffix = if (done) "0" else Settings.SNAPSHOTS_AT!![snapshotIndex].toString()
             rwt = RuleWriterAsThread(
                 Settings.PATH_OUTPUT,
                 if (done) 0 else Settings.SNAPSHOTS_AT!![snapshotIndex],
@@ -234,8 +220,7 @@ object Learn {
                 println(">>> Bye, bye.")
                 finished = true
 
-
-                while (rwt != null && rwt!!.isAlive()) {
+                while (rwt?.isAlive() == true) {
                     try {
                         Thread.sleep(1000)
                     } catch (e: InterruptedException) {
@@ -243,7 +228,6 @@ object Learn {
                     }
                     println(">>> waiting for rule writer thread to finish")
                 }
-
 
                 System.exit(1)
             }
@@ -254,22 +238,17 @@ object Learn {
 
 
     fun printStatsOfBatch() {
-        for (i in stats.indices) {
-            print("Worker #" + i + ": ")
-            for (j in 0..<stats[i]!!.size - 1) {
-                print(stats[i]!![j].toString() + " / ")
-            }
-            println(stats[i]!![stats[i]!!.size - 1])
+        stats.forEachIndexed { i, stat ->
+            print("Worker #$i: ")
+            stat.take(stat.size - 1).forEach { print("$it / ") }
+            println(stat.last())
         }
     }
 
     val saturationOfBatch: Double
         get() {
-            var storedTotal = 0
-            var createdTotal = 0
-            for (i in stats.indices) {
-                storedTotal += stats[i]!![0]
-                createdTotal += stats[i]!![1]
+            val (storedTotal, createdTotal) = stats.fold(0 to 0) { (stored, created), stat ->
+                (stored + stat[0]) to (created + stat[1])
             }
             return 1.0 - (storedTotal.toDouble() / createdTotal.toDouble())
         }
@@ -280,7 +259,7 @@ object Learn {
      * and the thread specific statistics of its performance in the current batch are stored.
      *
      * @param threadId Id of the thread reporting.
-     * @param storedRules the number of good rule that have been stored.
+     * @param storedRules the number of good rules that have been stored.
      * @param createdRules The number of created rules that have been created and checked for novelty and quality.
      * @return
      */
@@ -370,24 +349,6 @@ object Learn {
 		*/
     }
 
-    /*
-	private static synchronized void indexXYRule(RuleCyclic rule) {
-		StringBuilder sb = new StringBuilder();
-		sb.append(rule.getHead().toString());
-		for (int i = 0; i < rule.bodysize(); i++) { sb.append(rule.getBodyAtom(i).toString()); }
-		String rs = sb.toString();
-		if (indexedXYRules.containsKey(rs)) {
-			// should not happen
-		}
-		else {
-			indexedXYRules.put(rs, rule);
-		}
-	}
-	*/
-    /**
-     * Checks if the given rule is already stored.
-     *
-     */
     @JvmStatic
     fun isStored(rule: Rule): Boolean {
         val code307 = abs(rule.hashCode()) % 307
