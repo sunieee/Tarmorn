@@ -127,7 +127,7 @@ object Settings {
 
     // Takes a snapshot of the rules refined after each time interval specified in seconds.
     @JvmField
-    var SNAPSHOTS_AT: IntArray? = intArrayOf(10, 100)
+    var SNAPSHOTS_AT: IntArray? = intArrayOf(10, 100, 1000)
 
     // Number of maximal attempts to create body grounding. Every partial body grounding is counted.
     // NO LONGER IN USE (maybe)

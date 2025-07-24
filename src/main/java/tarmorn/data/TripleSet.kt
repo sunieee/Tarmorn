@@ -80,12 +80,12 @@ class TripleSet() {
         if (this.isTrue(t)) {
             return
         } else {
-            if (!t.invalid) this.triples.add(t)
+            this.triples.add(t)
             //if (this.atriples.containsKey(t)) {
             //	this.atriples.remove(t);
             //}
             //else {
-            if (!t.invalid) this.addTripleToIndex(t)
+            this.addTripleToIndex(t)
             //}
         }
     }
@@ -230,11 +230,11 @@ class TripleSet() {
 
                     if (t == null) {
                     } else {
-                        if (!t.invalid) this.triples.add(t)
+                        this.triples.add(t)
                         if (Settings.REWRITE_REFLEXIV && t.t == Settings.REWRITE_REFLEXIV_TOKEN) {
                             val trev: Triple?
                             trev = Triple(t.t, t.r, t.h)
-                            if (!trev.invalid) this.triples.add(trev)
+                            this.triples.add(trev)
                         }
                     }
                 }

@@ -3,110 +3,81 @@ package tarmorn.data
 import tarmorn.Settings
 
 /**
- * A triple represents a labeled edge a knowledge graph.
- *
- *
+ * A triple represents a labeled edge in a knowledge graph.
  */
 class Triple(h: String, r: String, t: String) {
-    var invalid: Boolean = false
-
-        val h: String // subject
-        val t: String // object
-        val r: String
+    val h: String // subject
+    val t: String // object
+    val r: String
 
     private var hash = 0
 
     init {
-        if (h.length < 2 || t.length < 2) {
-            System.err.println("the triple set you are trying to load contains constants of length 1 ... a constant (entity) needs to be described by at least two letters")
-            System.err.println("ignoring: " + h + " " + r + " " + t)
-            // System.exit(1);
-            this.invalid = true
+        require(h.length >= 2 && t.length >= 2) {
+            "Constants (entities) need to be described by at least two letters. Ignoring: $h $r $t"
         }
+        
         this.h = h
         this.r = r
-        if (Settings.REWRITE_REFLEXIV && h == t) {
-            this.t = Settings.REWRITE_REFLEXIV_TOKEN
+        this.t = if (Settings.REWRITE_REFLEXIV && h == t) {
+            Settings.REWRITE_REFLEXIV_TOKEN
         } else {
-            this.t = t
+            t
         }
+        
         hash = this.h.hashCode() + this.t.hashCode() + this.r.hashCode()
     }
 
-    fun getValue(ifHead: Boolean): String {
-        if (ifHead) return this.h
-        else return this.t
+    fun getValue(ifHead: Boolean): String = if (ifHead) h else t
+
+    override fun toString(): String = "$h $r $t"
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Triple) return false
+        return h == other.h && t == other.t && r == other.r
     }
 
-    override fun toString(): String {
-        return this.h + " " + this.r + " " + this.t
-    }
-
-    override fun equals(that: Any?): Boolean {
-        if (that is Triple) {
-            val thatTriple = that
-            if (this.h == thatTriple.h && this.t == thatTriple.t && this.r == thatTriple.r) {
-                return true
-            }
-        }
-        return false
-    }
-
-    override fun hashCode(): Int {
-        return hash
-    }
+    override fun hashCode(): Int = hash
 
     fun equals(ifHead: Boolean, subject: String, rel: String, `object`: String): Boolean {
-        if (ifHead) {
-            return (this.h == subject && this.t == `object` && this.r == rel)
+        return if (ifHead) {
+            h == subject && t == `object` && r == rel
         } else {
-            return (this.h == `object` && this.t == subject && this.r == rel)
+            h == `object` && t == subject && r == rel
         }
     }
 
-    val confidence: Double
-        get() = 1.0
+    val confidence: Double get() = 1.0
 
     /**
-     * Returns a string representation of this triples by replacing the constant by a variable wherever it appears
-     *
-     * @param constant The constant to be replaced.
-     * @param variable The variable that is shown instead of the constant.
-     *
-     * @return The footprint of a triples that can be compared by equals against the atom in a AC1 rule.
+     * Returns a string representation of this triple by replacing the constant by a variable wherever it appears
      */
     fun getSubstitution(constant: String, variable: String): String {
-        val tSub = if (this.t == constant) variable else this.t
-        val hSub = if (this.h == constant) variable else this.h
-        return this.r + "(" + hSub + "," + tSub + ")"
+        val tSub = if (t == constant) variable else t
+        val hSub = if (h == constant) variable else h
+        return "$r($hSub,$tSub)"
     }
-
 
     /**
-     * Returns a string representation of this triples by replacing the constant by a variable wherever it appears and repalcing the other constant by a sedocn variable.
-     *
-     * @param constant The constant to be replaced.
-     * @param variable The variable that is shown instead of the constant.
-     * @param otherVariable The variable that is shown instead of the other constant.
-     *
-     * @return The footprint of a triples that can be compared by equals against the atom in a AC2 rule .
+     * Returns a string representation of this triple by replacing the constant by a variable wherever it appears 
+     * and replacing the other constant by a second variable.
      */
     fun getSubstitution(constant: String, variable: String, otherVariable: String): String {
-        var tSub = (if (this.t == constant) variable else this.t)!!
-        var hSub = if (this.h == constant) variable else this.h
-        if (tSub == variable) hSub = otherVariable
-        if (hSub == variable) tSub = otherVariable
-        return this.r + "(" + hSub + "," + tSub + ")"
+        var tSub = if (t == constant) variable else t
+        var hSub = if (h == constant) variable else h
+        
+        when {
+            tSub == variable -> hSub = otherVariable
+            hSub == variable -> tSub = otherVariable
+        }
+        
+        return "$r($hSub,$tSub)"
     }
 
-
     companion object {
-        fun createTriple(h: String, r: String, t: String, reverse: Boolean): Triple {
-            if (reverse) {
-                return Triple(t, r, h)
-            } else {
-                return Triple(h, r, t)
-            }
+        fun createTriple(h: String, r: String, t: String, reverse: Boolean = false): Triple {
+            return if (reverse) Triple(t, r, h) else Triple(h, r, t)
         }
     }
 }
