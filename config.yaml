@@ -9,4 +9,4 @@ PATH_RULES: out/FB15k/rules-100
 # Path to the output file where the rules / predictions  will be stored.
 PATH_OUTPUT: out/FB15k/preds-100
 # The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
-WORKER_THREADS: 20
+WORKER_THREADS: 24

@@ -48,7 +48,6 @@ object Apply {
 
         Rule.applicationMode()
         load()
-        Settings.REWRITE_REFLEXIV = false
         assert(Settings.PREDICTION_TYPE == "aRx")
 
         val values = Apply.getMultiProcessing(Settings.PATH_RULES)

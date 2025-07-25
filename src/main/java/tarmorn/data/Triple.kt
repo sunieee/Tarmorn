@@ -5,40 +5,20 @@ import tarmorn.Settings
 /**
  * A triple represents a labeled edge in a knowledge graph.
  */
-class Triple(h: String, r: String, t: String) {
-    val h: String // subject
+data class Triple(
+    val h: String, // subject
+    val r: String,
     val t: String // object
-    val r: String
-
-    private var hash = 0
-
+) {
     init {
         require(h.length >= 2 && t.length >= 2) {
             "Constants (entities) need to be described by at least two letters. Ignoring: $h $r $t"
         }
-        
-        this.h = h
-        this.r = r
-        this.t = if (Settings.REWRITE_REFLEXIV && h == t) {
-            Settings.REWRITE_REFLEXIV_TOKEN
-        } else {
-            t
-        }
-        
-        hash = this.h.hashCode() + this.t.hashCode() + this.r.hashCode()
     }
 
     fun getValue(ifHead: Boolean): String = if (ifHead) h else t
 
     override fun toString(): String = "$h $r $t"
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is Triple) return false
-        return h == other.h && t == other.t && r == other.r
-    }
-
-    override fun hashCode(): Int = hash
 
     fun equals(ifHead: Boolean, subject: String, rel: String, `object`: String): Boolean {
         return if (ifHead) {

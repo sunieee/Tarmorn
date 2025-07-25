@@ -408,8 +408,8 @@ object RuleEngine {
         val kHeadCandidates = LinkedHashMap<String, Double>()
 
 
-        replaceMyselfByEntity(kTailCandidates, head)
-        replaceMyselfByEntity(kHeadCandidates, tail)
+//        replaceMyselfByEntity(kTailCandidates, head)
+//        replaceMyselfByEntity(kHeadCandidates, tail)
 
         // final sorting
         sortByValue(kTailCandidates)
@@ -452,13 +452,13 @@ object RuleEngine {
     }
 
 
-    fun replaceMyselfByEntity(candidates: LinkedHashMap<String, Double>, replacement: String) {
-        if (candidates.containsKey(Settings.REWRITE_REFLEXIV_TOKEN)) {
-            val myselfConf: Double = candidates.get(Settings.REWRITE_REFLEXIV_TOKEN)!!
-            candidates.remove(Settings.REWRITE_REFLEXIV_TOKEN)
-            candidates.put(replacement, myselfConf)
-        }
-    }
+    // fun replaceMyselfByEntity(candidates: LinkedHashMap<String, Double>, replacement: String) {
+    //     if (candidates.containsKey(Settings.REWRITE_REFLEXIV_TOKEN)) {
+    //         val myselfConf: Double = candidates.get(Settings.REWRITE_REFLEXIV_TOKEN)!!
+    //         candidates.remove(Settings.REWRITE_REFLEXIV_TOKEN)
+    //         candidates.put(replacement, myselfConf)
+    //     }
+    // }
 
 
     /*

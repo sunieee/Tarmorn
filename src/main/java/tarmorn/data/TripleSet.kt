@@ -11,7 +11,7 @@ import java.util.Random
 import java.util.Collections
 
 class TripleSet() {
-    	val triples: MutableList<Triple>
+    val triples: MutableList<Triple>
     private val rand: Random
 
 
@@ -231,11 +231,6 @@ class TripleSet() {
                     if (t == null) {
                     } else {
                         this.triples.add(t)
-                        if (Settings.REWRITE_REFLEXIV && t.t == Settings.REWRITE_REFLEXIV_TOKEN) {
-                            val trev: Triple?
-                            trev = Triple(t.t, t.r, t.h)
-                            this.triples.add(trev)
-                        }
                     }
                 }
             }

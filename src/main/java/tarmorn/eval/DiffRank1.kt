@@ -6,8 +6,6 @@ import tarmorn.data.TripleSet
 object DiffRank1 {
     @JvmStatic
     fun main(args: Array<String>) {
-        Settings.REWRITE_REFLEXIV = false
-
         val rs1 = ResultSet("original", "exp/maxgroup/analysis/anyburl-c3-3600-100-test", true, 100)
         val rs2 = ResultSet("reordered", "exp/maxgroup/analysis/fb237-preds-local-o1-n09-woff", true, 100)
 

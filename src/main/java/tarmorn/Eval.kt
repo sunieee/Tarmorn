@@ -49,7 +49,6 @@ object Eval {
 
         Rule.applicationMode()
         load()
-        Settings.REWRITE_REFLEXIV = false
 
         val trainingSet = TripleSet(PATH_TRAINING)
         val validationSet = TripleSet(PATH_VALID)

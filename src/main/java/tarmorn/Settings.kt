@@ -37,14 +37,6 @@ object Settings {
     @JvmField
     var OI_CONSTRAINTS_ACTIVE: Boolean = true
 
-    // Do not change this. For APPLY its required that this is set to false, for LEARNING both is okay
-    // Currently in Apply its set to false hard-coded. It means this parameter has no impact on Apply.
-    @JvmField
-    var REWRITE_REFLEXIV: Boolean = true
-
-    @JvmField
-    var REWRITE_REFLEXIV_TOKEN: String = "me_myself_i"
-
     @JvmField
     var BEAM_NOT_DFS: Boolean = true
     @JvmField
@@ -127,7 +119,7 @@ object Settings {
 
     // Takes a snapshot of the rules refined after each time interval specified in seconds.
     @JvmField
-    var SNAPSHOTS_AT: IntArray? = intArrayOf(10, 100, 1000)
+    var SNAPSHOTS_AT: IntArray? = intArrayOf(10, 100, 200, 400)
 
     // Number of maximal attempts to create body grounding. Every partial body grounding is counted.
     // NO LONGER IN USE (maybe)

@@ -172,7 +172,6 @@ class ScoreTree {
             // print("" + psUpdated, this.storedValues);
             for (v in this.storedValues!!) {
                 var value: String = v
-                if (v == Settings.REWRITE_REFLEXIV_TOKEN) value = myself
                 list.put(value, psUpdated)
             }
         }

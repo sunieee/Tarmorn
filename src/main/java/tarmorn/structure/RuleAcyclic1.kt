@@ -141,7 +141,7 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
         var xInHead = false
         if (this.head.left == "X") xInHead = true
         if (xInHead) {
-            if (this.head.right == yValue || (this.head.right == Settings.REWRITE_REFLEXIV_TOKEN && xValue == yValue)) {
+            if (this.head.right == yValue) {
                 val left = this.body.get(0).left
                 val right = this.body.get(0).right
                 val rel = this.body.get(0).relation
@@ -155,7 +155,7 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
                 }
             }
         } else {
-            if (this.head.left == xValue || (this.head.left == Settings.REWRITE_REFLEXIV_TOKEN && xValue == yValue)) {
+            if (this.head.left == xValue) {
                 val left = this.body.get(0).left
                 val right = this.body.get(0).right
                 val rel = this.body.get(0).relation

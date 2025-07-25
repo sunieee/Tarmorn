@@ -36,7 +36,7 @@ options.set("loader.load_u_xxc_rules", False)
 options.set("loader.load_u_xxd_rules", False)
 
 # *** 关键：设置线程数 ***
-options.set("ranking_handler.num_threads", 20)  # 指定20个线程
+options.set("ranking_handler.num_threads", -1)  # 指定20个线程
 options.set("loader.num_threads", 4)           # 指定4个线程用于规则加载
 
 
