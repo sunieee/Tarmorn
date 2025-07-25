@@ -4,7 +4,7 @@ import tarmorn.data.IdManager
 
 data class Atom(
     var left: Int,          // entity or variable ID
-    var relation: Int,     // relation ID
+    var relation: Long,     // relation ID
     var right: Int          // entity or variable ID
 ) {
     val isLeftC: Boolean

@@ -18,18 +18,18 @@ class TripleSet(
 
     var h2List = mutableMapOf<Int, MutableList<Triple>>()
     var t2List = mutableMapOf<Int, MutableList<Triple>>()
-    var r2List = mutableMapOf<Int, MutableList<Triple>>()
+    var r2List = mutableMapOf<Long, MutableList<Triple>>()
 
-    var h2r2tSet = mutableMapOf<Int, MutableMap<Int, MutableSet<Int>>>()
-    var t2r2hSet = mutableMapOf<Int, MutableMap<Int, MutableSet<Int>>>()
+    var h2r2tSet = mutableMapOf<Int, MutableMap<Long, MutableSet<Int>>>()
+    var t2r2hSet = mutableMapOf<Int, MutableMap<Long, MutableSet<Int>>>()
 
-    var h2r2tList = mutableMapOf<Int, MutableMap<Int, MutableList<Int>>>()
-    var t2r2hList = mutableMapOf<Int, MutableMap<Int, MutableList<Int>>>()
+    var h2r2tList = mutableMapOf<Int, MutableMap<Long, MutableList<Int>>>()
+    var t2r2hList = mutableMapOf<Int, MutableMap<Long, MutableList<Int>>>()
 
-    var frequentRelations = mutableSetOf<Int>()
-    var r2hSample = mutableMapOf<Int, MutableList<Int>>()
-    var r2tSample = mutableMapOf<Int, MutableList<Int>>()
-    var relationCounter = mutableMapOf<Int, Int>()
+    var frequentRelations = mutableSetOf<Long>()
+    var r2hSample = mutableMapOf<Long, MutableList<Int>>()
+    var r2tSample = mutableMapOf<Long, MutableList<Int>>()
+    var relationCounter = mutableMapOf<Long, Int>()
 
     init {
         filepath?.let {
@@ -75,8 +75,8 @@ class TripleSet(
 
         // Helper function to setup list structure
         fun setupEntityRelationList(
-            sourceSet: Map<Int, Map<Int, Set<Int>>>,
-            targetList: MutableMap<Int, MutableMap<Int, MutableList<Int>>>
+            sourceSet: Map<Int, Map<Long, Set<Int>>>,
+            targetList: MutableMap<Int, MutableMap<Long, MutableList<Int>>>
         ) {
             sourceSet.forEach { (entity, relationMap) ->
                 targetList[entity] = mutableMapOf()
@@ -109,9 +109,9 @@ class TripleSet(
         
         // Helper function to add to nested map structure
         fun <T> addToNestedMap(
-            map: MutableMap<Int, MutableMap<Int, T>>,
+            map: MutableMap<Int, MutableMap<Long, T>>,
             key1: Int,
-            key2: Int,
+            key2: Long,
             defaultValue: () -> T,
             action: (T) -> Unit
         ) {
@@ -227,12 +227,12 @@ class TripleSet(
         }
     }
 
-    fun getTriplesByRelation(relation: Int) = r2List[relation] ?: mutableListOf()
+    fun getTriplesByRelation(relation: Long) = r2List[relation] ?: mutableListOf()
 
-    fun getRandomTripleByRelation(relation: Int) = r2List[relation]?.randomOrNull(rand)
+    fun getRandomTripleByRelation(relation: Long) = r2List[relation]?.randomOrNull(rand)
 
 
-    fun getNRandomEntitiesByRelation(relation: Int, ifHead: Boolean, n: Int): MutableList<Int> {
+    fun getNRandomEntitiesByRelation(relation: Long, ifHead: Boolean, n: Int): MutableList<Int> {
         val sampleMap = if (ifHead) r2hSample else r2tSample
         return sampleMap[relation] ?: computeNRandomEntitiesByRelation(relation, ifHead, n)
     }
@@ -247,7 +247,7 @@ class TripleSet(
     }
 
     @Synchronized
-    private fun computeNRandomEntitiesByRelation(relation: Int, ifHead: Boolean, n: Int): MutableList<Int> {
+    private fun computeNRandomEntitiesByRelation(relation: Long, ifHead: Boolean, n: Int): MutableList<Int> {
         val relationTriples = r2List[relation]
         if (relationTriples == null) {
             System.err.println("Internal reference to relation ${IdManager.getRelationString(relation)}, which is not indexed")
@@ -272,7 +272,7 @@ class TripleSet(
      * Select randomly n entities that appear in head (or tail) position of a triple using a given relation.
      * More frequent entities appear more frequent. This is the difference compared to the method computeNRandomEntitiesByRelation.
      */
-    fun selectNRandomEntitiesByRelation(relation: Int, ifHead: Boolean, n: Int): MutableList<Int>? {
+    fun selectNRandomEntitiesByRelation(relation: Long, ifHead: Boolean, n: Int): MutableList<Int>? {
         val relationTriples = r2List[relation] ?: run {
             System.err.println("Internal reference to relation ${IdManager.getRelationString(relation)}, which is not indexed")
             System.err.println("Check if rule set and triple set fit together")
@@ -284,21 +284,21 @@ class TripleSet(
     }
 
 
-    val relations: MutableSet<Int> get() = r2List.keys.toMutableSet()
+    val relations: MutableSet<Long> get() = r2List.keys.toMutableSet()
 
-    fun getHeadEntities(relation: Int, tail: Int): MutableSet<Int> = 
+    fun getHeadEntities(relation: Long, tail: Int): MutableSet<Int> = 
         t2r2hSet[tail]?.get(relation) ?: mutableSetOf()
 
-    fun getTailEntities(relation: Int, head: Int): MutableSet<Int> = 
+    fun getTailEntities(relation: Long, head: Int): MutableSet<Int> = 
         h2r2tSet[head]?.get(relation) ?: mutableSetOf()
 
-    fun getEntities(relation: Int, value: Int, ifHead: Boolean): MutableSet<Int> =
+    fun getEntities(relation: Long, value: Int, ifHead: Boolean): MutableSet<Int> =
         if (ifHead) getTailEntities(relation, value) else getHeadEntities(relation, value)
 
-    fun getRandomEntity(relation: Int, value: Int, ifHead: Boolean) =
+    fun getRandomEntity(relation: Long, value: Int, ifHead: Boolean) =
         if (ifHead) getRandomTailEntity(relation, value) else getRandomHeadEntity(relation, value)
 
-    private fun getRandomHeadEntity(relation: Int, tail: Int): Int? {
+    private fun getRandomHeadEntity(relation: Long, tail: Int): Int? {
         val list = t2r2hList[tail]?.get(relation) ?: run {
             val headSet = t2r2hSet[tail]?.get(relation)
             if (headSet?.isNotEmpty() == true) headSet.toMutableList() else return null
@@ -306,7 +306,7 @@ class TripleSet(
         return list.randomOrNull(rand)
     }
 
-    private fun getRandomTailEntity(relation: Int, head: Int): Int? {
+    private fun getRandomTailEntity(relation: Long, head: Int): Int? {
         val list = h2r2tList[head]?.get(relation) ?: run {
             val tailSet = h2r2tSet[head]?.get(relation)
             if (tailSet?.isNotEmpty() == true) tailSet.toMutableList() else return null
@@ -324,7 +324,7 @@ class TripleSet(
 		return new HashSet<Int>();
 	}
 	*/
-    fun isTrue(head: Int, relation: Int, tail: Int) =
+    fun isTrue(head: Int, relation: Long, tail: Int) =
         t2r2hSet[tail]?.get(relation)?.contains(head) == true
 
     fun isTrue(triple: Triple) = isTrue(triple.h, triple.r, triple.t)
@@ -373,7 +373,7 @@ class TripleSet(
             .toMutableSet()
     }
 
-    fun isFrequentRelation(relation: Int) = relation in frequentRelations
+    fun isFrequentRelation(relation: Long) = relation in frequentRelations
 
     val entities: MutableSet<Int>
         get() = (h2List.keys + t2List.keys).toMutableSet()

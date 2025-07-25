@@ -57,8 +57,8 @@ abstract class Rule {
 
     fun getBodyAtom(index: Int): Atom = body[index]
 
-    val targetRelation: Int get() = head.relation
-    val targetRelationId: Int get() = head.relation
+    val targetRelation: Long get() = head.relation
+    val targetRelationId: Long get() = head.relation
 
     fun bodysize(): Int = body.size
 

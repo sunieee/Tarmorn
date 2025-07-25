@@ -6,7 +6,7 @@ import java.util.*
 
 class Path {
     var entityNodes: IntArray
-    var relationNodes: IntArray
+    var relationNodes: LongArray
     var markers: CharArray
     
     // Constructor for string-based paths (for backward compatibility)
@@ -16,7 +16,7 @@ class Path {
         val numRelations = nodes.size / 2
         
         this.entityNodes = IntArray(numEntities)
-        this.relationNodes = IntArray(numRelations)
+        this.relationNodes = LongArray(numRelations)
         
         for (i in nodes.indices) {
             if (i % 2 == 0) { // entity
@@ -28,7 +28,7 @@ class Path {
     }
     
     // Constructor for ID-based paths
-    constructor(entityNodes: IntArray, relationNodes: IntArray, markers: CharArray) {
+    constructor(entityNodes: IntArray, relationNodes: LongArray, markers: CharArray) {
         this.entityNodes = entityNodes
         this.relationNodes = relationNodes
         this.markers = markers

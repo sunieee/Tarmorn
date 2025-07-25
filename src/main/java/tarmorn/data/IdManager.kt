@@ -2,7 +2,7 @@ package tarmorn.data
 
 /**
  * Manages the mapping between string identifiers and numeric IDs for entities and relations.
- * Entities use Int IDs, relations use Int IDs for future expansion.
+ * Entities use Int IDs, relations use Long IDs for future expansion.
  * KG variables (A-Z) use negative IDs: A=-1, B=-2, ..., Z=-26
  */
 object IdManager {
@@ -11,10 +11,10 @@ object IdManager {
     private val idToEntity = mutableMapOf<Int, String>()
     private var nextEntityId = 0
 
-    // Relation management (Int IDs)
-    private val relationToId = mutableMapOf<String, Int>()
-    private val idToRelation = mutableMapOf<Int, String>()
-    private var nextRelationId = 0
+    // Relation management (Long IDs)
+    private val relationToId = mutableMapOf<String, Long>()
+    private val idToRelation = mutableMapOf<Long, String>()
+    private var nextRelationId = 0L
 
     init {
         // Initialize KG variables A-Z with IDs -1 to -26
@@ -42,7 +42,7 @@ object IdManager {
     /**
      * Get or create a relation ID for the given string.
      */
-    fun getRelationId(relation: String): Int {
+    fun getRelationId(relation: String): Long {
         return relationToId[relation] ?: run {
             val id = nextRelationId++
             relationToId[relation] = id
@@ -61,7 +61,7 @@ object IdManager {
     /**
      * Get the string representation of a relation ID.
      */
-    fun getRelationString(id: Int): String {
+    fun getRelationString(id: Long): String {
         return idToRelation[id] ?: throw IllegalArgumentException("Unknown relation ID: $id")
     }
 
@@ -83,7 +83,7 @@ object IdManager {
     /**
      * Check if a relation ID exists.
      */
-    fun hasRelation(id: Int): Boolean = idToRelation.containsKey(id)
+    fun hasRelation(id: Long): Boolean = idToRelation.containsKey(id)
 
     /**
      * Get all entity IDs (excluding KG variables).
@@ -93,7 +93,7 @@ object IdManager {
     /**
      * Get all relation IDs.
      */
-    fun getAllRelationIds(): Set<Int> = idToRelation.keys
+    fun getAllRelationIds(): Set<Long> = idToRelation.keys
 
     /**
      * Get the total number of entities (excluding KG variables).
@@ -133,6 +133,6 @@ object IdManager {
         }
         
         nextEntityId = 0
-        nextRelationId = 0
+        nextRelationId = 0L
     }
 }

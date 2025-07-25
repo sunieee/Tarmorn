@@ -26,7 +26,7 @@ class PathSampler(private val ts: TripleSet) {
         // println("sample path");
         // if (ruleToBeExtended == null) return null;
         val entityNodes = IntArray(1 + steps)
-        val relationNodes = IntArray(steps)
+        val relationNodes = LongArray(steps)
         val markers = CharArray(steps)
         val chosenTriples: MutableList<Triple>
         if (Settings.SINGLE_RELATIONS != null) {

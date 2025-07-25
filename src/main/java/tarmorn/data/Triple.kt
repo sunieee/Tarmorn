@@ -4,11 +4,11 @@ import tarmorn.Settings
 
 /**
  * A triple represents a labeled edge in a knowledge graph.
- * Uses numeric IDs for better performance: entities (Int), relations (Int).
+ * Uses numeric IDs for better performance: entities (Int), relations (Long).
  */
 data class Triple(
     val h: Int, // head entity ID
-    val r: Int, // relation ID
+    val r: Long, // relation ID
     val t: Int // tail entity ID
 ) {
     fun getValue(ifHead: Boolean): Int = if (ifHead) h else t
@@ -20,7 +20,7 @@ data class Triple(
         return "$headStr $relStr $tailStr"
     }
 
-    fun equals(ifHead: Boolean, subject: Int, rel: Int, `object`: Int): Boolean {
+    fun equals(ifHead: Boolean, subject: Int, rel: Long, `object`: Int): Boolean {
         return if (ifHead) {
             h == subject && t == `object` && r == rel
         } else {
@@ -38,7 +38,7 @@ data class Triple(
             return if (reverse) Triple(tailId, relId, headId) else Triple(headId, relId, tailId)
         }
 
-        fun createTriple(h: Int, r: Int, t: Int, reverse: Boolean = false): Triple {
+        fun createTriple(h: Int, r: Long, t: Int, reverse: Boolean = false): Triple {
             return if (reverse) Triple(t, r, h) else Triple(h, r, t)
         }
     }
