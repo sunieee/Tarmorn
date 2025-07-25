@@ -10,14 +10,14 @@ import kotlin.math.pow
 class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     init {
         // modify it to its canonical form
-        if (this.body.get(0).contains(IdManager.getYId()) && this.bodysize() > 1) {
+        if (this.body[0].contains(IdManager.getYId()) && this.bodysize() > 1) {
             // if (this.bodysize() > 3) println("before: " + this);
             for (i in 0..(this.bodysize() / 2) - 1) {
                 val j = (this.bodysize() - i) - 1
-                val atom_i = this.body.get(i)
-                val atom_j = this.body.get(j)
-                this.body.set(i, atom_j)
-                this.body.set(j, atom_i)
+                val atom_i = this.body[i]
+                val atom_j = this.body[j]
+                this.body[i] = atom_j
+                this.body[j] = atom_i
             }
             this.body.normalizeVariableNames()
             // if (this.bodysize() > 3) println("after: " + this);
@@ -58,7 +58,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val xypairs: SampledPairedResultSet?
         val xypairsReverse: SampledPairedResultSet?
 
-        if (this.body.get(0).contains(IdManager.getXId())) {
+        if (this.body[0].contains(IdManager.getXId())) {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
                     xypairs = beamBodyCyclicEDIS(IdManager.getXId(), IdManager.getYId(), triples)
@@ -133,7 +133,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val xypairs: SampledPairedResultSet?
         val xypairsReverse: SampledPairedResultSet?
 
-        if (this.body.get(0).contains(IdManager.getXId())) {
+        if (this.body[0].contains(IdManager.getXId())) {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
                     xypairs = beamBodyCyclicEDIS(IdManager.getXId(), IdManager.getYId(), triples)
@@ -221,7 +221,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 		long startScoring = System.currentTimeMillis();
 		// X is given in first body atom
 		SampledPairedResultSet xypairs;
-		if (this.body.get(0).contains(IdManager.getXId())) {
+		if (this.body[0].contains(IdManager.getXId())) {
 			xypairs = beamBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples);
 		}
 		else {
@@ -281,7 +281,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
      */
     protected fun getPredictions(triples: TripleSet, valid: Int): ArrayList<Triple> {
         val xypairs: SampledPairedResultSet?
-        if (this.body.get(0).contains(IdManager.getXId())) xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
+        if (this.body[0].contains(IdManager.getXId())) xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
         else xypairs = groundBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
         val predictions = ArrayList<Triple>()
         for (key in xypairs.values.keys) {
@@ -334,7 +334,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         if (previousValues.contains(value)) return
 
         // the current atom is the last
-        if ((direction == true && this.body.size() - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
+        if ((direction == true && this.body.size - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
             // get groundings
             for (v in triples.getEntities(atom.relation, value, ifHead)) {
                 if (!previousValues.contains(v) && value != v) finalResults.add(v)
@@ -622,7 +622,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         if (previousValues.contains(value)) return null
 
         // the current atom is the last
-        if ((direction == true && this.body.size() - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
+        if ((direction == true && this.body.size - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
             val finalValue = triples.getRandomEntity(atom.relation, value, ifHead)
 
             // println("Y = " + finalValue + " out of " + triples.getEntities(atom.getRelation(), value, ifHead).size());

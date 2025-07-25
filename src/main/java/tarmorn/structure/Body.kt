@@ -2,111 +2,36 @@ package tarmorn.structure
 
 import tarmorn.data.IdManager
 
-class Body : Iterable<Atom> {
-    private var hashcode = 0
-    private var hashcodeInitialized = false
+// 委托模式：Body 实现了 MutableList<Atom> 接口，但将所有接口方法的实现委托给一个 ArrayList<Atom> 实例
+class Body : MutableList<Atom> by ArrayList() {
 
-    protected var literals: ArrayList<Atom>
+    // 保留自定义的 toString 格式（无括号）
+    override fun toString(): String = 
+        if (isEmpty()) "" else joinToString(", ")
 
-    init {
-        this.literals = ArrayList<Atom>()
-    }
+    fun toString(indent: Int): String = 
+        joinToString(", ") { it.toString(indent) }
 
-    fun add(atom: Atom) {
-        this.literals.add(atom)
-    }
-
-    fun get(index: Int): Atom {
-        return this.literals.get(index)
-    }
-
-    fun set(index: Int, atom: Atom?) {
-        this.literals.set(index, atom!!)
-    }
-
-    fun size(): Int {
-        return this.literals.size
-    }
-
-    override fun iterator(): MutableIterator<Atom> {
-        return this.literals.iterator()
-    }
-
-
-    fun contains(a: Atom): Boolean {
-        for (lit in this.literals) {
-            if (a == lit) return true
-        }
-        return false
-    }
-
-
-    override fun hashCode(): Int {
-        if (this.hashcodeInitialized) return this.hashcode
-        val sb = StringBuilder()
-        for (a in this.literals) {
-            sb.append(a.toString())
-        }
-        this.hashcode = sb.toString().hashCode()
-        this.hashcodeInitialized = true
-        return this.hashcode
-    }
-
-    override fun toString(): String {
-        if (this.literals.size == 0) return ""
-        val sb = StringBuilder()
-        for (i in 0..<this.literals.size - 1) {
-            sb.append(this.literals.get(i))
-            sb.append(", ")
-        }
-        sb.append(this.literals.get(this.literals.size - 1))
-        return sb.toString()
-    }
-
-    fun toString(indent: Int): String {
-        val sb = StringBuilder()
-        for (i in 0..<this.literals.size - 1) {
-            sb.append(this.literals.get(i).toString(indent))
-            sb.append(", ")
-        }
-        sb.append(this.literals.get(this.literals.size - 1).toString(indent))
-        return sb.toString()
-    }
-
+    // 必须保留：包含特殊的变量映射逻辑，ArrayList 的默认 equals 无法处理
     override fun equals(thatObject: Any?): Boolean {
-        if (thatObject is Body) {
-            val that = thatObject
-            if (this.literals.size == that.literals.size) {
-                val variablesThis2That = HashMap<Int, Int>()
-                val variablesThat2This = HashMap<Int, Int>()
-                for (i in this.literals.indices) {
-                    val atom1 = this.literals.get(i)
-                    val atom2 = that.literals.get(i)
-                    if (atom1.relation != atom2.relation) {
-                        return false
-                    } else {
-                        if (!checkValuesAndVariables(
-                                variablesThis2That,
-                                variablesThat2This,
-                                atom1,
-                                atom2,
-                                true
-                            )
-                        ) return false
-                        if (!checkValuesAndVariables(
-                                variablesThis2That,
-                                variablesThat2This,
-                                atom1,
-                                atom2,
-                                false
-                            )
-                        ) return false
-                    }
-                }
-                return true
-            }
+        if (thatObject !is Body) return false
+        
+        val that = thatObject
+        if (size != that.size) return false
+        
+        val variablesThis2That = HashMap<Int, Int>()
+        val variablesThat2This = HashMap<Int, Int>()
+        
+        for (i in indices) {
+            val atom1 = this[i]
+            val atom2 = that[i]
+            
+            if (atom1.relation != atom2.relation) return false
+            
+            if (!checkValuesAndVariables(variablesThis2That, variablesThat2This, atom1, atom2, true)) return false
+            if (!checkValuesAndVariables(variablesThis2That, variablesThat2This, atom1, atom2, false)) return false
         }
-        return false
+        return true
     }
 
     private fun checkValuesAndVariables(
@@ -117,46 +42,42 @@ class Body : Iterable<Atom> {
         leftNotRight: Boolean
     ): Boolean {
         if (atom1.isLRC(leftNotRight) && atom2.isLRC(leftNotRight)) {
-            if (atom1.getLR(leftNotRight) != atom2.getLR(leftNotRight)) {
-                return false
-            }
+            return atom1.getLR(leftNotRight) == atom2.getLR(leftNotRight)
         }
+        
         if (atom1.isLRC(leftNotRight) != atom2.isLRC(leftNotRight)) {
             // one variable and one constants do not fit
             return false
         }
+        
         if (!atom1.isLRC(leftNotRight) && !atom2.isLRC(leftNotRight)) {
+            val value1 = atom1.getLR(leftNotRight)
+            val value2 = atom2.getLR(leftNotRight)
+            
             // special cases X must be at same position as X, Y at same as Y
-            if (atom1.getLR(leftNotRight) == IdManager.getXId() && atom2.getLR(leftNotRight) != IdManager.getXId()) return false
-            if (atom2.getLR(leftNotRight) == IdManager.getXId() && atom1.getLR(leftNotRight) != IdManager.getXId()) return false
+            if (value1 == IdManager.getXId() && value2 != IdManager.getXId()) return false
+            if (value2 == IdManager.getXId() && value1 != IdManager.getXId()) return false
+            if (value1 == IdManager.getYId() && value2 != IdManager.getYId()) return false
+            if (value2 == IdManager.getYId() && value1 != IdManager.getYId()) return false
 
-            if (atom1.getLR(leftNotRight) == IdManager.getYId() && atom2.getLR(leftNotRight) != IdManager.getYId()) return false
-            if (atom2.getLR(leftNotRight) == IdManager.getYId() && atom1.getLR(leftNotRight) != IdManager.getYId()) return false
-
-            if (variablesThis2That.containsKey(atom1.getLR(leftNotRight))) {
-                val thatV = variablesThis2That.get(atom1.getLR(leftNotRight))
-                if (atom2.getLR(leftNotRight) != thatV) return false
+            variablesThis2That[value1]?.let { thatV ->
+                if (value2 != thatV) return false
             }
-            if (variablesThat2This.containsKey(atom2.getLR(leftNotRight))) {
-                val thisV = variablesThat2This.get(atom2.getLR(leftNotRight))
-                if (atom1.getLR(leftNotRight) != thisV) return false
+            
+            variablesThat2This[value2]?.let { thisV ->
+                if (value1 != thisV) return false
             }
-            if (!variablesThis2That.containsKey(atom1.getLR(leftNotRight))) {
-                variablesThis2That.put(atom1.getLR(leftNotRight), atom2.getLR(leftNotRight))
-                variablesThat2This.put(atom2.getLR(leftNotRight), atom1.getLR(leftNotRight))
+            
+            if (value1 !in variablesThis2That) {
+                variablesThis2That[value1] = value2
+                variablesThat2This[value2] = value1
             }
         }
         return true
     }
 
     val numOfVariables: Int
-        get() {
-            val variables = HashSet<Int>()
-            for (a in this.literals) {
-                variables.addAll(a.variables)
-            }
-            return variables.size
-        }
+        get() = this.flatMap { it.variables }.toSet().size
 
     val last: Atom
         /**
@@ -164,20 +85,21 @@ class Body : Iterable<Atom> {
          *
          * @return The last atom in this body.
          */
-        get() = this.get(this.literals.size - 1)
+        get() = this.last()
 
     fun normalizeVariableNames() {
-        val old2New = HashMap<Int, Int>()
+        val old2New = mutableMapOf<Int, Int>()
         var indexNewVariableNames = 0
 
-
-        for (i in 0..<this.size()) {
-            val atom = this.get(i)
+        repeat(size) { i ->
+            val atom = this[i]
             val variables = atom.variables
             var block = 0
+            
             for (v in variables) {
                 if (v == IdManager.getXId() || v == IdManager.getYId()) continue
-                if (!old2New.containsKey(v)) {
+                
+                if (v !in old2New) {
                     val vNew = Rule.variables[indexNewVariableNames]
                     old2New[v] = vNew
                     indexNewVariableNames++
@@ -191,9 +113,8 @@ class Body : Iterable<Atom> {
      * Replaces all atoms by deep copies of these atoms to avoid that references from the outside are affected by follow up changes.
      */
     fun detach() {
-        for (i in this.literals.indices) {
-            val atom = this.literals.get(i).copy()
-            this.literals.set(i, atom!!)
+        indices.forEach { i ->
+            this[i] = this[i].copy()!!
         }
     }
 }

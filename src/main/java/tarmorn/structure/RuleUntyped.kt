@@ -26,7 +26,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body.get(this.bodysize() - 1).isLeftC || this.body.get(this.bodysize() - 1).isRightC) {
+                if (this.body[this.bodysize() - 1].isLeftC || this.body[this.bodysize() - 1].isRightC) {
                     return true
                 }
                 return false
@@ -37,7 +37,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body.get(this.bodysize() - 1).isLeftC || this.body.get(this.bodysize() - 1).isRightC) {
+                if (this.body[this.bodysize() - 1].isLeftC || this.body[this.bodysize() - 1].isRightC) {
                     return false
                 }
                 return true
@@ -112,7 +112,7 @@ class RuleUntyped : Rule {
         var counter = 0
         for (atom in body) {
             counter++
-            if (counter == body.size()) break
+            if (counter == body.size) break
             if (atom.isLeftC) {
                 val c = atom.left
                 this.replaceByVariable(c, variables[this.nextFreeVariable])

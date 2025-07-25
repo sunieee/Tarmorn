@@ -157,7 +157,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         val ifHead = atom.left == variable
         
         // Check if this is the last atom
-        if (body.size() - 1 == bodyIndex) {
+        if (body.size - 1 == bodyIndex) {
             val constant = if (ifHead) atom.isRightC else atom.isLeftC
             
             return if (constant) {
@@ -209,7 +209,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         val ifHead = atom.left == variable
         
         // Check if this is the last atom
-        if (body.size() - 1 == bodyIndex) {
+        if (body.size - 1 == bodyIndex) {
             val constant = if (ifHead) atom.isRightC else atom.isLeftC
             
             return if (constant) {
@@ -263,7 +263,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     protected abstract val unboundVariable: Int?
 
     private fun computeValuesReversedInternal(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
-        val atomIndex = body.size() - 1
+        val atomIndex = body.size - 1
         val lastAtom = body.get(atomIndex)
         val unboundVariable = this.unboundVariable
         
@@ -318,7 +318,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
 
     fun beamValuesReversed(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
-        val atomIndex = body.size() - 1
+        val atomIndex = body.size - 1
         val lastAtom = body.get(atomIndex)
         if (getGroundingsLastAtom(ts) < Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) return
 

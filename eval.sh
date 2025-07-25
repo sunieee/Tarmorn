@@ -1,5 +1,5 @@
 dataset=FB15k
-rule_file=preds-100-1000
+rule_file=preds-100-400
 supp_threshold=20
 conf_threshold=0
 

@@ -55,15 +55,15 @@ abstract class Rule {
 
     fun addBodyAtom(atom: Atom) = body.add(atom)
 
-    fun getBodyAtom(index: Int): Atom = body.get(index)
+    fun getBodyAtom(index: Int): Atom = body[index]
 
     val targetRelation: Int get() = head.relation
     val targetRelationId: Int get() = head.relation
 
-    fun bodysize(): Int = body.size()
+    fun bodysize(): Int = body.size
 
     val isTrivial: Boolean
-        get() = bodysize() == 1 && head == body.get(0)
+        get() = bodysize() == 1 && head == body[0]
 
     open val appliedConfidence: Double
         get() = correctlyPredicted.toDouble() / (predicted.toDouble() + Settings.UNSEEN_NEGATIVE_EXAMPLES)
