@@ -3,13 +3,14 @@ package tarmorn.structure
 import tarmorn.Settings
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 
 /**
  * A rule of the form h(a,X) <= b1(X,A1), ..., bn(An-1,c) with a constant in the head and in the last body atom.
  *
  */
 class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
-    override val unboundVariable: String?
+    override val unboundVariable: Int?
         get() = null
 
 
@@ -35,11 +36,10 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
         }
     }
 
-
     override fun isSingleton(triples: TripleSet): Boolean {
         // return false;
 
-        if (this.body.get(0).right == "X" && this.body.get(0).right == "Y") {
+        if (this.body.get(0).right == IdManager.getXId() && this.body.get(0).right == IdManager.getYId()) {
             val head = this.body.get(0).left
             val relation = this.body.get(0).relation
             if (triples.getTailEntities(relation, head).size > 1) return false
@@ -61,22 +61,22 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
 
 
     fun toXYString(): String {
-        if (this.head.left == "X") {
+        if (this.head.left == IdManager.getXId()) {
             val c = this.head.right
             val sb = StringBuilder()
-            sb.append(this.head.toString(c, "Y"))
+            sb.append(this.head.toString(c, IdManager.getYId()))
             for (i in 0..<this.bodysize()) {
-                sb.append(this.getBodyAtom(i)!!.toString(c, "Y"))
+                sb.append(this.getBodyAtom(i)!!.toString(c, IdManager.getYId()))
             }
             val rs = sb.toString()
             return rs
         }
-        if (this.head.right == "Y") {
+        if (this.head.right == IdManager.getYId()) {
             val c = this.head.left
             val sb = StringBuilder()
-            sb.append(this.head.toString(c, "X"))
+            sb.append(this.head.toString(c, IdManager.getXId()))
             for (i in this.bodysize() - 1 downTo 0) {
-                sb.append(this.getBodyAtom(i)!!.toString(c, "X"))
+                sb.append(this.getBodyAtom(i)!!.toString(c, IdManager.getXId()))
             }
             val rs = sb.toString()
             return rs
@@ -88,23 +88,27 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
 
 
     fun validates(h: String, relation: String, t: String, ts: TripleSet): Boolean {
-        if (this.targetRelation == relation) {
+        val hId = IdManager.getEntityId(h)
+        val relationId = IdManager.getRelationId(relation)
+        val tId = IdManager.getEntityId(t)
+        
+        if (this.targetRelationId == relationId) {
             // this rule is a X rule
-            if (this.head.isRightC && this.head.right == t) {
+            if (this.head.isRightC && this.head.right == tId) {
                 // could be true if body is true
-                val previousValues = HashSet<String>()
-                previousValues.add(h)
+                val previousValues = HashSet<Int>()
+                previousValues.add(hId)
                 previousValues.add(this.head.right)
-                return (this.isBodyTrueAcyclic("X", h, 0, previousValues, ts))
+                return (this.isBodyTrueAcyclic(IdManager.getXId(), hId, 0, previousValues, ts))
             }
             // this rule is a Y rule
-            if (this.head.isLeftC && this.head.left == h) {
+            if (this.head.isLeftC && this.head.left == hId) {
                 // could be true if body is true
 
-                val previousValues = HashSet<String>()
-                previousValues.add(t)
+                val previousValues = HashSet<Int>()
+                previousValues.add(tId)
                 previousValues.add(this.head.left)
-                return (this.isBodyTrueAcyclic("Y", t, 0, previousValues, ts))
+                return (this.isBodyTrueAcyclic(IdManager.getYId(), tId, 0, previousValues, ts))
             }
             return false
         }
@@ -128,43 +132,45 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
      * @return A minimal set of triples that results into a body grounding.
      */
     override fun getTripleExplanation(
-        xValue: String,
-        yValue: String,
-        excludedTriples: HashSet<Triple>,
+        xValue: Int,
+        yValue: Int,
+        excludedTriples: java.util.HashSet<Triple>,
         triples: TripleSet
-    ): HashSet<Triple> {
+    ): java.util.HashSet<Triple> {
         if (this.bodysize() != 1) {
             System.err.println("Trying to get a triple explanation for an acyclic rule with constant in head any body of length != 1. This is not yet implemented.")
             System.exit(-1)
         }
         val groundings = HashSet<Triple>()
+        val xId = xValue
+        val yId = yValue
         var xInHead = false
-        if (this.head.left == "X") xInHead = true
+        if (this.head.left == IdManager.getXId()) xInHead = true
         if (xInHead) {
-            if (this.head.right == yValue) {
+            if (this.head.right == yId) {
                 val left = this.body.get(0).left
                 val right = this.body.get(0).right
                 val rel = this.body.get(0).relation
-                if (left == "X" && triples.isTrue(xValue, rel, right)) {
-                    val t = Triple(xValue, rel, right)
+                if (left == IdManager.getXId() && triples.isTrue(xId, rel, right)) {
+                    val t = Triple.createTriple(xId, rel, right)
                     if (!excludedTriples.contains(t)) groundings.add(t)
                 }
-                if (right == "X" && triples.isTrue(left, rel, xValue)) {
-                    val t = Triple(left, rel, xValue)
+                if (right == IdManager.getXId() && triples.isTrue(left, rel, xId)) {
+                    val t = Triple.createTriple(left, rel, xId)
                     if (!excludedTriples.contains(t)) groundings.add(t)
                 }
             }
         } else {
-            if (this.head.left == xValue) {
+            if (this.head.left == xId) {
                 val left = this.body.get(0).left
                 val right = this.body.get(0).right
                 val rel = this.body.get(0).relation
-                if (left == "Y" && triples.isTrue(yValue, rel, right)) {
-                    val t = Triple(yValue, rel, right)
+                if (left == IdManager.getYId() && triples.isTrue(yId, rel, right)) {
+                    val t = Triple.createTriple(yId, rel, right)
                     if (!excludedTriples.contains(t)) groundings.add(t)
                 }
-                if (right == "Y" && triples.isTrue(left, rel, yValue)) {
-                    val t = Triple(left, rel, yValue)
+                if (right == IdManager.getYId() && triples.isTrue(left, rel, yId)) {
+                    val t = Triple.createTriple(left, rel, yId)
                     if (!excludedTriples.contains(t)) groundings.add(t)
                 }
             }

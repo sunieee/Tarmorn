@@ -3,6 +3,7 @@ package tarmorn.structure
 import tarmorn.Settings
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 
 /**
  * A rule with an empty body, that fires only because something is asked.
@@ -32,17 +33,19 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         this.confidence = correctlyPredicted.toDouble() / predicted.toDouble()
     }
 
-    override fun computeTailResults(head: String, ts: TripleSet): HashSet<String> {
-        val results = HashSet<String>()
+    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
+        val results = HashSet<Int>()
         if (this.head.isRightC) {
+            // Convert string to entity ID
             results.add(this.head.right)
         }
         return results
     }
 
-    override fun computeHeadResults(tail: String, ts: TripleSet): HashSet<String> {
-        val results = HashSet<String>()
+    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
+        val results = HashSet<Int>()
         if (this.head.isLeftC) {
+            // Convert string to entity ID
             results.add(this.head.left)
         }
         return results
@@ -52,7 +55,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         get() = Settings.RULE_ZERO_WEIGHT * super.appliedConfidence
 
 
-    override fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
@@ -90,8 +93,8 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
      * @return A set which contains the prediction itself if the prediction can be made. An empty set if the prediction cannot be made.
      */
     override fun getTripleExplanation(
-        head: String,
-        tail: String,
+        head: Int,
+        tail: Int,
         excludedTriples: HashSet<Triple>,
         triples: TripleSet
     ): HashSet<Triple> {

@@ -3,10 +3,10 @@ package tarmorn.data
 class SampledPairedResultSet {
     private var valueCounter = 0
     
-    val values = mutableMapOf<String, MutableSet<String>>()
+    val values = mutableMapOf<Int, MutableSet<Int>>()
     private val sampling = false
     
-    private var currentKey = ""
+    private var currentKey = 0
     private var chao = 0
 
     var chaoEstimate: Int
@@ -20,14 +20,14 @@ class SampledPairedResultSet {
         return (d + (f1 * f1).toDouble() / (2.0 * f2)).toInt()
     }
 
-    fun addKey(key: String) {
+    fun addKey(key: Int) {
         currentKey = key
         values.putIfAbsent(key, mutableSetOf())
     }
 
     fun usedSampling() = sampling
 
-    fun addValue(value: String): Boolean {
+    fun addValue(value: Int): Boolean {
         return values[currentKey]?.add(value)?.also { 
             if (it) valueCounter++ 
         } ?: false

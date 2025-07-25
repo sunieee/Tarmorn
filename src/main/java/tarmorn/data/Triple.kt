@@ -4,23 +4,23 @@ import tarmorn.Settings
 
 /**
  * A triple represents a labeled edge in a knowledge graph.
+ * Uses numeric IDs for better performance: entities (Int), relations (Int).
  */
 data class Triple(
-    val h: String, // subject
-    val r: String,
-    val t: String // object
+    val h: Int, // head entity ID
+    val r: Int, // relation ID
+    val t: Int // tail entity ID
 ) {
-    init {
-        require(h.length >= 2 && t.length >= 2) {
-            "Constants (entities) need to be described by at least two letters. Ignoring: $h $r $t"
-        }
+    fun getValue(ifHead: Boolean): Int = if (ifHead) h else t
+
+    override fun toString(): String {
+        val headStr = IdManager.getEntityString(h)
+        val relStr = IdManager.getRelationString(r)
+        val tailStr = IdManager.getEntityString(t)
+        return "$headStr $relStr $tailStr"
     }
 
-    fun getValue(ifHead: Boolean): String = if (ifHead) h else t
-
-    override fun toString(): String = "$h $r $t"
-
-    fun equals(ifHead: Boolean, subject: String, rel: String, `object`: String): Boolean {
+    fun equals(ifHead: Boolean, subject: Int, rel: Int, `object`: Int): Boolean {
         return if (ifHead) {
             h == subject && t == `object` && r == rel
         } else {
@@ -30,33 +30,15 @@ data class Triple(
 
     val confidence: Double get() = 1.0
 
-    /**
-     * Returns a string representation of this triple by replacing the constant by a variable wherever it appears
-     */
-    fun getSubstitution(constant: String, variable: String): String {
-        val tSub = if (t == constant) variable else t
-        val hSub = if (h == constant) variable else h
-        return "$r($hSub,$tSub)"
-    }
-
-    /**
-     * Returns a string representation of this triple by replacing the constant by a variable wherever it appears 
-     * and replacing the other constant by a second variable.
-     */
-    fun getSubstitution(constant: String, variable: String, otherVariable: String): String {
-        var tSub = if (t == constant) variable else t
-        var hSub = if (h == constant) variable else h
-        
-        when {
-            tSub == variable -> hSub = otherVariable
-            hSub == variable -> tSub = otherVariable
-        }
-        
-        return "$r($hSub,$tSub)"
-    }
-
     companion object {
         fun createTriple(h: String, r: String, t: String, reverse: Boolean = false): Triple {
+            val headId = IdManager.getEntityId(h)
+            val relId = IdManager.getRelationId(r)
+            val tailId = IdManager.getEntityId(t)
+            return if (reverse) Triple(tailId, relId, headId) else Triple(headId, relId, tailId)
+        }
+
+        fun createTriple(h: Int, r: Int, t: Int, reverse: Boolean = false): Triple {
             return if (reverse) Triple(t, r, h) else Triple(h, r, t)
         }
     }

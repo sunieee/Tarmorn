@@ -3,22 +3,24 @@ package tarmorn.structure
 import tarmorn.Settings
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 
 abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
-    override fun computeTailResults(head: String, ts: TripleSet): HashSet<String> {
-        val resultSet = hashSetOf<String>()
+    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
+        val resultSet = hashSetOf<Int>()
         
         return when {
             isXRule -> {
-                if (this.head.right == head) return resultSet
+                val headRightId = this.head.right
+                if (headRightId == head) return resultSet
                 val previousValues = hashSetOf(head, this.head.right)
-                if (isBodyTrueAcyclic("X", head, 0, previousValues, ts)) {
-                    resultSet.add(this.head.right)
+                if (isBodyTrueAcyclic(IdManager.getXId(), head, 0, previousValues, ts)) {
+                    resultSet.add(headRightId)
                 }
                 resultSet
             }
             this.head.left == head -> {
-                computeValuesReversed("Y", resultSet, ts)
+                computeValuesReversed(IdManager.getYId(), resultSet, ts)
                 resultSet
             }
             else -> resultSet
@@ -31,38 +33,39 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 		PriorityQueue<Candidate> resultSet = new PriorityQueue<Candidate>();
 		if (this.isXRule) {
 			if (this.head.getRight().equals(head)) return resultSet;
-			HashSet<String> previousValues = new HashSet<String>();
+			HashSet<Int> previousValues = new HashSet<Int>();
 			previousValues.add(head);
 			previousValues.add(this.head.getRight());
 			// TODO fix P here
-			if (this.isBodyTrueAcyclic("X", head, 0, previousValues, ts)) {
+			if (this.isBodyTrueAcyclic(IdManager.getXId(), head, 0, previousValues, ts)) {
 				// resultSet.add(this.head.getRight());
 				return resultSet;
 			}
 		}
 		else {
 			if (this.head.getLeft().equals(head)) {
-				this.computePValuesReversed(1.0, "Y", resultSet, ts, count);
+				this.computePValuesReversed(1.0, IdManager.getYId(), resultSet, ts, count);
 				return resultSet;
 			}
 		}
 		return resultSet;
 	}
 	*/
-    override fun computeHeadResults(tail: String, ts: TripleSet): HashSet<String> {
-        val resultSet = hashSetOf<String>()
+    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
+        val resultSet = hashSetOf<Int>()
         
         return when {
             isYRule -> {
-                if (head.left == tail) return resultSet
+                val headLeftId = head.left
+                if (headLeftId == tail) return resultSet
                 val previousValues = hashSetOf(tail, head.left)
-                if (isBodyTrueAcyclic("Y", tail, 0, previousValues, ts)) {
-                    resultSet.add(head.left)
+                if (isBodyTrueAcyclic(IdManager.getYId(), tail, 0, previousValues, ts)) {
+                    resultSet.add(headLeftId)
                 }
                 resultSet
             }
             isXRule && head.right == tail -> {
-                computeValuesReversed("X", resultSet, ts)
+                computeValuesReversed(IdManager.getXId(), resultSet, ts)
                 resultSet
             }
             else -> resultSet
@@ -71,16 +74,17 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
 
     override fun computeScores(triples: TripleSet) {
-        val (targetVariable, targetConstant) = if (isXRule) "X" to head.right else "Y" to head.left
-        val values = hashSetOf<String>()
+        val (targetVariable, targetConstantId) = if (isXRule) IdManager.getXId() to head.right else IdManager.getYId() to head.left
+        val values = hashSetOf<Int>()
         
         computeValuesReversed(targetVariable, values, triples)
         
-        val correctlyPredicted = values.count { value ->
+        val relationId = head.relation
+        val correctlyPredicted = values.count { valueId ->
             if (isXRule) {
-                triples.isTrue(value, head.relation, targetConstant)
+                triples.isTrue(valueId, relationId, targetConstantId)
             } else {
-                triples.isTrue(targetConstant, head.relation, value)
+                triples.isTrue(targetConstantId, relationId, valueId)
             }
         }
         
@@ -91,24 +95,25 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
 
     override fun computeScores(that: Rule, triples: TripleSet): IntArray {
-        val (targetVariable, constantValue) = if (isXRule) "X" to head.right else "Y" to head.left
-        val values = hashSetOf<String>()
+        val (targetVariable, constantValueId) = if (isXRule) IdManager.getXId() to head.right else IdManager.getYId() to head.left
+        val values = hashSetOf<Int>()
         
         computeValuesReversed(targetVariable, values, triples)
         
-        val (predictedBoth, correctlyPredictedBoth) = values.fold(0 to 0) { (predicted, correct), value ->
+        val relationId = head.relation
+        val (predictedBoth, correctlyPredictedBoth) = values.fold(0 to 0) { (predicted, correct), valueId ->
             val explanation = that.getTripleExplanation(
-                if (isXRule) value else constantValue,
-                if (isXRule) constantValue else value,
+                if (isXRule) valueId else constantValueId,
+                if (isXRule) constantValueId else valueId,
                 hashSetOf(),
                 triples
             )
             
             if (explanation.isNotEmpty()) {
                 val isCorrect = if (isXRule) {
-                    triples.isTrue(value, head.relation, constantValue)
+                    triples.isTrue(valueId, relationId, constantValueId)
                 } else {
-                    triples.isTrue(constantValue, head.relation, value)
+                    triples.isTrue(constantValueId, relationId, valueId)
                 }
                 predicted + 1 to if (isCorrect) correct + 1 else correct
             } else {
@@ -120,30 +125,32 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     }
 
 
-    override fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
         return when {
             forbidden == null -> {
-                val (variable, value) = if (isXRule) "X" to leftValue else "Y" to rightValue
+                val (variable, value) = if (isXRule) IdManager.getXId() to leftValue else IdManager.getYId() to rightValue
                 val previousValues = hashSetOf(value)
                 isBodyTrueAcyclic(variable, value, 0, previousValues, ts)
             }
             isXRule -> {
-                val previousValues = hashSetOf(leftValue)
-                isBodyTrueAcyclicX("X", leftValue, 0, forbidden, previousValues, ts)
+                val leftValueStr = leftValue
+                val previousValues = hashSetOf(leftValueStr)
+                isBodyTrueAcyclicX(IdManager.getXId(), leftValueStr, 0, forbidden, previousValues, ts)
             }
             else -> {
-                val previousValues = hashSetOf(rightValue)
-                isBodyTrueAcyclicX("Y", rightValue, 0, forbidden, previousValues, ts)
+                val rightValueStr = rightValue
+                val previousValues = hashSetOf(rightValueStr)
+                isBodyTrueAcyclicX(IdManager.getYId(), rightValueStr, 0, forbidden, previousValues, ts)
             }
         }
     }
 
 
     protected fun isBodyTrueAcyclic(
-        variable: String,
-        value: String,
+        variable: Int,
+        value: Int,
         bodyIndex: Int,
-        previousValues: HashSet<String>,
+        previousValues: HashSet<Int>,
         triples: TripleSet
     ): Boolean {
         val atom = body.get(bodyIndex)
@@ -172,7 +179,8 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
             val results = triples.getEntities(atom.relation, value, ifHead)
             val nextVariable = if (ifHead) atom.right else atom.left
             
-            return results.any { nextValue ->
+            return results.any { nextValueId ->
+                val nextValue = nextValueId
                 if (previousValues.contains(nextValue)) {
                     false
                 } else {
@@ -185,12 +193,16 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         }
     }
 
+    override fun isRefinable(): Boolean {
+        return false
+    }
+
     private fun isBodyTrueAcyclicX(
-        variable: String,
-        value: String,
+        variable: Int,
+        value: Int,
         bodyIndex: Int,
         forbidden: Triple,
-        previousValues: HashSet<String>,
+        previousValues: HashSet<Int>,
         triples: TripleSet
     ): Boolean {
         val atom = body.get(bodyIndex)
@@ -219,8 +231,9 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
             val results = triples.getEntities(atom.relation, value, ifHead)
             val nextVariable = if (ifHead) atom.right else atom.left
             
-            return results.any { nextValue ->
-                if (!forbidden.equals(ifHead, value, atom.relation, nextValue) && 
+            return results.any { nextValueId ->
+                val nextValue = nextValueId
+                if (!forbidden.equals(ifHead, value, atom.relation, nextValueId) && 
                     !previousValues.contains(nextValue)) {
                     previousValues.add(nextValue)
                     val result = isBodyTrueAcyclicX(nextVariable, nextValue, bodyIndex + 1, forbidden, previousValues, triples)
@@ -234,7 +247,22 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     }
 
 
-    fun computeValuesReversed(targetVariable: String, targetValues: HashSet<String>, ts: TripleSet) {
+    fun computeValuesReversed(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
+        // Create a temporary string set for internal processing
+        val stringTargetValues = hashSetOf<Int>()
+        
+        // Call the original logic with string values
+        computeValuesReversedInternal(targetVariable, stringTargetValues, ts)
+        
+        // Convert results back to IDs
+        stringTargetValues.forEach { stringValue ->
+            targetValues.add(stringValue)
+        }
+    }
+
+    protected abstract val unboundVariable: Int?
+
+    private fun computeValuesReversedInternal(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
         val atomIndex = body.size() - 1
         val lastAtom = body.get(atomIndex)
         val unboundVariable = this.unboundVariable
@@ -246,7 +274,8 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
             val values = ts.getEntities(lastAtom.relation, constant, !nextVarIsLeft)
             val previousValues = hashSetOf(constant, head.constant)
             
-            values.forEachIndexed { counter, value ->
+            values.forEachIndexed { counter, valueId ->
+                val value = valueId
                 forwardReversed(nextVariable, value, atomIndex - 1, targetVariable, targetValues, ts, previousValues)
                 
                 val shouldStop = if (!APPLICATION_MODE) {
@@ -288,7 +317,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     }
 
 
-    fun beamValuesReversed(targetVariable: String, targetValues: HashSet<String>, ts: TripleSet) {
+    fun beamValuesReversed(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
         val atomIndex = body.size() - 1
         val lastAtom = body.get(atomIndex)
         if (getGroundingsLastAtom(ts) < Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) return
@@ -302,7 +331,8 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
             var counter = 0
             while (counter <= Settings.SAMPLE_SIZE) {
-                val value = ts.getRandomEntity(lastAtom.relation, constant, !nextVarIsLeft) ?: break
+                val valueId = ts.getRandomEntity(lastAtom.relation, constant, !nextVarIsLeft) ?: break
+                val value = valueId
                 counter++
                 
                 val previousValues = hashSetOf(constant, head.constant)
@@ -331,20 +361,20 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
 
     private fun forwardReversed(
-        variable: String,
-        value: String,
+        variable: Int,
+        value: Int,
         bodyIndex: Int,
-        targetVariable: String,
-        targetValues: HashSet<String>,
+        targetVariable: Int,
+        targetValues: HashSet<Int>,
         ts: TripleSet,
-        previousValues: HashSet<String>
+        previousValues: HashSet<Int>
     ) {
         if (previousValues.contains(value)) return
         
         if (bodyIndex < 0) {
             targetValues.add(value)
         } else {
-            val currentValues = hashSetOf<String>().apply {
+            val currentValues = hashSetOf<Int>().apply {
                 add(value)
                 addAll(previousValues)
             }
@@ -356,20 +386,21 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
             val nextVariable = atom.getLR(nextVarIsLeft)
             val nextValues = ts.getEntities(atom.relation, value, !nextVarIsLeft)
             
-            nextValues.forEach { nextValue ->
+            nextValues.forEach { nextValueId ->
+                val nextValue = nextValueId
                 forwardReversed(nextVariable, nextValue, bodyIndex - 1, targetVariable, targetValues, ts, currentValues)
             }
         }
     }
 
     private fun beamForwardReversed(
-        variable: String,
-        value: String,
+        variable: Int,
+        value: Int,
         bodyIndex: Int,
-        targetVariable: String,
+        targetVariable: Int,
         ts: TripleSet,
-        previousValues: HashSet<String>
-    ): String? {
+        previousValues: HashSet<Int>
+    ): Int? {
         if (previousValues.contains(value)) return null
 
         return if (bodyIndex < 0) {
@@ -379,9 +410,9 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
             val atom = body.get(bodyIndex)
             val nextVarIsLeft = atom.left != variable
             val nextVariable = atom.getLR(nextVarIsLeft)
-            val nextValue = ts.getRandomEntity(atom.relation, value, !nextVarIsLeft)
+            val nextValueId = ts.getRandomEntity(atom.relation, value, !nextVarIsLeft)
             
-            nextValue?.let { 
+            nextValueId?.let { 
                 beamForwardReversed(nextVariable, it, bodyIndex - 1, targetVariable, ts, previousValues)
             }
         }
@@ -389,14 +420,14 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
 
     /*
-   private void forwardPReversed(double p, String variable, String value, int bodyIndex, String targetVariable, PriorityQueue<Candidate> targetValues, TripleSet ts, HashSet<String> previousValues) {
+   private void forwardPReversed(double p, String variable, String value, int bodyIndex, String targetVariable, PriorityQueue<Candidate> targetValues, TripleSet ts, HashSet<Int> previousValues) {
        if (previousValues.contains(value)) return;
        if (bodyIndex < 0) {
            Candidate c = new Candidate(value, this.getAppliedConfidence() * p);
            targetValues.add(c);
        }
        else {
-           HashSet<String> currentValues = new HashSet<String>();
+           HashSet<Int> currentValues = new HashSet<Int>();
            currentValues.add(value);
            currentValues.addAll(previousValues); // ADDING THIS SINGLE LINE WAS I SUPER IMPORTANT BUG FIX
            Atom atom = this.body.get(bodyIndex);
@@ -404,7 +435,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
            if (atom.getLeft().equals(variable)) nextVarIsLeft = false;
            else nextVarIsLeft = true;
            String nextVariable = atom.getLR(nextVarIsLeft);
-           HashSet<String> nextValues = new HashSet<String>();			
+           HashSet<Int> nextValues = new HashSet<Int>();			
            if (!Rule.APPLICATION_MODE && targetValues.size() >= Settings.SAMPLE_SIZE) return;
            nextValues.addAll(ts.getEntities(atom.getRelation(), value, !nextVarIsLeft));
            for (String nextValue : nextValues) {
@@ -413,10 +444,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
        }
    }
    */
-    protected abstract val unboundVariable: String?
-
-    override fun isRefinable(): Boolean = false
-
+    
     override fun getRandomValidPrediction(ts: TripleSet): Triple? {
         val validPredictions = getPredictions(ts, 1)
         return if (validPredictions.isEmpty()) null else validPredictions[rand.nextInt(validPredictions.size)]
@@ -434,13 +462,21 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
      */
     protected fun getPredictions(ts: TripleSet, valid: Int): ArrayList<Triple> {
         val materialized = arrayListOf<Triple>()
-        val resultSet = if (isXRule) computeHeadResults(head.right, ts) else computeTailResults(head.left, ts)
+        val resultSet = if (isXRule) {
+            computeHeadResults(head.right, ts)
+        } else {
+            computeTailResults(head.left, ts)
+        }
         
-        resultSet.forEach { v ->
+        val relationId = head.relation
+        val headLeftId = head.left
+        val headRightId = head.right
+        
+        resultSet.forEach { vId ->
             val t = if (isXRule) {
-                Triple(v, targetRelation, head.right)
+                Triple(vId, relationId, headRightId)
             } else {
-                Triple(head.left, targetRelation, v)
+                Triple(headLeftId, relationId, vId)
             }
             
             when (valid) {
@@ -463,10 +499,10 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         head = head.copy()
         body.detach()
         
-        if (head.right == "X") {
-            head.right = "Y"
+        if (head.right == IdManager.getXId()) {
+            head.right = IdManager.getYId()
             repeat(bodysize()) { i ->
-                getBodyAtom(i).replace("X", "Y")
+                getBodyAtom(i).replace(IdManager.getXId(), IdManager.getYId())
             }
         }
     }

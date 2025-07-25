@@ -2,6 +2,7 @@ package tarmorn.structure
 
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 
 class RuleUntyped : Rule {
     constructor(head: Atom) {
@@ -61,9 +62,9 @@ class RuleUntyped : Rule {
         get() {
             val lrG = this.createCopy()
             val leftConstant = lrG.head.left
-            val xcount = lrG.replaceByVariable(leftConstant, "X")
+            val xcount = lrG.replaceByVariable(leftConstant, IdManager.getXId())
             val rightConstant = lrG.head.right
-            val ycount = lrG.replaceByVariable(rightConstant, "Y")
+            val ycount = lrG.replaceByVariable(rightConstant, IdManager.getYId())
             if (xcount < 2 || ycount < 2) return null
             return lrG
         }
@@ -72,7 +73,7 @@ class RuleUntyped : Rule {
         get() {
             val leftG = this.createCopy()
             val leftConstant = leftG.head.left
-            val xcount = leftG.replaceByVariable(leftConstant, "X")
+            val xcount = leftG.replaceByVariable(leftConstant, IdManager.getXId())
             if (this.bodysize() == 0) return leftG
             if (xcount < 2) return null
             return leftG
@@ -82,7 +83,7 @@ class RuleUntyped : Rule {
         get() {
             val rightG = this.createCopy()
             val rightConstant = rightG.head.right
-            val ycount = rightG.replaceByVariable(rightConstant, "Y")
+            val ycount = rightG.replaceByVariable(rightConstant, IdManager.getYId())
             if (this.bodysize() == 0) return rightG
             if (ycount < 2) return null
             return rightG
@@ -98,7 +99,7 @@ class RuleUntyped : Rule {
         return copy
     }
 
-    protected fun replaceByVariable(constant: String, variable: String): Int {
+    protected fun replaceByVariable(constant: Int, variable: Int): Int {
         var count = this.head.replaceByVariable(constant, variable)
         for (batom in this.body) {
             val bcount = batom.replaceByVariable(constant, variable)
@@ -142,15 +143,15 @@ class RuleUntyped : Rule {
     }
 
 
-    override fun computeTailResults(head: String, ts: TripleSet): HashSet<String> {
+    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
         System.err.println("method not available for an untyped rule")
-        return HashSet<String>()
+        return HashSet<Int>()
     }
 
 
-    override fun computeHeadResults(tail: String, ts: TripleSet): HashSet<String> {
+    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
         System.err.println("method not available for an untyped rule")
-        return HashSet<String>()
+        return HashSet<Int>()
     }
 
 
@@ -158,7 +159,7 @@ class RuleUntyped : Rule {
         System.err.println("method not available for an untyped rule")
     }
 
-    override fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
         System.err.println("method not available for an untyped rule")
         return false
     }
@@ -191,11 +192,11 @@ class RuleUntyped : Rule {
 
 
     override fun getTripleExplanation(
-        xValue: String,
-        yValue: String,
-        excludedTriples: HashSet<Triple>,
+        xValue: Int,
+        yValue: Int,
+        excludedTriples: java.util.HashSet<Triple>,
         triples: TripleSet
-    ): HashSet<Triple> {
+    ): java.util.HashSet<Triple> {
         System.err.println("Your are asking for a triple explanation using an untyped rule. Such a rule cannot explain anything.")
         return HashSet<Triple>()
     }

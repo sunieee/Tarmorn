@@ -3,6 +3,7 @@ package tarmorn.structure
 import tarmorn.Settings
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 import java.util.*
 
 abstract class Rule {
@@ -56,7 +57,8 @@ abstract class Rule {
 
     fun getBodyAtom(index: Int): Atom = body.get(index)
 
-    val targetRelation: String get() = head.relation
+    val targetRelation: Int get() = head.relation
+    val targetRelationId: Int get() = head.relation
 
     fun bodysize(): Int = body.size()
 
@@ -67,11 +69,8 @@ abstract class Rule {
         get() = correctlyPredicted.toDouble() / (predicted.toDouble() + Settings.UNSEEN_NEGATIVE_EXAMPLES)
 
     val isXYRule: Boolean get() = !head.isLeftC && !head.isRightC
-
     val isXRule: Boolean get() = !isXYRule && !head.isLeftC
-
     val isYRule: Boolean get() = !isXYRule && !head.isRightC
-
 
     override fun toString(): String = buildString {
         append("$predicted\t")
@@ -121,18 +120,18 @@ abstract class Rule {
     /**
      * Returns the tail results of applying this rule to a given head value.
      */
-    abstract fun computeTailResults(head: String, ts: TripleSet): HashSet<String>
+    abstract fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int>
 
     /**
      * Returns the head results of applying this rule to a given tail value.
      */
-    abstract fun computeHeadResults(tail: String, ts: TripleSet): HashSet<String>
+    abstract fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int>
 
     /**
      * Checks if the body of the rule is true for the given subject/object pair.
      * This method is called in the context of rule refinement (also called rule extension).
      */
-    abstract fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean
+    abstract fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean
 
     /**
      * Returns true if this rule is refineable.
@@ -164,8 +163,8 @@ abstract class Rule {
      * If the rule fires, the triples used to fire are returned.
      */
     abstract fun getTripleExplanation(
-        xValue: String,
-        yValue: String,
+        xValue: Int,
+        yValue: Int,
         excludedTriples: HashSet<Triple>,
         triples: TripleSet
     ): HashSet<Triple>
@@ -179,11 +178,11 @@ abstract class Rule {
         @JvmStatic
         protected var APPLICATION_MODE: Boolean = false
         @JvmField
-        val variables: Array<String> = arrayOf(
+        val variables: Array<Int> = arrayOf(
             "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"
-        )
+        ).map { IdManager.getEntityId(it) }.toTypedArray()
         @JvmField
-        var variables2Indices: MutableMap<String, Int> = variables.mapIndexed { index, variable ->
+        var variables2Indices: MutableMap<Int, Int> = variables.mapIndexed { index, variable ->
             variable to index
         }.toMap().toMutableMap()
 

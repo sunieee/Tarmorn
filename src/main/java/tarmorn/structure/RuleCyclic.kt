@@ -4,12 +4,13 @@ import tarmorn.Settings
 import tarmorn.data.SampledPairedResultSet
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 import kotlin.math.pow
 
 class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     init {
         // modify it to its canonical form
-        if (this.body.get(0).contains("Y") && this.bodysize() > 1) {
+        if (this.body.get(0).contains(IdManager.getYId()) && this.bodysize() > 1) {
             // if (this.bodysize() > 3) println("before: " + this);
             for (i in 0..(this.bodysize() / 2) - 1) {
                 val j = (this.bodysize() - i) - 1
@@ -30,24 +31,24 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         return null
     }
 
-    override fun computeTailResults(head: String, ts: TripleSet): HashSet<String> {
-        val results = HashSet<String>()
+    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
+        val results = HashSet<Int>()
         //if (Settings.BEAM_NOT_DFS) {
-        //	results = this.beamPGBodyCyclic("X", "Y", head, 0, true, ts);
+        //	results = this.beamPGBodyCyclic(IdManager.getXId(), IdManager.getYId(), head, 0, true, ts);
         //}
         //else {
-        this.getCyclic("X", "Y", head, 0, true, ts, HashSet<String>(), results)
+        this.getCyclic(IdManager.getXId(), IdManager.getYId(), head, 0, true, ts, HashSet<Int>(), results)
         //}
         return results
     }
 
-    override fun computeHeadResults(tail: String, ts: TripleSet): HashSet<String> {
-        val results = HashSet<String>()
+    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
+        val results = HashSet<Int>()
         // if (Settings.BEAM_NOT_DFS) {
-        //	results = this.beamPGBodyCyclic("Y", "X", tail, this.bodysize() - 1, false, ts);
+        //	results = this.beamPGBodyCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodysize() - 1, false, ts);
         //}
         //else {
-        this.getCyclic("Y", "X", tail, this.bodysize() - 1, false, ts, HashSet<String>(), results)
+        this.getCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodysize() - 1, false, ts, HashSet<Int>(), results)
         //}
         return results
     }
@@ -57,30 +58,30 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val xypairs: SampledPairedResultSet?
         val xypairsReverse: SampledPairedResultSet?
 
-        if (this.body.get(0).contains("X")) {
+        if (this.body.get(0).contains(IdManager.getXId())) {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
-                    xypairs = beamBodyCyclicEDIS("X", "Y", triples)
-                    xypairsReverse = beamBodyCyclicReverseEDIS("X", "Y", triples)
+                    xypairs = beamBodyCyclicEDIS(IdManager.getXId(), IdManager.getYId(), triples)
+                    xypairsReverse = beamBodyCyclicReverseEDIS(IdManager.getXId(), IdManager.getYId(), triples)
                 } else {
-                    xypairs = beamBodyCyclic("X", "Y", triples)
-                    xypairsReverse = beamBodyCyclicReverse("X", "Y", triples)
+                    xypairs = beamBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
+                    xypairsReverse = beamBodyCyclicReverse(IdManager.getXId(), IdManager.getYId(), triples)
                 }
             } else {
-                xypairs = groundBodyCyclic("X", "Y", triples)
+                xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
                 xypairsReverse = SampledPairedResultSet()
             }
         } else {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
-                    xypairs = beamBodyCyclicEDIS("Y", "X", triples)
-                    xypairsReverse = beamBodyCyclicReverseEDIS("Y", "X", triples)
+                    xypairs = beamBodyCyclicEDIS(IdManager.getYId(), IdManager.getXId(), triples)
+                    xypairsReverse = beamBodyCyclicReverseEDIS(IdManager.getYId(), IdManager.getXId(), triples)
                 } else {
-                    xypairs = beamBodyCyclic("Y", "X", triples)
-                    xypairsReverse = beamBodyCyclicReverse("Y", "X", triples)
+                    xypairs = beamBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
+                    xypairsReverse = beamBodyCyclicReverse(IdManager.getYId(), IdManager.getXId(), triples)
                 }
             } else {
-                xypairs = groundBodyCyclic("Y", "X", triples)
+                xypairs = groundBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
                 xypairsReverse = SampledPairedResultSet()
             }
         }
@@ -132,30 +133,30 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val xypairs: SampledPairedResultSet?
         val xypairsReverse: SampledPairedResultSet?
 
-        if (this.body.get(0).contains("X")) {
+        if (this.body.get(0).contains(IdManager.getXId())) {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
-                    xypairs = beamBodyCyclicEDIS("X", "Y", triples)
-                    xypairsReverse = beamBodyCyclicReverseEDIS("X", "Y", triples)
+                    xypairs = beamBodyCyclicEDIS(IdManager.getXId(), IdManager.getYId(), triples)
+                    xypairsReverse = beamBodyCyclicReverseEDIS(IdManager.getXId(), IdManager.getYId(), triples)
                 } else {
-                    xypairs = beamBodyCyclic("X", "Y", triples)
-                    xypairsReverse = beamBodyCyclicReverse("X", "Y", triples)
+                    xypairs = beamBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
+                    xypairsReverse = beamBodyCyclicReverse(IdManager.getXId(), IdManager.getYId(), triples)
                 }
             } else {
-                xypairs = groundBodyCyclic("X", "Y", triples)
+                xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
                 xypairsReverse = xypairs
             }
         } else {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
-                    xypairs = beamBodyCyclicEDIS("Y", "X", triples)
-                    xypairsReverse = beamBodyCyclicReverseEDIS("Y", "X", triples)
+                    xypairs = beamBodyCyclicEDIS(IdManager.getYId(), IdManager.getXId(), triples)
+                    xypairsReverse = beamBodyCyclicReverseEDIS(IdManager.getYId(), IdManager.getXId(), triples)
                 } else {
-                    xypairs = beamBodyCyclic("Y", "X", triples)
-                    xypairsReverse = beamBodyCyclicReverse("Y", "X", triples)
+                    xypairs = beamBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
+                    xypairsReverse = beamBodyCyclicReverse(IdManager.getYId(), IdManager.getXId(), triples)
                 }
             } else {
-                xypairs = groundBodyCyclic("Y", "X", triples)
+                xypairs = groundBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
                 xypairsReverse = xypairs
             }
         }
@@ -220,11 +221,11 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 		long startScoring = System.currentTimeMillis();
 		// X is given in first body atom
 		SampledPairedResultSet xypairs;
-		if (this.body.get(0).contains("X")) {
-			xypairs = beamBodyCyclic("X", "Y", triples);
+		if (this.body.get(0).contains(IdManager.getXId())) {
+			xypairs = beamBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples);
 		}
 		else {
-			xypairs = beamBodyCyclic("Y", "X", triples);
+			xypairs = beamBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples);
 		}
 		// body groundings		
 		int correctlyPredicted = 0;
@@ -280,8 +281,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
      */
     protected fun getPredictions(triples: TripleSet, valid: Int): ArrayList<Triple> {
         val xypairs: SampledPairedResultSet?
-        if (this.body.get(0).contains("X")) xypairs = groundBodyCyclic("X", "Y", triples)
-        else xypairs = groundBodyCyclic("Y", "X", triples)
+        if (this.body.get(0).contains(IdManager.getXId())) xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
+        else xypairs = groundBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
         val predictions = ArrayList<Triple>()
         for (key in xypairs.values.keys) {
             for (value in xypairs.values.get(key)!!) {
@@ -305,7 +306,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
 
-    override fun isPredictedX(leftValue: String, rightValue: String, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
         System.err.println("method not YET available for an extended/refinde rule")
         return false
     }
@@ -313,14 +314,14 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
     // *** PRIVATE PLAYGROUND **** 
     private fun getCyclic(
-        currentVariable: String,
-        lastVariable: String,
-        value: String,
+        currentVariable: Int,
+        lastVariable: Int,
+        value: Int,
         bodyIndex: Int,
         direction: Boolean,
         triples: TripleSet,
-        previousValues: HashSet<String>,
-        finalResults: HashSet<String>
+        previousValues: HashSet<Int>,
+        finalResults: HashSet<Int>
     ) {
         if (Rule.Companion.APPLICATION_MODE && finalResults.size >= Settings.DISCRIMINATION_BOUND) {
             finalResults.clear()
@@ -343,7 +344,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             val results = triples.getEntities(atom.relation, value, ifHead)
             if (results.size > Settings.BRANCHINGFACTOR_BOUND && Settings.DFS_SAMPLING_ON == true) return
             val nextVariable = if (ifHead) atom.right else atom.left
-            val currentValues = HashSet<String>()
+            val currentValues = HashSet<Int>()
             currentValues.addAll(previousValues)
             if (Settings.OI_CONSTRAINTS_ACTIVE) currentValues.add(value)
 
@@ -369,8 +370,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
 
     private fun groundBodyCyclic(
-        firstVariable: String,
-        lastVariable: String,
+        firstVariable: Int,
+        lastVariable: Int,
         triples: TripleSet,
         samplingOn: Boolean = Settings.DFS_SAMPLING_ON
     ): SampledPairedResultSet {
@@ -381,7 +382,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         var counter = 0
         for (t in rtriples) {
             counter++
-            val lastVariableGroundings = HashSet<String>()
+            val lastVariableGroundings = HashSet<Int>()
             // the call itself
             this.getCyclic(
                 firstVariable,
@@ -390,11 +391,11 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                 0,
                 true,
                 triples,
-                HashSet<String>(),
+                HashSet<Int>(),
                 lastVariableGroundings
             )
             if (lastVariableGroundings.size > 0) {
-                if (firstVariable == "X") {
+                if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(t.getValue(ifHead))
                     for (lastVariableValue in lastVariableGroundings) {
                         groundings.addValue(lastVariableValue)
@@ -414,8 +415,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
     private fun beamBodyCyclic(
-        firstVariable: String,
-        lastVariable: String,
+        firstVariable: Int,
+        lastVariable: Int,
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
@@ -427,9 +428,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         while ((triples.getRandomTripleByRelation(atom.relation).also { t = it }) != null) {
             attempts++
             val lastVarGrounding =
-                this.beamCyclic(firstVariable, t!!.getValue(ifHead), 0, true, triples, HashSet<String>())
+                this.beamCyclic(firstVariable, t!!.getValue(ifHead), 0, true, triples, HashSet<Int>())
             if (lastVarGrounding != null) {
-                if (firstVariable == "X") {
+                if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(t.getValue(ifHead))
                     if (groundings.addValue(lastVarGrounding)) repetitions = 0
                     else repetitions++
@@ -448,8 +449,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
 
     private fun beamBodyCyclicEDIS(
-        firstVariable: String,
-        lastVariable: String,
+        firstVariable: Int,
+        lastVariable: Int,
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
@@ -462,9 +463,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS
         )
         for (e in entities) {
-            val lastVarGrounding = this.beamCyclic(firstVariable, e, 0, true, triples, HashSet<String>())
+            val lastVarGrounding = this.beamCyclic(firstVariable, e, 0, true, triples, HashSet<Int>())
             if (lastVarGrounding != null) {
-                if (firstVariable == "X") {
+                if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(e)
                     if (groundings.addValue(lastVarGrounding)) repetitions = 0
                     else repetitions++
@@ -488,8 +489,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
 
     private fun beamBodyCyclicReverse(
-        firstVariable: String,
-        lastVariable: String,
+        firstVariable: Int,
+        lastVariable: Int,
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
@@ -506,11 +507,11 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                 this.bodysize() - 1,
                 false,
                 triples,
-                HashSet<String>()
+                HashSet<Int>()
             )
             // until here
             if (firstVarGrounding != null) {
-                if (firstVariable == "X") {
+                if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(firstVarGrounding)
                     if (groundings.addValue(t.getValue(ifHead))) repetitions = 0
                     else repetitions++
@@ -528,8 +529,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
     private fun beamBodyCyclicReverseEDIS(
-        firstVariable: String,
-        lastVariable: String,
+        firstVariable: Int,
+        lastVariable: Int,
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
@@ -544,9 +545,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (e in entities) {
             // println("e="+ e);
             val firstVarGrounding =
-                this.beamCyclic(lastVariable, e, this.bodysize() - 1, false, triples, HashSet<String>())
+                this.beamCyclic(lastVariable, e, this.bodysize() - 1, false, triples, HashSet<Int>())
             if (firstVarGrounding != null) {
-                if (firstVariable == "X") {
+                if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(firstVarGrounding)
                     if (groundings.addValue(e)) repetitions = 0
                     else repetitions++
@@ -565,8 +566,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
     // (String currentVariable, String lastVariable, TripleSet triples,) {
     /*
-	private HashSet<String> beamPGBodyCyclic(String firstVariable, String lastVariable, String value, int bodyIndex, boolean direction, TripleSet triples) {
-		HashSet<String> groundings = new HashSet<String>();
+	private HashSet<Int> beamPGBodyCyclic(String firstVariable, String lastVariable, String value, int bodyIndex, boolean direction, TripleSet triples) {
+		HashSet<Int> groundings = new HashSet<Int>();
 		Atom atom = this.body.get(bodyIndex);
 		boolean ifHead = atom.getLeft().equals(firstVariable);
 		int attempts = 0;
@@ -576,7 +577,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 		//println("startsFine=" + startFine);
 		while (startFine) {
 			attempts++;
-			String grounding = this.beamCyclic(firstVariable, value, bodyIndex, direction, triples, new HashSet<String>());
+			String grounding = this.beamCyclic(firstVariable, value, bodyIndex, direction, triples, new HashSet<Int>());
 			if (grounding != null) {
 				if (groundings.add(grounding)) repetitions = 0;
 				else repetitions++;
@@ -605,15 +606,15 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
      * @return A grounding for the last variable (or constants). Null if not a full grounding of the body has been constructed.
      */
     protected fun beamCyclic(
-        currentVariable: String,
-        value: String?,
+        currentVariable: Int,
+        value: Int?,
         bodyIndex: Int,
         direction: Boolean,
         triples: TripleSet,
-        previousValues: HashSet<String>
-    ): String? {
+        previousValues: HashSet<Int>
+    ): Int? {
         // println(currentVariable + ", " + value + ", " + bodyIndex +", " +direction + ", " + previousValues.size());
-        if (value == null || value == "") return null
+        if (value == null || value == 0) return null
         // check if the value has been seen before as grounding of another variable
         val atom = this.body.get(bodyIndex)
         val ifHead = atom.left == currentVariable
@@ -663,19 +664,19 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
     override fun getTripleExplanation(
-        xValue: String,
-        yValue: String,
+        xValue: Int,
+        yValue: Int,
         excludedTriples: HashSet<Triple>,
         triples: TripleSet
     ): HashSet<Triple> {
         val groundings = HashSet<Triple>()
         val bodyAtoms = ArrayList<Atom>()
-        val variables = ArrayList<String>()
+        val variables = ArrayList<Int>()
         for (i in 0..<this.bodysize()) bodyAtoms.add(this.getBodyAtom(i))
-        variables.add("X")
+        variables.add(IdManager.getXId())
         for (i in 0..<this.bodysize() - 1) variables.add(Rule.Companion.variables[i])
-        variables.add("Y")
-        val visitedValues = HashSet<String>()
+        variables.add(IdManager.getYId())
+        val visitedValues = HashSet<Int>()
         visitedValues.add(xValue)
         visitedValues.add(yValue)
         searchTripleExplanation(
@@ -694,15 +695,15 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
 
     private fun searchTripleExplanation(
-        firstValue: String,
-        lastValue: String,
+        firstValue: Int,
+        lastValue: Int,
         firstIndex: Int,
         lastIndex: Int,
-        variables: ArrayList<String>,
+        variables: ArrayList<Int>,
         excludedTriples: HashSet<Triple>,
         triples: TripleSet,
         groundings: HashSet<Triple>,
-        visitedValues: HashSet<String>
+        visitedValues: HashSet<Int>
     ) {
         val firstVar = variables.get(firstIndex)
         val lastVar = variables.get(lastIndex + 1)
@@ -731,7 +732,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val firstAtom = this.getBodyAtom(firstIndex)
         val lastAtom = this.getBodyAtom(lastIndex)
 
-        var valuesFromFirst: MutableSet<String>? = null
+        var valuesFromFirst: MutableSet<Int>? = null
         val firstValuesAreTails: Boolean
         if (firstAtom.left == firstVar) {
             valuesFromFirst = triples.getTailEntities(firstAtom.relation, firstValue)
@@ -740,7 +741,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             valuesFromFirst = triples.getHeadEntities(firstAtom.relation, firstValue)
             firstValuesAreTails = false
         }
-        var valuesFromLast: MutableSet<String>? = null
+        var valuesFromLast: MutableSet<Int>? = null
         val lastValuesAreTails: Boolean
         if (lastAtom.left == lastVar) {
             valuesFromLast = triples.getTailEntities(lastAtom.relation, lastValue)

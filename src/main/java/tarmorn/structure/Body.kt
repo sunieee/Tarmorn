@@ -1,5 +1,7 @@
 package tarmorn.structure
 
+import tarmorn.data.IdManager
+
 class Body : Iterable<Atom> {
     private var hashcode = 0
     private var hashcodeInitialized = false
@@ -75,8 +77,8 @@ class Body : Iterable<Atom> {
         if (thatObject is Body) {
             val that = thatObject
             if (this.literals.size == that.literals.size) {
-                val variablesThis2That = HashMap<String, String>()
-                val variablesThat2This = HashMap<String, String>()
+                val variablesThis2That = HashMap<Int, Int>()
+                val variablesThat2This = HashMap<Int, Int>()
                 for (i in this.literals.indices) {
                     val atom1 = this.literals.get(i)
                     val atom2 = that.literals.get(i)
@@ -108,8 +110,8 @@ class Body : Iterable<Atom> {
     }
 
     private fun checkValuesAndVariables(
-        variablesThis2That: HashMap<String, String>,
-        variablesThat2This: HashMap<String, String>,
+        variablesThis2That: HashMap<Int, Int>,
+        variablesThat2This: HashMap<Int, Int>,
         atom1: Atom,
         atom2: Atom,
         leftNotRight: Boolean
@@ -125,11 +127,11 @@ class Body : Iterable<Atom> {
         }
         if (!atom1.isLRC(leftNotRight) && !atom2.isLRC(leftNotRight)) {
             // special cases X must be at same position as X, Y at same as Y
-            if (atom1.getLR(leftNotRight) == "X" && atom2.getLR(leftNotRight) != "X") return false
-            if (atom2.getLR(leftNotRight) == "X" && atom1.getLR(leftNotRight) != "X") return false
+            if (atom1.getLR(leftNotRight) == IdManager.getXId() && atom2.getLR(leftNotRight) != IdManager.getXId()) return false
+            if (atom2.getLR(leftNotRight) == IdManager.getXId() && atom1.getLR(leftNotRight) != IdManager.getXId()) return false
 
-            if (atom1.getLR(leftNotRight) == "Y" && atom2.getLR(leftNotRight) != "Y") return false
-            if (atom2.getLR(leftNotRight) == "Y" && atom1.getLR(leftNotRight) != "Y") return false
+            if (atom1.getLR(leftNotRight) == IdManager.getYId() && atom2.getLR(leftNotRight) != IdManager.getYId()) return false
+            if (atom2.getLR(leftNotRight) == IdManager.getYId() && atom1.getLR(leftNotRight) != IdManager.getYId()) return false
 
             if (variablesThis2That.containsKey(atom1.getLR(leftNotRight))) {
                 val thatV = variablesThis2That.get(atom1.getLR(leftNotRight))
@@ -149,7 +151,7 @@ class Body : Iterable<Atom> {
 
     val numOfVariables: Int
         get() {
-            val variables = HashSet<String>()
+            val variables = HashSet<Int>()
             for (a in this.literals) {
                 variables.addAll(a.variables)
             }
@@ -165,7 +167,7 @@ class Body : Iterable<Atom> {
         get() = this.get(this.literals.size - 1)
 
     fun normalizeVariableNames() {
-        val old2New = HashMap<String, String>()
+        val old2New = HashMap<Int, Int>()
         var indexNewVariableNames = 0
 
 
@@ -174,7 +176,7 @@ class Body : Iterable<Atom> {
             val variables = atom.variables
             var block = 0
             for (v in variables) {
-                if (v == "X" || v == "Y") continue
+                if (v == IdManager.getXId() || v == IdManager.getYId()) continue
                 if (!old2New.containsKey(v)) {
                     val vNew = Rule.variables[indexNewVariableNames]
                     old2New[v] = vNew
