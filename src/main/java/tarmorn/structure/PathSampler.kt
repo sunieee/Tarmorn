@@ -1,11 +1,9 @@
-package tarmorn.algorithm
+package tarmorn.structure
 
 import tarmorn.Settings
+import tarmorn.data.IdManager
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
-import tarmorn.data.IdManager
-import tarmorn.structure.Path
-import tarmorn.structure.Rule
 import kotlin.random.Random
 
 /**
@@ -13,7 +11,7 @@ import kotlin.random.Random
  *
  */
 class PathSampler(private val ts: TripleSet) {
-    private val rand = Random
+    private val rand = Random.Default
 
 
     @JvmOverloads

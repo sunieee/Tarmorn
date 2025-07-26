@@ -195,62 +195,6 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         return scores
     }
 
-
-    /*
-	public int estimateAllBodyGroundings() {
-		for (int i = 0; i < this.bodysize(); i++) {
-			
-			Atom atom = this.getBodyAtom(i);
-			atom.get
-			
-			
-			
-			
-		}
-		
-	}
-	*/
-    /**
-     * The new implementation if the sample based computation of the scores.
-     * Samples completely random attempts to create a beam over the body.
-     *
-     * @param triples
-     */
-    /*
-	public void beamScores(TripleSet triples) {
-		long startScoring = System.currentTimeMillis();
-		// X is given in first body atom
-		SampledPairedResultSet xypairs;
-		if (this.body[0].contains(IdManager.getXId())) {
-			xypairs = beamBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples);
-		}
-		else {
-			xypairs = beamBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples);
-		}
-		// body groundings		
-		int correctlyPredicted = 0;
-		int predicted = 0;
-		for (String key : xypairs.getValues().keySet()) {
-			for (String value : xypairs.getValues().get(key)) {	
-				if (Settings.PREDICT_ONLY_UNCONNECTED) {
-					Set<String> links = triples.getRelations(key, value);
-					Set<String> invLinks = triples.getRelations(value, key);
-					if (invLinks.size() > 0) continue;
-					if (!links.contains(this.head.getRelation()) && links.size() > 0) continue;
-					if (links.contains(this.head.getRelation()) && links.size() > 1) continue;
-				}
-				predicted++;
-				if (triples.isTrue(key, this.head.getRelation(), value)) {
-					correctlyPredicted++;		
-				}
-			}
-		}
-		this.predicted = predicted;
-		this.correctlyPredicted = correctlyPredicted;
-		this.confidence = (double)correctlyPredicted / (double)predicted;
-		
-	}
-	*/
     override fun getRandomValidPrediction(triples: TripleSet): Triple? {
         val validPredictions = this.getPredictions(triples, 1)
         if (validPredictions == null || validPredictions.size == 0) return null

@@ -6,7 +6,7 @@ import tarmorn.Learn.heyYouImHere
 import tarmorn.Learn.isStored
 import tarmorn.Learn.storeRule
 import tarmorn.Settings
-import tarmorn.algorithm.PathSampler
+import tarmorn.structure.PathSampler
 import tarmorn.data.TripleSet
 import tarmorn.structure.Rule
 import tarmorn.structure.RuleFactory
