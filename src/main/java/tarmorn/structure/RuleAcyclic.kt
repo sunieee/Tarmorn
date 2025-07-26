@@ -6,7 +6,7 @@ import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 
 abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
-    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
+    override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> {
         val resultSet = hashSetOf<Int>()
         
         return when {
@@ -51,7 +51,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 		return resultSet;
 	}
 	*/
-    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
+    override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
         val resultSet = hashSetOf<Int>()
         
         return when {
@@ -501,7 +501,7 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         
         if (head.right == IdManager.getXId()) {
             head.right = IdManager.getYId()
-            repeat(bodysize()) { i ->
+            repeat(bodySize) { i ->
                 getBodyAtom(i).replace(IdManager.getXId(), IdManager.getYId())
             }
         }

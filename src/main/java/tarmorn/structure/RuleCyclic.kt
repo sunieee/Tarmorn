@@ -10,17 +10,17 @@ import kotlin.math.pow
 class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     init {
         // modify it to its canonical form
-        if (this.body[0].contains(IdManager.getYId()) && this.bodysize() > 1) {
-            // if (this.bodysize() > 3) println("before: " + this);
-            for (i in 0..(this.bodysize() / 2) - 1) {
-                val j = (this.bodysize() - i) - 1
+        if (this.body[0].contains(IdManager.getYId()) && this.bodySize > 1) {
+            // if (this.bodySize > 3) println("before: " + this);
+            for (i in 0..(this.bodySize / 2) - 1) {
+                val j = (this.bodySize - i) - 1
                 val atom_i = this.body[i]
                 val atom_j = this.body[j]
                 this.body[i] = atom_j
                 this.body[j] = atom_i
             }
             this.body.normalizeVariableNames()
-            // if (this.bodysize() > 3) println("after: " + this);
+            // if (this.bodySize > 3) println("after: " + this);
         }
     }
 
@@ -31,8 +31,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         return null
     }
 
-    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
-        val results = HashSet<Int>()
+    override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> {
+        val results = hashSetOf<Int>()
         //if (Settings.BEAM_NOT_DFS) {
         //	results = this.beamPGBodyCyclic(IdManager.getXId(), IdManager.getYId(), head, 0, true, ts);
         //}
@@ -42,13 +42,13 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         return results
     }
 
-    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
-        val results = HashSet<Int>()
+    override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
+        val results = hashSetOf<Int>()
         // if (Settings.BEAM_NOT_DFS) {
         //	results = this.beamPGBodyCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodysize() - 1, false, ts);
         //}
         //else {
-        this.getCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodysize() - 1, false, ts, HashSet<Int>(), results)
+        this.getCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodySize - 1, false, ts, HashSet<Int>(), results)
         //}
         return results
     }
@@ -168,7 +168,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
         for (key in xypairs.values.keys) {
             for (value in xypairs.values.get(key)!!) {
-                val explanation = that.getTripleExplanation(key, value, HashSet<Triple>(), triples)
+                val explanation = that.getTripleExplanation(key, value, hashSetOf(), triples)
                 if (explanation != null && explanation.size > 0) {
                     predictedBoth++
                     if (triples.isTrue(key, this.head.relation, value)) correctlyPredictedBoth++
@@ -178,7 +178,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (key in xypairsReverse.values.keys) {
             for (value in xypairsReverse.values.get(key)!!) {
                 // change this to that
-                val explanation = that.getTripleExplanation(key, value, HashSet<Triple>(), triples)
+                val explanation = that.getTripleExplanation(key, value, hashSetOf(), triples)
                 if (explanation != null && explanation.size > 0) {
                     predictedBoth++
                     if (triples.isTrue(key, this.head.relation, value)) correctlyPredictedBoth++
@@ -268,7 +268,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
 
-    override fun getPredictions(triples: TripleSet): ArrayList<Triple> {
+    override fun getPredictions(triples: TripleSet): List<Triple> {
         return this.getPredictions(triples, 0)
     }
 
@@ -504,7 +504,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             val firstVarGrounding = this.beamCyclic(
                 lastVariable,
                 t!!.getValue(ifHead),
-                this.bodysize() - 1,
+                this.bodySize - 1,
                 false,
                 triples,
                 HashSet<Int>()
@@ -545,7 +545,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (e in entities) {
             // println("e="+ e);
             val firstVarGrounding =
-                this.beamCyclic(lastVariable, e, this.bodysize() - 1, false, triples, HashSet<Int>())
+                this.beamCyclic(lastVariable, e, this.bodySize - 1, false, triples, HashSet<Int>())
             if (firstVarGrounding != null) {
                 if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(firstVarGrounding)
@@ -652,7 +652,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         get() {
             val cop = this.correctlyPredicted.toDouble()
             val pred = this.predicted.toDouble()
-            val rsize = this.bodysize().toDouble()
+            val rsize = this.bodySize.toDouble()
 
             if (Settings.RULE_LENGTH_DEGRADE == 1.0) return cop / (pred + Settings.UNSEEN_NEGATIVE_EXAMPLES)
             else return (cop * Settings.RULE_LENGTH_DEGRADE.pow(rsize - 1.0)) / (pred + Settings.UNSEEN_NEGATIVE_EXAMPLES)
@@ -666,15 +666,15 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet
-    ): HashSet<Triple> {
-        val groundings = HashSet<Triple>()
+    ): Set<Triple> {
+        val groundings = hashSetOf<Triple>()
         val bodyAtoms = ArrayList<Atom>()
         val variables = ArrayList<Int>()
-        for (i in 0..<this.bodysize()) bodyAtoms.add(this.getBodyAtom(i))
+        for (i in 0..<this.bodySize) bodyAtoms.add(this.getBodyAtom(i))
         variables.add(IdManager.getXId())
-        for (i in 0..<this.bodysize() - 1) variables.add(Rule.Companion.variables[i])
+        for (i in 0..<this.bodySize - 1) variables.add(Rule.Companion.variables[i])
         variables.add(IdManager.getYId())
         val visitedValues = HashSet<Int>()
         visitedValues.add(xValue)
@@ -683,7 +683,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             xValue,
             yValue,
             0,
-            this.bodysize() - 1,
+            this.bodySize - 1,
             variables,
             excludedTriples,
             triples,
@@ -700,9 +700,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         firstIndex: Int,
         lastIndex: Int,
         variables: ArrayList<Int>,
-        excludedTriples: HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet,
-        groundings: HashSet<Triple>,
+        groundings: MutableSet<Triple>,
         visitedValues: HashSet<Int>
     ) {
         val firstVar = variables.get(firstIndex)
@@ -771,7 +771,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                     groundings,
                     visitedValues
                 )
-                if (groundings.size < this.bodysize()) {
+                if (groundings.size < this.bodySize) {
                     // println("removing " + g + " (num of triples in groundings = " + groundings.size() + ")");
                     groundings.remove(g)
                 } else break
@@ -797,7 +797,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                     groundings,
                     visitedValues
                 )
-                if (groundings.size < this.bodysize()) {
+                if (groundings.size < this.bodySize) {
                     groundings.remove(g)
                     // println("removing " + g + " (num of triples in groundings = " + groundings.size() + ")");
                 } else break

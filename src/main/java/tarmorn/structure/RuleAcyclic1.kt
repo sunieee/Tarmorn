@@ -65,7 +65,7 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
             val c = this.head.right
             val sb = StringBuilder()
             sb.append(this.head.toString(c, IdManager.getYId()))
-            for (i in 0..<this.bodysize()) {
+            for (i in 0..<this.bodySize) {
                 sb.append(this.getBodyAtom(i)!!.toString(c, IdManager.getYId()))
             }
             val rs = sb.toString()
@@ -75,7 +75,7 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
             val c = this.head.left
             val sb = StringBuilder()
             sb.append(this.head.toString(c, IdManager.getXId()))
-            for (i in this.bodysize() - 1 downTo 0) {
+            for (i in this.bodySize - 1 downTo 0) {
                 sb.append(this.getBodyAtom(i)!!.toString(c, IdManager.getXId()))
             }
             val rs = sb.toString()
@@ -134,14 +134,14 @@ class RuleAcyclic1(r: RuleUntyped) : RuleAcyclic(r) {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: java.util.HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet
-    ): java.util.HashSet<Triple> {
-        if (this.bodysize() != 1) {
+    ): Set<Triple> {
+        if (this.bodySize != 1) {
             System.err.println("Trying to get a triple explanation for an acyclic rule with constant in head any body of length != 1. This is not yet implemented.")
             System.exit(-1)
         }
-        val groundings = HashSet<Triple>()
+        val groundings = hashSetOf<Triple>()
         val xId = xValue
         val yId = yValue
         var xInHead = false

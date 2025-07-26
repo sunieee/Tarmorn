@@ -278,7 +278,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
         if (Settings.REWARD == 2) return correctlyPredicted.toDouble() * confidence
         if (Settings.REWARD == 3) return correctlyPredicted.toDouble() * appliedConfidence
         if (Settings.REWARD == 4) return correctlyPredicted.toDouble() * appliedConfidence * appliedConfidence
-        if (Settings.REWARD == 5) return correctlyPredicted.toDouble() * appliedConfidence / 2.0.pow((rule.bodysize() - 1).toDouble())
+        if (Settings.REWARD == 5) return correctlyPredicted.toDouble() * appliedConfidence / 2.0.pow((rule.bodySize - 1).toDouble())
         return 0.0
     }
 }

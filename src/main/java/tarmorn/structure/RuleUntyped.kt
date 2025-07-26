@@ -26,7 +26,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body[this.bodysize() - 1].isLeftC || this.body[this.bodysize() - 1].isRightC) {
+                if (this.body[this.bodySize - 1].isLeftC || this.body[this.bodySize - 1].isRightC) {
                     return true
                 }
                 return false
@@ -37,7 +37,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body[this.bodysize() - 1].isLeftC || this.body[this.bodysize() - 1].isRightC) {
+                if (this.body[this.bodySize - 1].isLeftC || this.body[this.bodySize - 1].isRightC) {
                     return false
                 }
                 return true
@@ -46,7 +46,7 @@ class RuleUntyped : Rule {
 
     val isZero: Boolean
         get() {
-            if (this.bodysize() == 0) return true
+            if (this.bodySize == 0) return true
             else return false
         }
 
@@ -74,7 +74,7 @@ class RuleUntyped : Rule {
             val leftG = this.createCopy()
             val leftConstant = leftG.head.left
             val xcount = leftG.replaceByVariable(leftConstant, IdManager.getXId())
-            if (this.bodysize() == 0) return leftG
+            if (this.bodySize == 0) return leftG
             if (xcount < 2) return null
             return leftG
         }
@@ -84,7 +84,7 @@ class RuleUntyped : Rule {
             val rightG = this.createCopy()
             val rightConstant = rightG.head.right
             val ycount = rightG.replaceByVariable(rightConstant, IdManager.getYId())
-            if (this.bodysize() == 0) return rightG
+            if (this.bodySize == 0) return rightG
             if (ycount < 2) return null
             return rightG
         }
@@ -143,15 +143,15 @@ class RuleUntyped : Rule {
     }
 
 
-    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
+    override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> {
         System.err.println("method not available for an untyped rule")
-        return HashSet<Int>()
+        return hashSetOf()
     }
 
 
-    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
+    override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
         System.err.println("method not available for an untyped rule")
-        return HashSet<Int>()
+        return hashSetOf()
     }
 
 
@@ -179,7 +179,7 @@ class RuleUntyped : Rule {
         return null
     }
 
-    override fun getPredictions(ts: TripleSet): ArrayList<Triple>? {
+    override fun getPredictions(ts: TripleSet): List<Triple>? {
         System.err.println("method not available for an untyped rule")
         return null
     }
@@ -194,11 +194,11 @@ class RuleUntyped : Rule {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: java.util.HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet
-    ): java.util.HashSet<Triple> {
+    ): Set<Triple> {
         System.err.println("Your are asking for a triple explanation using an untyped rule. Such a rule cannot explain anything.")
-        return HashSet<Triple>()
+        return hashSetOf()
     }
 
 

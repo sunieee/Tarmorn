@@ -33,8 +33,8 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         this.confidence = correctlyPredicted.toDouble() / predicted.toDouble()
     }
 
-    override fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int> {
-        val results = HashSet<Int>()
+    override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> {
+        val results = hashSetOf<Int>()
         if (this.head.isRightC) {
             // Convert string to entity ID
             results.add(this.head.right)
@@ -42,8 +42,8 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         return results
     }
 
-    override fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int> {
-        val results = HashSet<Int>()
+    override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
+        val results = hashSetOf<Int>()
         if (this.head.isLeftC) {
             // Convert string to entity ID
             results.add(this.head.left)
@@ -74,7 +74,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     }
 
 
-    override fun getPredictions(ts: TripleSet): ArrayList<Triple>? {
+    override fun getPredictions(ts: TripleSet): List<Triple>? {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
@@ -95,10 +95,10 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     override fun getTripleExplanation(
         head: Int,
         tail: Int,
-        excludedTriples: HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet
-    ): HashSet<Triple> {
-        val groundings = HashSet<Triple>()
+    ): Set<Triple> {
+        val groundings = hashSetOf<Triple>()
         val prediction = tarmorn.data.Triple(head, this.targetRelation, tail)
         if (excludedTriples.contains(prediction)) return groundings
         if (this.isXRule && tail == this.head.right) {

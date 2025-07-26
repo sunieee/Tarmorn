@@ -29,7 +29,7 @@ object RuleFactory {
         val left = rv.leftGeneralization
 
         if (left != null) {
-            if (left.bodysize() == 0) {
+            if (left.bodySize == 0) {
                 generalizations.add(RuleZero(left))
             } else {
                 val leftFree = left.createCopy()
@@ -41,7 +41,7 @@ object RuleFactory {
         }
         val right = rv.rightGeneralization
         if (right != null) {
-            if (right.bodysize() == 0) {
+            if (right.bodySize == 0) {
                 generalizations.add(RuleZero(right))
             } else {
                 val rightFree = right.createCopy()

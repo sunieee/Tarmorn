@@ -8,19 +8,19 @@ import java.util.*
 
 abstract class Rule {
     lateinit var head: Atom
-    var body: Body = Body()
+    var body = Body()
 
-    private var hashcode: Int = 0
-    private var hashcodeInitialized: Boolean = false
+    // Use lazy initialization for hashcode
+    private val hashcode by lazy { Objects.hash(head.toString(), body.toString()) }
 
-    var predicted: Int = 0
+    var predicted = 0
         protected set
-    var correctlyPredicted: Int = 0
+    var correctlyPredicted = 0
         protected set
-    var confidence: Double = 0.0
+    var confidence = 0.0
         protected set
 
-    protected var nextFreeVariable: Int = 0
+    protected var nextFreeVariable = 0
 
     constructor(r: RuleUntyped) {
         body = r.body
@@ -40,9 +40,7 @@ abstract class Rule {
     val copy: Rule?
         get() {
             val copy = RuleUntyped(head.copy())
-            body.forEach { bodyLiteral ->
-                copy.body.add(bodyLiteral.copy())
-            }
+            body.forEach { copy.body.add(it.copy()) }
             copy.nextFreeVariable = nextFreeVariable
             
             return when {
@@ -55,45 +53,34 @@ abstract class Rule {
 
     fun addBodyAtom(atom: Atom) = body.add(atom)
 
-    fun getBodyAtom(index: Int): Atom = body[index]
+    fun getBodyAtom(index: Int) = body[index]
 
-    val targetRelation: Long get() = head.relation
-    val targetRelationId: Long get() = head.relation
+    // Remove redundant getter declarations
+    val targetRelation get() = head.relation
+    val targetRelationId get() = head.relation
 
-    fun bodysize(): Int = body.size
+    val bodySize get() = body.size
 
-    val isTrivial: Boolean
-        get() = bodysize() == 1 && head == body[0]
+    val isTrivial get() = bodySize == 1 && head == body[0]
 
     open val appliedConfidence: Double
         get() = correctlyPredicted.toDouble() / (predicted.toDouble() + Settings.UNSEEN_NEGATIVE_EXAMPLES)
 
-    val isXYRule: Boolean get() = !head.isLeftC && !head.isRightC
-    val isXRule: Boolean get() = !isXYRule && !head.isLeftC
-    val isYRule: Boolean get() = !isXYRule && !head.isRightC
+    val isXYRule get() = !head.isLeftC && !head.isRightC
+    val isXRule get() = !isXYRule && !head.isLeftC
+    val isYRule get() = !isXYRule && !head.isRightC
 
-    override fun toString(): String = buildString {
-        append("$predicted\t")
-        append("$correctlyPredicted\t")
-        append("$confidence\t")
-        append(head)
-        append(" <= ")
-        append(body.toString())
+    override fun toString() = buildString {
+        append("$predicted\t$correctlyPredicted\t$confidence\t$head <= $body")
     }
 
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is Rule) return false
-        return head == other.head && body == other.body
+    override fun equals(other: Any?) = when {
+        this === other -> true
+        other !is Rule -> false
+        else -> head == other.head && body == other.body
     }
 
-    override fun hashCode(): Int {
-        if (!hashcodeInitialized) {
-            hashcode = Objects.hash(head.toString(), body.toString())
-            hashcodeInitialized = true
-        }
-        return hashcode
-    }
+    override fun hashCode() = hashcode
 
 
     // *************
@@ -120,12 +107,12 @@ abstract class Rule {
     /**
      * Returns the tail results of applying this rule to a given head value.
      */
-    abstract fun computeTailResults(head: Int, ts: TripleSet): HashSet<Int>
+    abstract fun computeTailResults(head: Int, ts: TripleSet): Set<Int>
 
     /**
      * Returns the head results of applying this rule to a given tail value.
      */
-    abstract fun computeHeadResults(tail: Int, ts: TripleSet): HashSet<Int>
+    abstract fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int>
 
     /**
      * Checks if the body of the rule is true for the given subject/object pair.
@@ -151,7 +138,7 @@ abstract class Rule {
     /**
      * Retrieves a sample of predictions (correct or incorrect).
      */
-    abstract fun getPredictions(ts: TripleSet): ArrayList<Triple>?
+    abstract fun getPredictions(ts: TripleSet): List<Triple>?
 
     /**
      * If the rule body has only one head variable, it is called singleton, if only one entity fulfills the body.
@@ -165,28 +152,27 @@ abstract class Rule {
     abstract fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet
-    ): HashSet<Triple>
+    ): Set<Triple>
 
     open fun materialize(trainingSet: TripleSet): TripleSet? = null
 
 
     companion object {
         @JvmStatic
-        protected var rand: Random = Random()
+        protected val rand = Random()
         @JvmStatic
-        protected var APPLICATION_MODE: Boolean = false
-        @JvmField
-        val variables: Array<Int> = arrayOf(
+        protected var APPLICATION_MODE = false
+        
+        val variables = arrayOf(
             "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"
-        ).map { IdManager.getEntityId(it) }.toTypedArray()
-        @JvmField
-        var variables2Indices: MutableMap<Int, Int> = variables.mapIndexed { index, variable ->
+        ).map(IdManager::getEntityId).toTypedArray()
+        
+        val variables2Indices = variables.mapIndexed { index, variable ->
             variable to index
         }.toMap().toMutableMap()
 
-        @JvmStatic
         fun applicationMode() {
             APPLICATION_MODE = true
         }

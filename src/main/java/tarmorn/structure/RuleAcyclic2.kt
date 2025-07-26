@@ -89,11 +89,11 @@ class RuleAcyclic2(r: RuleUntyped) : RuleAcyclic(r) {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: java.util.HashSet<Triple>,
+        excludedTriples: Set<Triple>,
         triples: TripleSet
-    ): java.util.HashSet<Triple> {
+    ): Set<Triple> {
         System.err.println("Your are asking for a triple explanation using an AC2 rule (a.k.a. U_d rule). Triple explanations for this rule are so far not implemented.")
-        return HashSet<Triple>()
+        return hashSetOf()
     }
 
     public override fun computeScores(that: Rule, triples: TripleSet): IntArray {

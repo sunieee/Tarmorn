@@ -93,8 +93,8 @@ class RuleWriterAsThread : Thread {
             val pw = PrintWriter(ruleFile)
             var numOfRules: Long = 0
             for (r in rules) {
-                if (r.bodysize() < maxBodySize) if (r is RuleCyclic) cyclicCounter[r.bodysize() - 1]++
-                if (r is RuleAcyclic) acyclicCounter[r.bodysize() - 1]++
+                if (r.bodySize < maxBodySize) if (r is RuleCyclic) cyclicCounter[r.bodySize - 1]++
+                if (r is RuleAcyclic) acyclicCounter[r.bodySize - 1]++
                 if (r is RuleZero) zeroCounter++
                 pw.println(r)
                 numOfRules++
