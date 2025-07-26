@@ -11,6 +11,7 @@ import tarmorn.data.TripleSet
 import tarmorn.structure.Rule
 import tarmorn.structure.RuleFactory
 import tarmorn.structure.RuleZero
+import tarmorn.structure.Dice
 import kotlin.math.pow
 
 
@@ -30,14 +31,8 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
     private var id = 0
 
-
-    // this is not really well done, exactly one of them has to be true all the time
-    private var mineParamCyclic = true
-    private var mineParamAcyclic = false
-    private var mineParamZero = false
-
-    private var mineParamLength = 1 // possible values are 1 and 2 (if non-cyclic), or 1, 2, 3, 4, 5 if (cyclic)
-
+    // Unified rule type representation using Int instead of multiple booleans
+    private var ruleType = 1
 
     private var ready = false
 
@@ -50,28 +45,37 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
         this.id = id
     }
 
-    fun setSearchParameters(zero: Boolean, cyclic: Boolean, acyclic: Boolean, len: Int) {
-        this.mineParamZero = zero
-        this.mineParamCyclic = cyclic
-        this.mineParamAcyclic = acyclic
-        this.mineParamLength = len
+    /**
+     * Set the search parameters using unified rule type representation
+     * @param ruleType The unified rule type (see Dice.RULE_TYPE_* constants)
+     */
+    fun setSearchParameters(ruleType: Int) {
+        require(Dice.isValidRuleType(ruleType)) { "Invalid rule type: $ruleType" }
+        this.ruleType = ruleType
         this.ready = true
         this.onlyXY = false
-        if (this.mineParamCyclic) {
-            if (this.mineParamLength > Settings.MAX_LENGTH_GROUNDED_CYCLIC) {
+        
+        // Validate rule type constraints
+        if (ruleType >=1 && ruleType <= 10) {
+            val length = ruleType % 10
+            if (length > Settings.MAX_LENGTH_GROUNDED_CYCLIC) {
                 this.onlyXY = true
             }
         }
-        //println("THREAD-" + this.id + " using parameters C=" + this.mineParamCyclic + " L=" + this.mineParamLength);
+    }
+    
+    /**
+     * Legacy method for backward compatibility
+     * @deprecated Use setSearchParameters(ruleType: Int) instead
+     */
+    @Deprecated("Use setSearchParameters(ruleType: Int) instead")
+    fun setSearchParameters(zero: Boolean, cyclic: Boolean, acyclic: Boolean, len: Int) {
+        val type = Dice.encode(zero, cyclic, acyclic, len)
+        setSearchParameters(type)
     }
 
     private val type: String
-        get() {
-            if (this.mineParamZero) return "Zero"
-            if (this.mineParamCyclic) return "Cyclic"
-            if (this.mineParamAcyclic) return "Acyclic"
-            return ""
-        }
+        get() = Dice.getRuleTypeName(ruleType)
 
 
     override fun run() {
@@ -85,7 +89,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
             }
             // println("THREAD-" + this.id + " waiting for the others");
         }
-        println("THREAD-" + this.id + " starts to work with L=" + this.mineParamLength + " C=" + this.type + " ")
+        println("THREAD-" + this.id + " starts to work with type=" + Dice.getRuleTypeName(ruleType) + " ")
 
 
         // outer loop is missing
@@ -96,10 +100,10 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                     this.storedRules,
                     this.createdRules,
                     this.producedScore,
-                    this.mineParamZero,
-                    this.mineParamCyclic,
-                    this.mineParamAcyclic,
-                    this.mineParamLength
+                    ruleType==0,
+                    ruleType>=1 && ruleType<=10,
+                    ruleType>10,
+                    ruleType % 10
                 ) || !ready
             ) {
                 this.createdRules = 0
@@ -112,9 +116,16 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 }
             } else {
                 val start = System.currentTimeMillis()
+                
+                // Determine rule mining parameters from unified type
+                val isZero = ruleType==0
+                val isCyclic = ruleType>=1 && ruleType<=10
+                val isAcyclic = ruleType>10
+                val length = ruleType % 10
+                
                 // search for zero rules
-                if (mineParamZero) {
-                    val path = sampler.samplePath(this.mineParamLength + 1, false)
+                if (isZero) {
+                    val path = sampler.samplePath(length + 1, false)
 
                     // println("zero (sample with steps=" + (this.mineParamLength+1) + "):" + path);
                     if (path != null) {
@@ -169,8 +180,8 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
 
                 // search for cyclic rules
-                if (mineParamCyclic) {
-                    val path = sampler.samplePath(this.mineParamLength + 1, true)
+                if (isCyclic) {
+                    val path = sampler.samplePath(length + 1, true)
                     if (path != null && path.isValid) {
                         // println(path);
                         val learnedRules = RuleFactory.getGeneralizations(path, this.onlyXY)
@@ -222,8 +233,8 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                     }
                 }
                 // search for acyclic rules
-                if (mineParamAcyclic) {
-                    val path = sampler.samplePath(mineParamLength + 1, false)
+                if (isAcyclic) {
+                    val path = sampler.samplePath(length + 1, false)
                     if (path != null && path.isValid) {
                         val learnedRules = RuleFactory.getGeneralizations(path, false)
                         if (!active) {

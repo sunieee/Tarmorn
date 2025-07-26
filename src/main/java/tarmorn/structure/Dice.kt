@@ -185,12 +185,11 @@ class Dice @JvmOverloads constructor(filePath: String = "") {
         // however, it has achieved a score of 0
         private const val GAMMA = 0.0001
 
-
         private val INITIAL_SCORE: Double = Double.Companion.MAX_VALUE / (SUPPORTED_TYPES + 1.0)
 
         private val rand = Random()
 
-
+        // Rule type constants - unified Int representation
         // types listing, well, pretty awful way of doing this :-)
         // 0 = zero (the hero)
         // 1 = cyclic 1
@@ -243,34 +242,33 @@ class Dice @JvmOverloads constructor(filePath: String = "") {
             return 10 + rand.nextDouble() * 10
         }
 
-
-        // decode and encode
-        fun decodedDiceCyclic(dice: Int): Boolean {
-            if (dice >= 0 && dice < SUPPORTED_TYPES_CYCLIC + 1) return true
-            else return false
-        }
-
-        fun decodedDiceAcyclic(dice: Int): Boolean {
-            if (dice >= SUPPORTED_TYPES_CYCLIC + 1) return true
-            else return false
-        }
-
-        fun decodedDiceZero(dice: Int): Boolean {
-            if (dice == 0) return true
-            else return false
-        }
-
-
-        fun decodedDiceLength(dice: Int): Int {
-            if (dice == 0) return 0
-            if (decodedDiceCyclic(dice)) return dice
-            else return dice - SUPPORTED_TYPES_CYCLIC
-        }
-
         fun encode(zero: Boolean, cyclic: Boolean, acyclic: Boolean, len: Int): Int {
             if (len == 0) return 0
             if (cyclic) return len
             else return (SUPPORTED_TYPES_CYCLIC) + len
+        }
+
+        /**
+         * Get rule type name for debugging/logging
+         * @param ruleType The rule type Int
+         * @return Human readable name
+         */
+        fun getRuleTypeName(ruleType: Int): String {
+            return when (ruleType) {
+                0 -> "Zero"
+                in 1..10 -> "Cyclic-$ruleType"
+                in 11..13 -> "Acyclic-${ruleType - SUPPORTED_TYPES_CYCLIC}"
+                else -> "Unknown-$ruleType"
+            }
+        }
+
+        /**
+         * Check if the rule type is valid
+         * @param ruleType The rule type to check
+         * @return True if valid
+         */
+        fun isValidRuleType(ruleType: Int): Boolean {
+            return ruleType in 0 until SUPPORTED_TYPES
         }
     }
 }

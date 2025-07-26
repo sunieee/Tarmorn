@@ -84,12 +84,8 @@ object Learn {
             println("* creating worker thread #$threadCounter")
             val s = Scorer(ts, threadCounter)
 
-            val type = dice!!.ask(0)
-            val zero = Dice.decodedDiceZero(type)
-            val cyclic = Dice.decodedDiceCyclic(type)
-            val acyclic = Dice.decodedDiceAcyclic(type)
-            val len = Dice.decodedDiceLength(type)
-            s.setSearchParameters(zero, cyclic, acyclic, len)
+            val ruleType = dice!!.ask(0)
+            s.setSearchParameters(ruleType)
 
             scorer[threadCounter] = s
             scorer[threadCounter]!!.start()
@@ -152,13 +148,8 @@ object Learn {
                 // System.out.print(">>> Batch #" + batchCounter + " ");
                 // println("MEMORY REQUIRED: " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte");
                 scorer.indices.forEach { t ->
-                    val type = dice!!.ask(batchCounter)
-                    // System.out.print(type + "|");
-                    val zero = Dice.decodedDiceZero(type)
-                    val cyclic = Dice.decodedDiceCyclic(type)
-                    val acyclic = Dice.decodedDiceAcyclic(type)
-                    val len = Dice.decodedDiceLength(type)
-                    scorer[t]!!.setSearchParameters(zero, cyclic, acyclic, len)
+                    val ruleType = dice!!.ask(batchCounter)
+                    scorer[t]!!.setSearchParameters(ruleType)
                 }
 
                 // System.out.print("   ");
