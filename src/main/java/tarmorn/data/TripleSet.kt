@@ -12,8 +12,7 @@ import kotlin.random.Random
 class TripleSet(
     filepath: String? = null,
     ignore4Plus: Boolean = true
-) {
-    val triples = mutableListOf<Triple>()
+) : MutableList<Triple> by mutableListOf() {
     private val rand = Random
 
     var h2List = mutableMapOf<Int, MutableList<Triple>>()
@@ -39,7 +38,7 @@ class TripleSet(
     }
 
     fun addTripleSet(ts: TripleSet) {
-        ts.triples.forEach { addTriple(it) }
+        ts.forEach { addTriple(it) }
     }
 
     fun addTriples(triples: List<Triple>) {
@@ -48,7 +47,7 @@ class TripleSet(
 
     fun addTriple(t: Triple) {
         if (!isTrue(t)) {
-            triples.add(t)
+            add(t)
             addTripleToIndex(t)
         }
     }
@@ -58,7 +57,7 @@ class TripleSet(
         var tCounter = 0L
         var divisor = 10000L
         
-        triples.forEach { triple ->
+        forEach { triple ->
             tCounter++
             if (tCounter % divisor == 0L) {
                 println("* indexed $tCounter triples")
@@ -189,7 +188,7 @@ class TripleSet(
 
                     if (t == null) {
                     } else {
-                        this.triples.add(t)
+                        this.add(t)
                     }
                 }
             }
@@ -197,8 +196,8 @@ class TripleSet(
             System.err.format("IOException: %s%n", x)
             System.err.format("Error occured for line: " + line + " LINE END")
         }
-        // Collections.shuffle(this.triples);
-        println("* read " + this.triples.size + " triples")
+        // Collections.shuffle(this);
+        println("* read " + this.size + " triples")
     }
 
 
@@ -331,31 +330,31 @@ class TripleSet(
 
     fun compareTo(that: TripleSet, thisId: String, thatId: String) {
         println("* Comparing two triple sets")
-        val intersectionCount = triples.count { that.isTrue(it) }
+        val intersectionCount = count { that.isTrue(it) }
 
-        println("* size of $thisId: ${triples.size}")
-        println("* size of $thatId: ${that.triples.size}")
+        println("* size of $thisId: ${size}")
+        println("* size of $thatId: ${that.size}")
         println("* size of intersection: $intersectionCount")
     }
 
     fun getIntersectionWith(that: TripleSet) = TripleSet().apply {
-        triples.filter { that.isTrue(it) }.forEach { addTriple(it) }
+        filter { that.isTrue(it) }.forEach { addTriple(it) }
     }
 
     fun minus(that: TripleSet) = TripleSet().apply {
-        triples.filter { !that.isTrue(it) }.forEach { addTriple(it) }
+        filter { !that.isTrue(it) }.forEach { addTriple(it) }
     }
 
     val numOfEntities get() = h2List.keys.size + t2List.keys.size
 
     fun determineFrequentRelations(coverage: Double) {
         // Count relations
-        triples.forEach { triple ->
+        forEach { triple ->
             relationCounter[triple.r] = relationCounter.getOrDefault(triple.r, 0) + 1
         }
 
         val counts = relationCounter.values.sorted()
-        val totalCount = triples.size
+        val totalCount = size
         var countUp = 0
         var border = 0
         
@@ -381,11 +380,9 @@ class TripleSet(
     @Throws(FileNotFoundException::class)
     fun write(filepath: String) {
         PrintWriter(filepath).use { pw ->
-            triples.forEach { pw.println(it) }
+            forEach { pw.println(it) }
         }
     }
-
-    fun size() = triples.size
 
     companion object {
         @JvmStatic

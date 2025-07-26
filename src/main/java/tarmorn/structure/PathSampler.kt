@@ -37,7 +37,7 @@ class PathSampler(private val ts: TripleSet) {
                 System.exit(0)
             }
         } else {
-            chosenTriples = ts.triples
+            chosenTriples = ts
         }
         var triple: Triple? = null
         if (chosenHeadTriple == null) {
