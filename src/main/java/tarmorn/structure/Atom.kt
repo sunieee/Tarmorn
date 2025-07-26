@@ -8,9 +8,9 @@ data class Atom(
     var right: Int          // entity or variable ID
 ) {
     val isLeftC: Boolean
-        get() = !IdManager.isKGVariable(left)
+        get() = !IdManager.isVariable(left)
     val isRightC: Boolean
-        get() = !IdManager.isKGVariable(right)
+        get() = !IdManager.isVariable(right)
 
     val xYGeneralization: Atom
         get() = this.copy(left = IdManager.getXId(), right = IdManager.getYId())
@@ -46,22 +46,7 @@ data class Atom(
     )
 
 
-    fun toString(indent: Int): String {
-        val l = if (indent > 0 && !isLeftC && !IdManager.isKGVariable(left)) {
-            val leftStr = left
-            val li = Rule.variables2Indices[leftStr]!!
-            Rule.variables[li + indent]
-        } else IdManager.getEntityString(left)
-        
-        val r = if (indent > 0 && !isRightC && !IdManager.isKGVariable(right)) {
-            val rightStr = right
-            val ri = Rule.variables2Indices[rightStr]!!
-            Rule.variables[ri + indent]
-        } else IdManager.getEntityString(right)
-        
-        val relationStr = IdManager.getRelationString(relation)
-        return "$relationStr($l,$r)"
-    }
+
 
     /**
      * Returns true if this is more special than the given atom g.

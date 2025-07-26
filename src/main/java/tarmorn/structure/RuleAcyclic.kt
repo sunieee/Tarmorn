@@ -25,30 +25,6 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         else -> emptySet()
     }
 
-    /*
-	public PriorityQueue<Candidate> computePTailResults(String head, TripleSet ts) {
-		Timer count = new Timer();
-		PriorityQueue<Candidate> resultSet = new PriorityQueue<Candidate>();
-		if (this.isXRule) {
-			if (this.head.getRight().equals(head)) return resultSet;
-			HashSet<Int> previousValues = new HashSet<Int>();
-			previousValues.add(head);
-			previousValues.add(this.head.getRight());
-			// TODO fix P here
-			if (this.isBodyTrueAcyclic(IdManager.getXId(), head, 0, previousValues, ts)) {
-				// resultSet.add(this.head.getRight());
-				return resultSet;
-			}
-		}
-		else {
-			if (this.head.getLeft().equals(head)) {
-				this.computePValuesReversed(1.0, IdManager.getYId(), resultSet, ts, count);
-				return resultSet;
-			}
-		}
-		return resultSet;
-	}
-	*/
     override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> = when {
         isYRule -> {
             val headLeftId = head.left
@@ -389,33 +365,6 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         }
     }
 
-
-    /*
-   private void forwardPReversed(double p, String variable, String value, int bodyIndex, String targetVariable, PriorityQueue<Candidate> targetValues, TripleSet ts, HashSet<Int> previousValues) {
-       if (previousValues.contains(value)) return;
-       if (bodyIndex < 0) {
-           Candidate c = new Candidate(value, this.getAppliedConfidence() * p);
-           targetValues.add(c);
-       }
-       else {
-           HashSet<Int> currentValues = new HashSet<Int>();
-           currentValues.add(value);
-           currentValues.addAll(previousValues); // ADDING THIS SINGLE LINE WAS I SUPER IMPORTANT BUG FIX
-           Atom atom = this.body.get(bodyIndex);
-           boolean nextVarIsLeft = false;
-           if (atom.getLeft().equals(variable)) nextVarIsLeft = false;
-           else nextVarIsLeft = true;
-           String nextVariable = atom.getLR(nextVarIsLeft);
-           HashSet<Int> nextValues = new HashSet<Int>();			
-           if (!Rule.APPLICATION_MODE && targetValues.size() >= Settings.SAMPLE_SIZE) return;
-           nextValues.addAll(ts.getEntities(atom.getRelation(), value, !nextVarIsLeft));
-           for (String nextValue : nextValues) {
-               forwardPReversed(p, nextVariable, nextValue, bodyIndex-1, targetVariable, targetValues, ts, currentValues);
-           }
-       }
-   }
-   */
-    
     override fun getRandomValidPrediction(ts: TripleSet): Triple? {
         val validPredictions = getPredictions(ts, 1)
         return validPredictions.randomOrNull()

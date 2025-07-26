@@ -24,6 +24,8 @@ object IdManager {
             entity2id[letterStr] = id
             id2entity[id] = letterStr
         }
+        entity2id["·"] = 0 // Special entity for existence
+        id2entity[0] = "·" // Map existence entity to ID 0
     }
 
     /**
@@ -60,7 +62,8 @@ object IdManager {
     }
 
     // Check if an entity ID is a KG variable (A-Z).
-    fun isKGVariable(id: Int): Boolean = id < 0
+    fun isVariable(id: Int): Boolean = id < 0
+    fun isXYZ(id: Int): Boolean = id in arrayOf(getXId(), getYId(), getZId())
 
     // Check if an entity ID exists.
     fun hasEntity(id: Int): Boolean = id2entity.containsKey(id)

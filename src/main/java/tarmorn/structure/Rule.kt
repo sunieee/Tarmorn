@@ -57,7 +57,6 @@ abstract class Rule {
 
     // Remove redundant getter declarations
     val targetRelation get() = head.relation
-    val targetRelationId get() = head.relation
 
     val bodySize get() = body.size
 

@@ -9,9 +9,6 @@ class Body : MutableList<Atom> by ArrayList() {
     override fun toString(): String = 
         if (isEmpty()) "" else joinToString(", ")
 
-    fun toString(indent: Int): String = 
-        joinToString(", ") { it.toString(indent) }
-
     // 必须保留：包含特殊的变量映射逻辑，ArrayList 的默认 equals 无法处理
     override fun equals(thatObject: Any?): Boolean {
         if (thatObject !is Body) return false
