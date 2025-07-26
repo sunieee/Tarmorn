@@ -6,30 +6,24 @@ import tarmorn.Learn.heyYouImHere
 import tarmorn.Learn.isStored
 import tarmorn.Learn.storeRule
 import tarmorn.Settings
-import tarmorn.structure.PathSampler
+import tarmorn.data.IdManager
+import tarmorn.data.Triple
 import tarmorn.data.TripleSet
-import tarmorn.structure.Rule
-import tarmorn.structure.RuleFactory
-import tarmorn.structure.RuleZero
-import tarmorn.structure.Dice
+import tarmorn.structure.*
 import kotlin.math.pow
+import kotlin.random.Random
 
 
 /**
- *
  * The worker thread responsible for learning rules in the reinforced learning setting.
- *
  */
-class Scorer(private val triples: TripleSet, id: Int) : Thread() {
-    private val sampler: PathSampler
-
+class Scorer(val triples: TripleSet, val id: Int) : Thread() {
+    private val rand = Random.Default
 
     // private int entailedCounter = 1;
     private var createdRules = 0
     private var storedRules = 0
     private var producedScore = 0.0
-
-    private var id = 0
 
     // Unified rule type representation using Int instead of multiple booleans
     private var ruleType = 1
@@ -38,12 +32,6 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
     private var onlyXY = false
 
-
-    // ***** lets go ******
-    init {
-        this.sampler = PathSampler(triples)
-        this.id = id
-    }
 
     /**
      * Set the search parameters using unified rule type representation
@@ -63,20 +51,6 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
             }
         }
     }
-    
-    /**
-     * Legacy method for backward compatibility
-     * @deprecated Use setSearchParameters(ruleType: Int) instead
-     */
-    @Deprecated("Use setSearchParameters(ruleType: Int) instead")
-    fun setSearchParameters(zero: Boolean, cyclic: Boolean, acyclic: Boolean, len: Int) {
-        val type = Dice.encode(zero, cyclic, acyclic, len)
-        setSearchParameters(type)
-    }
-
-    private val type: String
-        get() = Dice.getRuleTypeName(ruleType)
-
 
     override fun run() {
         while (!areAllThere()) {
@@ -100,10 +74,7 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                     this.storedRules,
                     this.createdRules,
                     this.producedScore,
-                    ruleType==0,
-                    ruleType>=1 && ruleType<=10,
-                    ruleType>10,
-                    ruleType % 10
+                    ruleType,
                 ) || !ready
             ) {
                 this.createdRules = 0
@@ -125,11 +96,11 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 
                 // search for zero rules
                 if (isZero) {
-                    val path = sampler.samplePath(length + 1, false)
+                    val path = samplePath(length + 1, false)
 
                     // println("zero (sample with steps=" + (this.mineParamLength+1) + "):" + path);
                     if (path != null) {
-                        val learnedRules = RuleFactory.getGeneralizations(path, false)
+                        val learnedRules = getGeneralizations(path, false)
                         if (!active) {
                             try {
                                 sleep(10)
@@ -181,10 +152,10 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
 
                 // search for cyclic rules
                 if (isCyclic) {
-                    val path = sampler.samplePath(length + 1, true)
+                    val path = samplePath(length + 1, true)
                     if (path != null && path.isValid) {
                         // println(path);
-                        val learnedRules = RuleFactory.getGeneralizations(path, this.onlyXY)
+                        val learnedRules = getGeneralizations(path, this.onlyXY)
                         // println(learnedRules.size());
                         if (!active) {
                             try {
@@ -234,9 +205,9 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 }
                 // search for acyclic rules
                 if (isAcyclic) {
-                    val path = sampler.samplePath(length + 1, false)
+                    val path = samplePath(length + 1, false)
                     if (path != null && path.isValid) {
-                        val learnedRules = RuleFactory.getGeneralizations(path, false)
+                        val learnedRules = getGeneralizations(path, false)
                         if (!active) {
                             try {
                                 sleep(10)
@@ -282,6 +253,144 @@ class Scorer(private val triples: TripleSet, id: Int) : Thread() {
                 }
             }
         }
+    }
+
+    /**
+     * Sample a path from the triple set (merged from PathSampler)
+     */
+    private fun samplePath(steps: Int, cyclic: Boolean, chosenHeadTriple: Triple? = null, ruleToBeExtended: Rule? = null): Path? {
+        val entityNodes = IntArray(1 + steps)
+        val relationNodes = LongArray(steps)
+        val markers = CharArray(steps)
+        
+        val chosenTriples = Settings.SINGLE_RELATIONS?.let { relations ->
+            val singleRelation = relations.random(rand)
+            val singleRelationId = IdManager.getRelationId(singleRelation)
+            triples.getTriplesByRelation(singleRelationId).also { tripleList ->
+                if (tripleList.isEmpty()) {
+                    System.err.println("chosen a SINGLE_RELATION=$singleRelation that is not instantiated in the training data")
+                    System.exit(0)
+                }
+            }
+        } ?: triples
+        
+        val triple = chosenHeadTriple ?: chosenTriples.random(rand)
+
+        // TODO hardcoded test to avoid reflexive relations in the head
+        if (triple.h == triple.t) return null
+        
+        val dice = when {
+            ruleToBeExtended?.isXRule == true -> 1.0
+            ruleToBeExtended?.isYRule == true -> 0.0
+            else -> rand.nextDouble()
+        }
+        
+        if (dice < 0.5) {
+            markers[0] = '+'
+            entityNodes[0] = triple.h
+            relationNodes[0] = triple.r
+            entityNodes[1] = triple.t
+        } else {
+            markers[0] = '-'
+            entityNodes[1] = triple.h
+            relationNodes[0] = triple.r
+            entityNodes[0] = triple.t
+        }
+
+        // add next hop
+        for (index in 1 until steps) {
+            val currentNodeId = entityNodes[index]
+            val isForward = rand.nextDouble() < 0.5
+            
+            val candidateTriples = if (isForward) {
+                triples.getTriplesByHead(currentNodeId)
+            } else {
+                triples.getTriplesByTail(currentNodeId)
+            }
+            
+            if (candidateTriples.isEmpty()) return null
+            
+            val nextTriple = if (cyclic && index + 1 == steps) {
+                val targetNodeId = entityNodes[0]
+                val cyclicCandidates = candidateTriples.filter { triple ->
+                    if (isForward) triple.t == targetNodeId else triple.h == targetNodeId
+                }
+                if (cyclicCandidates.isEmpty()) return null
+                cyclicCandidates.random(rand)
+            } else {
+                candidateTriples.random(rand)
+            }
+            
+            relationNodes[index] = nextTriple.r
+            if (isForward) {
+                entityNodes[index + 1] = nextTriple.t
+                markers[index] = '+'
+            } else {
+                entityNodes[index + 1] = nextTriple.h
+                markers[index] = '-'
+            }
+        }
+        
+        val path = Path(entityNodes, relationNodes, markers)
+        return when {
+            steps == 1 -> path
+            !cyclic && path.isCyclic -> null
+            else -> path
+        }
+    }
+
+    /**
+     * Generate rule generalizations from a path (merged from RuleFactory)
+     */
+    private fun getGeneralizations(p: Path, onlyXY: Boolean): ArrayList<Rule> {
+        val rv = RuleUntyped()
+        rv.body = Body()
+        if (p.markers[0] == '+') {
+            rv.head = Atom(p.nodes[0], p.nodes[1], p.nodes[2])
+        } else {
+            rv.head = Atom(p.nodes[2], p.nodes[1], p.nodes[0])
+        }
+        for (i in 1..<p.markers.size) {
+            if (p.markers[i] == '+') {
+                rv.body.add(Atom(p.nodes[i * 2], p.nodes[i * 2 + 1], p.nodes[i * 2 + 2]))
+            } else {
+                rv.body.add(Atom(p.nodes[i * 2 + 2], p.nodes[i * 2 + 1], p.nodes[i * 2]))
+            }
+        }
+        val generalizations = ArrayList<Rule>()
+        val leftright = rv.leftRightGeneralization
+        if (leftright != null) {
+            leftright.replaceAllConstantsByVariables()
+            generalizations.add(RuleCyclic(leftright, 0.0))
+        }
+        if (onlyXY) return generalizations
+        // acyclic rule
+        val left = rv.leftGeneralization
+
+        if (left != null) {
+            if (left.bodySize == 0) {
+                generalizations.add(RuleZero(left))
+            } else {
+                val leftFree = left.createCopy()
+                if (leftright == null) leftFree.replaceAllConstantsByVariables()
+                left.replaceNearlyAllConstantsByVariables()
+                if (!Settings.EXCLUDE_AC2_RULES) if (leftright == null) generalizations.add(RuleAcyclic(leftFree))
+                generalizations.add(RuleAcyclic(left))
+            }
+        }
+        val right = rv.rightGeneralization
+        if (right != null) {
+            if (right.bodySize == 0) {
+                generalizations.add(RuleZero(right))
+            } else {
+                val rightFree = right.createCopy()
+                if (leftright == null) rightFree.replaceAllConstantsByVariables()
+                right.replaceNearlyAllConstantsByVariables()
+                if (!Settings.EXCLUDE_AC2_RULES) if (leftright == null) generalizations.add(RuleAcyclic(rightFree))
+                generalizations.add(RuleAcyclic(right))
+            }
+        }
+        return generalizations
     }
 
     fun getScoringGain(rule: Rule, correctlyPredicted: Int, confidence: Double, appliedConfidence: Double): Double {

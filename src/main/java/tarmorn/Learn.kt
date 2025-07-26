@@ -81,7 +81,7 @@ object Learn {
         val scorer = Array<Scorer?>(Settings.WORKER_THREADS) { null }
         repeat(Settings.WORKER_THREADS) { threadCounter ->
             Thread.sleep(50)
-            println("* creating worker thread #$threadCounter")
+            // println("* creating worker thread #$threadCounter")
             val s = Scorer(ts, threadCounter)
 
             val ruleType = dice!!.ask(0)
@@ -260,24 +260,18 @@ object Learn {
         storedRules: Int,
         createdRules: Int,
         producedScore: Double,
-        zero: Boolean,
-        cyclic: Boolean,
-        acyclic: Boolean,
-        len: Int
+        ruleType: Int,
     ): Boolean {
         if (active) return true
         if (!report) return true
         else if (activeThread[threadId]) {
-            // println("retrieved message from thread " + threadId + " created=" + createdRules + " stored=" + storedRules + " produced=" +producedScore);
-
-            val type = Dice.encode(zero, cyclic, acyclic, len)
             // println("type of thread: " + type + " cyclic=" + cyclic + " len=" + len);
             stats[threadId]!![0] = storedRules
             stats[threadId]!![1] = createdRules
             // connect to the dice 
             // TODO
             //int type = Dice.encode(cyclic, len);
-            dice!!.addScore(type, producedScore)
+            dice!!.addScore(ruleType, producedScore)
             activeThread[threadId] = false
             return false
         }
