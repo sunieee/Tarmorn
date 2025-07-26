@@ -78,7 +78,7 @@ object IdManager {
     fun getAllRelationIds(): Set<Long> = id2relation.keys
 
     // Get the total number of entities (excluding KG variables).
-    fun getEntityCount(): Int = entity2id.size - 26 // Subtract A-Z
+    fun getEntityCount(): Int = entity2id.size - 27 // Subtract A-Z and 0
 
     // Get the total number of relations.
     fun getRelationCount(): Int = relation2id.size
@@ -106,7 +106,7 @@ object IdManager {
             id2entity[id] = letter
         }
         
-        nextEntityId = 0
-        nextRelationId = 0L
+        nextEntityId = 1
+        nextRelationId = 1L
     }
 }

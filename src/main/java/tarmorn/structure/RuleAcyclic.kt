@@ -5,7 +5,34 @@ import tarmorn.data.Triple
 import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 
-abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
+class RuleAcyclic(r: RuleUntyped) : Rule(r) {
+    private var unboundVariable0: Int? = null
+
+    protected val unboundVariable: Int?
+        get() {
+            if (unboundVariable0 != null) return unboundVariable0
+            
+            val counter = mutableMapOf<Int, Int>()
+            
+            body.forEach { atom ->
+                listOf(atom.left, atom.right)
+                    .filter { it != IdManager.getXId() && it != IdManager.getYId() && it <= 0 }
+                    .forEach { variable -> 
+                        counter[variable] = counter.getOrDefault(variable, 0) + 1
+                    }
+            }
+            
+            unboundVariable0 = counter.entries.find { it.value == 1 }?.key
+            return unboundVariable0
+        }
+
+    override val appliedConfidence: Double
+        get() = if (unboundVariable != null) {
+            Settings.RULE_AC2_WEIGHT * super.appliedConfidence
+        } else {
+            super.appliedConfidence
+        }
+
     override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> = when {
         isXRule -> {
             val headRightId = this.head.right
@@ -69,35 +96,44 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
 
 
     override fun computeScores(that: Rule, triples: TripleSet): IntArray {
-        val (targetVariable, constantValueId) = when {
-            isXRule -> IdManager.getXId() to head.right
-            else -> IdManager.getYId() to head.left
-        }
-        val values = hashSetOf<Int>()
+        val unboundVariable = this.unboundVariable
         
-        computeValuesReversed(targetVariable, values, triples)
-        
-        val relationId = head.relation
-        val (predictedBoth, correctlyPredictedBoth) = values.fold(0 to 0) { (predicted, correct), valueId ->
-            val explanation = that.getTripleExplanation(
-                if (isXRule) valueId else constantValueId,
-                if (isXRule) constantValueId else valueId,
-                hashSetOf(),
-                triples
-            )
-            
-            if (explanation.isNotEmpty()) {
-                val isCorrect = when {
-                    isXRule -> triples.isTrue(valueId, relationId, constantValueId)
-                    else -> triples.isTrue(constantValueId, relationId, valueId)
-                }
-                predicted + 1 to if (isCorrect) correct + 1 else correct
-            } else {
-                predicted to correct
+        return if (unboundVariable == null) {
+            // RuleAcyclic1 logic
+            val (targetVariable, constantValueId) = when {
+                isXRule -> IdManager.getXId() to head.right
+                else -> IdManager.getYId() to head.left
             }
+            val values = hashSetOf<Int>()
+            
+            computeValuesReversed(targetVariable, values, triples)
+            
+            val relationId = head.relation
+            val (predictedBoth, correctlyPredictedBoth) = values.fold(0 to 0) { (predicted, correct), valueId ->
+                val explanation = that.getTripleExplanation(
+                    if (isXRule) valueId else constantValueId,
+                    if (isXRule) constantValueId else valueId,
+                    hashSetOf(),
+                    triples
+                )
+                
+                if (explanation.isNotEmpty()) {
+                    val isCorrect = when {
+                        isXRule -> triples.isTrue(valueId, relationId, constantValueId)
+                        else -> triples.isTrue(constantValueId, relationId, valueId)
+                    }
+                    predicted + 1 to if (isCorrect) correct + 1 else correct
+                } else {
+                    predicted to correct
+                }
+            }
+            
+            intArrayOf(predictedBoth, correctlyPredictedBoth)
+        } else {
+            // RuleAcyclic2 logic: not yet available
+            System.err.println("Method not yet available for an untyped rule")
+            intArrayOf(0, 0)
         }
-        
-        return intArrayOf(predictedBoth, correctlyPredictedBoth)
     }
 
 
@@ -217,8 +253,6 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     fun computeValuesReversed(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
         computeValuesReversedInternal(targetVariable, targetValues, ts)
     }
-
-    protected abstract val unboundVariable: Int?
 
     private fun computeValuesReversedInternal(targetVariable: Int, targetValues: HashSet<Int>, ts: TripleSet) {
         val atomIndex = body.size - 1
@@ -407,7 +441,179 @@ abstract class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         return materialized
     }
 
-    abstract fun getGroundingsLastAtom(triples: TripleSet): Int
+    fun getGroundingsLastAtom(triples: TripleSet): Int {
+        val last = body.last
+        val unboundVariable = this.unboundVariable
+        
+        return if (unboundVariable == null) {
+            // RuleAcyclic1 logic: last atom has constant
+            when {
+                last.isRightC -> triples.getHeadEntities(last.relation, last.right).size
+                else -> triples.getTailEntities(last.relation, last.left).size
+            }
+        } else {
+            // RuleAcyclic2 logic: last atom has unbound variable
+            val values = hashSetOf<Int>()
+            val targetTriples = triples.getTriplesByRelation(last.relation)
+            
+            when {
+                last.right == unboundVariable -> {
+                    targetTriples.forEach { t ->
+                        values.add(t.h)
+                        if (values.size >= Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) 
+                            return values.size
+                    }
+                    values.size
+                }
+                else -> {
+                    targetTriples.forEach { t ->
+                        values.add(t.t)
+                        if (values.size >= Settings.AC_MIN_NUM_OF_LAST_ATOM_GROUNDINGS) 
+                            return values.size
+                    }
+                    values.size
+                }
+            }
+        }
+    }
+
+    override fun isSingleton(triples: TripleSet): Boolean {
+        val unboundVariable = this.unboundVariable
+        
+        return if (unboundVariable == null) {
+            // RuleAcyclic1 logic
+            val firstAtom = body[0]
+            when {
+                firstAtom.right == IdManager.getXId() && firstAtom.right == IdManager.getYId() -> {
+                    val head = firstAtom.left
+                    val relation = firstAtom.relation
+                    triples.getTailEntities(relation, head).size <= 1
+                }
+                else -> {
+                    val tail = firstAtom.right
+                    val relation = firstAtom.relation
+                    triples.getHeadEntities(relation, tail).size <= 1
+                }
+            }
+        } else {
+            // RuleAcyclic2 logic: always false
+            false
+        }
+    }
+
+    val isCyclic: Boolean
+        get() = head.constant == body.last.constant
+
+    override fun getTripleExplanation(
+        xValue: Int,
+        yValue: Int,
+        excludedTriples: Set<Triple>,
+        triples: TripleSet
+    ): Set<Triple> {
+        val unboundVariable = this.unboundVariable
+        
+        return if (unboundVariable == null) {
+            // RuleAcyclic1 logic
+            if (bodySize != 1) {
+                System.err.println("Trying to get a triple explanation for an acyclic rule with constant in head any body of length != 1. This is not yet implemented.")
+                System.exit(-1)
+                return emptySet()
+            }
+            
+            val groundings = hashSetOf<Triple>()
+            val xInHead = head.left == IdManager.getXId()
+            
+            if (xInHead) {
+                if (head.right == yValue) {
+                    val bodyAtom = body[0]
+                    val left = bodyAtom.left
+                    val right = bodyAtom.right
+                    val rel = bodyAtom.relation
+                    
+                    when {
+                        left == IdManager.getXId() && triples.isTrue(xValue, rel, right) -> {
+                            val t = Triple.createTriple(xValue, rel, right)
+                            if (!excludedTriples.contains(t)) groundings.add(t)
+                        }
+                        right == IdManager.getXId() && triples.isTrue(left, rel, xValue) -> {
+                            val t = Triple.createTriple(left, rel, xValue)
+                            if (!excludedTriples.contains(t)) groundings.add(t)
+                        }
+                    }
+                }
+            } else {
+                if (head.left == xValue) {
+                    val bodyAtom = body[0]
+                    val left = bodyAtom.left
+                    val right = bodyAtom.right
+                    val rel = bodyAtom.relation
+                    
+                    when {
+                        left == IdManager.getYId() && triples.isTrue(yValue, rel, right) -> {
+                            val t = Triple.createTriple(yValue, rel, right)
+                            if (!excludedTriples.contains(t)) groundings.add(t)
+                        }
+                        right == IdManager.getYId() && triples.isTrue(left, rel, yValue) -> {
+                            val t = Triple.createTriple(left, rel, yValue)
+                            if (!excludedTriples.contains(t)) groundings.add(t)
+                        }
+                    }
+                }
+            }
+            groundings
+        } else {
+            // RuleAcyclic2 logic: not yet implemented
+            System.err.println("You are asking for a triple explanation using an AC2 rule (a.k.a. U_d rule). Triple explanations for this rule are not yet implemented.")
+            emptySet()
+        }
+    }
+
+    fun toXYString(): String = when {
+        head.left == IdManager.getXId() -> {
+            val c = head.right
+            buildString {
+                append(head.toString(c, IdManager.getYId()))
+                repeat(bodySize) { i ->
+                    append(getBodyAtom(i)!!.toString(c, IdManager.getYId()))
+                }
+            }
+        }
+        head.right == IdManager.getYId() -> {
+            val c = head.left
+            buildString {
+                append(head.toString(c, IdManager.getXId()))
+                for (i in bodySize - 1 downTo 0) {
+                    append(getBodyAtom(i)!!.toString(c, IdManager.getXId()))
+                }
+            }
+        }
+        else -> {
+            System.err.println("toXYString of the following rule not implemented: $this")
+            System.exit(1)
+            ""
+        }
+    }
+
+    fun validates(h: String, relation: String, t: String, ts: TripleSet): Boolean {
+        val hId = IdManager.getEntityId(h)
+        val relationId = IdManager.getRelationId(relation)
+        val tId = IdManager.getEntityId(t)
+        
+        return when {
+            targetRelation != relationId -> false
+            // this rule is a X rule
+            head.isRightC && head.right == tId -> {
+                val previousValues = hashSetOf(hId, head.right)
+                isBodyTrueAcyclic(IdManager.getXId(), hId, 0, previousValues, ts)
+            }
+            // this rule is a Y rule
+            head.isLeftC && head.left == hId -> {
+                val previousValues = hashSetOf(tId, head.left)
+                isBodyTrueAcyclic(IdManager.getYId(), tId, 0, previousValues, ts)
+            }
+            else -> false
+        }
+    }
 
     /**
      * First replaces all atoms by deep copies of these atoms to avoid that references from the outside are affected by follow up changes.

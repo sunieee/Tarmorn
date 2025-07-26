@@ -45,8 +45,7 @@ abstract class Rule {
             
             return when {
                 copy.isCyclic -> RuleCyclic(copy, 0.0)
-                copy.isAcyclic1 -> RuleAcyclic1(copy)
-                copy.isAcyclic2 -> RuleAcyclic2(copy)
+                copy.isAcyclic1 || copy.isAcyclic2 -> RuleAcyclic(copy) 
                 else -> null
             }
         }

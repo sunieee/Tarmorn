@@ -35,8 +35,8 @@ object RuleFactory {
                 val leftFree = left.createCopy()
                 if (leftright == null) leftFree.replaceAllConstantsByVariables()
                 left.replaceNearlyAllConstantsByVariables()
-                if (!Settings.EXCLUDE_AC2_RULES) if (leftright == null) generalizations.add(RuleAcyclic2(leftFree))
-                generalizations.add(RuleAcyclic1(left))
+                if (!Settings.EXCLUDE_AC2_RULES) if (leftright == null) generalizations.add(RuleAcyclic(leftFree))
+                generalizations.add(RuleAcyclic(left))
             }
         }
         val right = rv.rightGeneralization
@@ -47,8 +47,8 @@ object RuleFactory {
                 val rightFree = right.createCopy()
                 if (leftright == null) rightFree.replaceAllConstantsByVariables()
                 right.replaceNearlyAllConstantsByVariables()
-                if (!Settings.EXCLUDE_AC2_RULES) if (leftright == null) generalizations.add(RuleAcyclic2(rightFree))
-                generalizations.add(RuleAcyclic1(right))
+                if (!Settings.EXCLUDE_AC2_RULES) if (leftright == null) generalizations.add(RuleAcyclic(rightFree))
+                generalizations.add(RuleAcyclic(right))
             }
         }
         return generalizations
