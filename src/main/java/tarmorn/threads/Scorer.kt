@@ -341,20 +341,25 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
 
     /**
      * Generate rule generalizations from a path (merged from RuleFactory)
+     * Optimized to use direct Int/Long arrays instead of String conversion
      */
     private fun getGeneralizations(p: Path, onlyXY: Boolean): ArrayList<Rule> {
         val rv = RuleUntyped()
         rv.body = Body()
+        
+        // Create rule head from first edge - use direct Int/Long access
         if (p.markers[0] == '+') {
-            rv.head = Atom(p.nodes[0], p.nodes[1], p.nodes[2])
+            rv.head = Atom(p.entityNodes[0], p.relationNodes[0], p.entityNodes[1])
         } else {
-            rv.head = Atom(p.nodes[2], p.nodes[1], p.nodes[0])
+            rv.head = Atom(p.entityNodes[1], p.relationNodes[0], p.entityNodes[0])
         }
+        
+        // Create rule body from remaining edges - use direct Int/Long access
         for (i in 1..<p.markers.size) {
             if (p.markers[i] == '+') {
-                rv.body.add(Atom(p.nodes[i * 2], p.nodes[i * 2 + 1], p.nodes[i * 2 + 2]))
+                rv.body.add(Atom(p.entityNodes[i], p.relationNodes[i], p.entityNodes[i + 1]))
             } else {
-                rv.body.add(Atom(p.nodes[i * 2 + 2], p.nodes[i * 2 + 1], p.nodes[i * 2]))
+                rv.body.add(Atom(p.entityNodes[i + 1], p.relationNodes[i], p.entityNodes[i]))
             }
         }
         val generalizations = ArrayList<Rule>()
