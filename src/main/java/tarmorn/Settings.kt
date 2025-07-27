@@ -270,6 +270,10 @@ object Settings {
     @JvmField
     var READ_ZERO_RULES: Int = 1
 
+    // If set to true, remove the INVERSE_ prefix from relation names in rule output
+    @JvmField
+    var REMOVE_INVERSE_PREFIX_IN_OUTPUT: Boolean = true
+
     @JvmField
     var EXPLANATION_WRITER: PrintWriter? = null
     @JvmField

@@ -1,8 +1,9 @@
 package tarmorn.structure
 
 import tarmorn.data.IdManager
+import java.util.Objects
 
-data class Atom(
+class Atom(
     var h: Int,          // entity or variable ID
     var r: Long,     // relation ID
     var t: Int          // entity or variable ID
@@ -118,16 +119,67 @@ data class Atom(
         }
 
     fun toString(cId: Int, vId: Int): String {
-        val relationStr = IdManager.getRelationString(r)
+        val relationStr = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
+            IdManager.getRelationString(r).removePrefix("INVERSE_")
+        } else {
+            IdManager.getRelationString(r)
+        }
         val leftStr = if (h == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(h)
         val rightStr = if (t == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(t)
         return "$relationStr($leftStr,$rightStr)"
     }
 
     override fun toString(): String {
-        val relationStr = IdManager.getRelationString(r)
+        val relationStr = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
+            IdManager.getRelationString(r).removePrefix("INVERSE_")
+        } else {
+            IdManager.getRelationString(r)
+        }
         val leftStr = IdManager.getEntityString(h)
         val rightStr = IdManager.getEntityString(t)
         return "$relationStr($leftStr,$rightStr)"
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Atom) return false
+        
+        // Direct match
+        if (h == other.h && r == other.r && t == other.t) return true
+        
+        // Check inverse relation equivalence
+        // relation(A,B) == INVERSE_relation(B,A)
+        val inverseRelationId = IdManager.getInverseRelationId(r)
+        return h == other.t && inverseRelationId == other.r && t == other.h
+    }
+
+    override fun hashCode(): Int {
+        // Normalize the representation to ensure equivalent atoms have the same hash
+        // Always use the smaller relation ID and arrange h,t accordingly
+        val originalRelationId = if (IdManager.isInverseRelation(r)) {
+            IdManager.getInverseRelationId(r)
+        } else {
+            r
+        }
+        
+        // For consistent hashing, always put the smaller entity first
+        val (leftEntity, rightEntity) = if (IdManager.isInverseRelation(r)) {
+            t to h  // For inverse relations, swap h and t
+        } else {
+            h to t
+        }
+        
+        // Ensure consistent ordering for hash computation
+        val (hashLeft, hashRight) = if (leftEntity <= rightEntity) {
+            leftEntity to rightEntity
+        } else {
+            rightEntity to leftEntity
+        }
+        
+        return Objects.hash(originalRelationId, hashLeft, hashRight)
+    }
+
+    fun copy(h: Int = this.h, r: Long = this.r, t: Int = this.t): Atom {
+        return Atom(h, r, t)
     }
 }

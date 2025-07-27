@@ -4,10 +4,14 @@ import tarmorn.data.Triple
 import tarmorn.data.IdManager
 import java.util.*
 
+/**
+ * Represents a path in the knowledge graph.
+ * With inverse relations, all relations are represented uniformly in positive direction.
+ * No markers needed since reverse relations are handled by inverse relation triples.
+ */
 class Path(
     var entityNodes: IntArray,
-    var relationNodes: LongArray,
-    var markers: CharArray
+    var relationNodes: LongArray
 ) {
     
     // Get string representation for compatibility
@@ -25,28 +29,33 @@ class Path(
         }
     
     override fun toString(): String {
-        val nodeStrings = nodes
-        return nodeStrings.indices.joinToString(" -> ") { markedNodeToString(it, nodeStrings) }
+        val result = StringBuilder()
+        for (i in entityNodes.indices) {
+            if (i > 0) result.append(" -> ")
+            result.append(IdManager.getEntityString(entityNodes[i]))
+            
+            if (i < relationNodes.size) {
+                result.append(" -> ")
+                result.append(IdManager.getRelationString(relationNodes[i]))
+            }
+        }
+        return result.toString()
     }
-
-    private fun markedNodeToString(i: Int, nodeStrings: Array<String>): String = 
-        if (i % 2 == 1) "${markers[(i - 1) / 2]}${nodeStrings[i]}" else nodeStrings[i]
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is Path) return false
         return entityNodes.contentEquals(other.entityNodes) && 
-               relationNodes.contentEquals(other.relationNodes) && 
-               markers.contentEquals(other.markers)
+               relationNodes.contentEquals(other.relationNodes)
     }
 
     override fun hashCode(): Int {
-        return Objects.hash(entityNodes.contentHashCode(), relationNodes.contentHashCode(), markers.contentHashCode())
+        return Objects.hash(entityNodes.contentHashCode(), relationNodes.contentHashCode())
     }
 
     /**
      * Checks if a path is valid for strict object identity.
-     *
+     * 
      * @return False, if the x and y values appear at the wrong position in the path, or if the
      * same entities appears several times in the body part of the path.
      */
@@ -84,7 +93,7 @@ class Path(
 
     /**
      * Checks if the path will result in a cyclic rule.
-     *
+     * 
      * @return True, if its a cyclic path.
      */
     val isCyclic: Boolean

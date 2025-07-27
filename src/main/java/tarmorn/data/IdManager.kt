@@ -15,6 +15,9 @@ object IdManager {
     private val relation2id = mutableMapOf<String, Long>()
     private val id2relation = mutableMapOf<Long, String>()
     private var nextRelationId = 1L
+    
+    // Count of original relations (excluding inverse relations)
+    public var originalRelationCount = 0L
 
     init {
         // Initialize KG variables A-Z with IDs -1 to -26
@@ -83,6 +86,32 @@ object IdManager {
     // Get the total number of relations.
     fun getRelationCount(): Int = relation2id.size
 
+    // Add inverse relations for all existing relations
+    fun addInverseRelations() {
+        val originalRelations = relation2id.toMap() // Create a copy to avoid concurrent modification
+        originalRelationCount = originalRelations.size.toLong()
+        
+        originalRelations.forEach { (relationName, relationId) ->
+            // Only create inverse for original relations (not for existing inverse relations)
+            if (!relationName.startsWith("INVERSE_")) {
+                val inverseName = "INVERSE_$relationName"
+                val inverseId = relationId + originalRelationCount
+                relation2id[inverseName] = inverseId
+                id2relation[inverseId] = inverseName
+            }
+        }
+        
+        // Update nextRelationId to continue from the highest ID
+        nextRelationId = (id2relation.keys.maxOrNull() ?: 0L) + 1L
+    }
+    
+    // Check if a relation is an inverse relation (much more efficient now!)
+    fun isInverseRelation(relationId: Long)= relationId > originalRelationCount
+
+    // Get the inverse relation ID for a given relation
+    fun getInverseRelationId(relationId: Long) =
+        relationId + if (relationId <= originalRelationCount) originalRelationCount else -originalRelationCount
+
     // Get KG variable ID for specific letters.
     fun getXId(): Int = getEntityId("X")
     fun getYId(): Int = getEntityId("Y")
@@ -108,5 +137,6 @@ object IdManager {
         
         nextEntityId = 1
         nextRelationId = 1L
+        originalRelationCount = 0L
     }
 }

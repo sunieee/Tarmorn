@@ -11,3 +11,6 @@ PATH_OUTPUT: out/FB15k/preds-100
 # The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
 WORKER_THREADS: 24
 THRESHOLD_CORRECT_PREDICTIONS: 20
+
+# If set to true, remove the INVERSE_ prefix from relation names in rule output
+REMOVE_INVERSE_PREFIX_IN_OUTPUT: false

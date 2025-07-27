@@ -256,12 +256,12 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
     }
 
     /**
-     * Sample a path from the triple set (merged from PathSampler)
+     * Sample a path from the triple set (simplified with inverse relations)
+     * No longer needs markers since all relations are represented uniformly
      */
-    private fun samplePath(steps: Int, cyclic: Boolean, chosenHeadTriple: Triple? = null, ruleToBeExtended: Rule? = null): Path? {
+    private fun samplePath(steps: Int, cyclic: Boolean, chosenHeadTriple: Triple? = null): Path? {
         val entityNodes = IntArray(1 + steps)
         val relationNodes = LongArray(steps)
-        val markers = CharArray(steps)
         
         val chosenTriples = Settings.SINGLE_RELATIONS?.let { relations ->
             val singleRelation = relations.random(rand)
@@ -279,59 +279,50 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
         // TODO hardcoded test to avoid reflexive relations in the head
         if (triple.h == triple.t) return null
         
-        val dice = when {
-            ruleToBeExtended?.isXRule == true -> 1.0
-            ruleToBeExtended?.isYRule == true -> 0.0
-            else -> rand.nextDouble()
-        }
-        
-        if (dice < 0.5) {
-            markers[0] = '+'
-            entityNodes[0] = triple.h
-            relationNodes[0] = triple.r
-            entityNodes[1] = triple.t
-        } else {
-            markers[0] = '-'
-            entityNodes[1] = triple.h
-            relationNodes[0] = triple.r
-            entityNodes[0] = triple.t
-        }
+        // Always use the natural direction of the triple
+        // The inverse direction is already represented by inverse triples in the dataset
+        entityNodes[0] = triple.h
+        relationNodes[0] = triple.r
+        entityNodes[1] = triple.t
 
-        // add next hop
+        // Add next hop - simplified since we only need to search head->tail
+        // Reverse direction is handled by inverse triples
         for (index in 1 until steps) {
             val currentNodeId = entityNodes[index]
-            val isForward = rand.nextDouble() < 0.5
             
-            val candidateTriples = if (isForward) {
-                triples.getTriplesByHead(currentNodeId)
-            } else {
-                triples.getTriplesByTail(currentNodeId)
-            }
+            // Only search from head to tail (forward direction)
+            val candidateTriples = triples.getTriplesByHead(currentNodeId)
             
             if (candidateTriples.isEmpty()) return null
             
+            // Filter out inverse relations that would create adjacent forward/inverse pairs
+            val previousRelation = relationNodes[index - 1]
+            val filteredCandidates = candidateTriples.filter { triple ->
+                // Don't allow consecutive inverse relations
+                val currentRel = triple.r
+                val prevInverse = IdManager.getInverseRelationId(previousRelation)
+                currentRel != prevInverse
+            }
+            
+            if (filteredCandidates.isEmpty()) return null
+            
             val nextTriple = if (cyclic && index + 1 == steps) {
                 val targetNodeId = entityNodes[0]
-                val cyclicCandidates = candidateTriples.filter { triple ->
-                    if (isForward) triple.t == targetNodeId else triple.h == targetNodeId
+                val cyclicCandidates = filteredCandidates.filter { triple ->
+                    triple.t == targetNodeId // Always head->tail direction
                 }
                 if (cyclicCandidates.isEmpty()) return null
                 cyclicCandidates.random(rand)
             } else {
-                candidateTriples.random(rand)
+                filteredCandidates.random(rand)
             }
             
             relationNodes[index] = nextTriple.r
-            if (isForward) {
-                entityNodes[index + 1] = nextTriple.t
-                markers[index] = '+'
-            } else {
-                entityNodes[index + 1] = nextTriple.h
-                markers[index] = '-'
-            }
+            entityNodes[index + 1] = nextTriple.t
         }
         
-        val path = Path(entityNodes, relationNodes, markers)
+        // Use simplified constructor without markers
+        val path = Path(entityNodes, relationNodes)
         return when {
             steps == 1 -> path
             !cyclic && path.isCyclic -> null
@@ -340,38 +331,41 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
     }
 
     /**
-     * Generate rule generalizations from a path (merged from RuleFactory)
-     * Optimized to use direct Int/Long arrays instead of String conversion
+     * Generate rule generalizations from a path (simplified with inverse relations)
+     * No longer needs to check markers since all relations are uniformly positive
      */
     private fun getGeneralizations(p: Path, onlyXY: Boolean): ArrayList<Rule> {
         val rv = RuleUntyped()
         rv.body = Body()
         
-        // Create rule head from first edge - use direct Int/Long access
-        if (p.markers[0] == '+') {
-            rv.head = Atom(p.entityNodes[0], p.relationNodes[0], p.entityNodes[1])
-        } else {
-            rv.head = Atom(p.entityNodes[1], p.relationNodes[0], p.entityNodes[0])
+        // Create rule head from first edge - use natural direction
+        rv.head = Atom(p.entityNodes[0], p.relationNodes[0], p.entityNodes[1])
+        
+        // Create rule body from remaining edges - always positive direction
+        for (i in 1..<p.relationNodes.size) {
+            rv.body.add(Atom(p.entityNodes[i], p.relationNodes[i], p.entityNodes[i + 1]))
         }
         
-        // Create rule body from remaining edges - use direct Int/Long access
-        for (i in 1..<p.markers.size) {
-            if (p.markers[i] == '+') {
-                rv.body.add(Atom(p.entityNodes[i], p.relationNodes[i], p.entityNodes[i + 1]))
-            } else {
-                rv.body.add(Atom(p.entityNodes[i + 1], p.relationNodes[i], p.entityNodes[i]))
-            }
-        }
         val generalizations = ArrayList<Rule>()
-        val leftright = rv.leftRightGeneralization
+        
+        // For CyclicRule (leftright), normalize head to avoid redundant inverse rules
+        val leftright = rv.leftRightGeneralization  
         if (leftright != null) {
             leftright.replaceAllConstantsByVariables()
+            
+            // Normalize CyclicRule head to original relation to prevent r(X,Y) and INVERSE_r(X,Y) duplicates
+            val headRelation = leftright.head.r
+            if (IdManager.isInverseRelation(headRelation)) {
+                val originalRelation = IdManager.getInverseRelationId(headRelation)
+                leftright.head = Atom(leftright.head.t, originalRelation, leftright.head.h)
+            }
+            
             generalizations.add(RuleCyclic(leftright, 0.0))
         }
         if (onlyXY) return generalizations
-        // acyclic rule
+        
+        // For AcyclicRule (left), keep original head relation as r(X,c) and INVERSE_r(c,Y) are different
         val left = rv.leftGeneralization
-
         if (left != null) {
             if (left.bodySize == 0) {
                 generalizations.add(RuleZero(left))
@@ -383,6 +377,9 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
                 generalizations.add(RuleAcyclic(left))
             }
         }
+        
+        // Add Y rules (right generalization) to cover complete semantic space
+        // This ensures we can learn both r(X,c) and r(c,Y) patterns
         val right = rv.rightGeneralization
         if (right != null) {
             if (right.bodySize == 0) {
@@ -395,6 +392,11 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
                 generalizations.add(RuleAcyclic(right))
             }
         }
+        
+        // Skip right generalization to avoid learning redundant inverse rules
+        // With inverse relations, right rules would be semantically equivalent to left rules
+        // e.g., r(X,c) <= r'(X,c') vs INVERSE_r(c,Y) <= INVERSE_r'(c',Y) are equivalent
+        
         return generalizations
     }
 
