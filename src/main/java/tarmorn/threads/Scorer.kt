@@ -254,7 +254,6 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
             }
         }
     }
-
     /**
      * Sample a path from the triple set (simplified with inverse relations)
      * No longer needs markers since all relations are represented uniformly
@@ -331,40 +330,45 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
     }
 
     /**
-     * Generate rule generalizations from a path (simplified with inverse relations)
-     * No longer needs to check markers since all relations are uniformly positive
+     * Generate rule generalizations from a path (normalized for consistent rules)
+     * Ensures all rule heads use original relations and body atoms are normalized
      */
     private fun getGeneralizations(p: Path, onlyXY: Boolean): ArrayList<Rule> {
         val rv = RuleUntyped()
         rv.body = Body()
         
-        // Create rule head from first edge - use natural direction
-        rv.head = Atom(p.entityNodes[0], p.relationNodes[0], p.entityNodes[1])
+        // Create rule head from first edge - normalize to use original relation
+        val headRelation = p.relationNodes[0]
+        rv.head = if (IdManager.isInverseRelation(headRelation)) {
+            val originalRelation = IdManager.getInverseRelationId(headRelation)
+            Atom(p.entityNodes[1], originalRelation, p.entityNodes[0])  // Swap entities for inverse
+        } else {
+            Atom(p.entityNodes[0], headRelation, p.entityNodes[1])
+        }
         
-        // Create rule body from remaining edges - always positive direction
+        // Create rule body from remaining edges - normalize all atoms to use original relations
         for (i in 1..<p.relationNodes.size) {
-            rv.body.add(Atom(p.entityNodes[i], p.relationNodes[i], p.entityNodes[i + 1]))
+            val bodyRelation = p.relationNodes[i]
+            val bodyAtom = if (IdManager.isInverseRelation(bodyRelation)) {
+                val originalRelation = IdManager.getInverseRelationId(bodyRelation)
+                Atom(p.entityNodes[i + 1], originalRelation, p.entityNodes[i])  // Swap entities for inverse
+            } else {
+                Atom(p.entityNodes[i], bodyRelation, p.entityNodes[i + 1])
+            }
+            rv.body.add(bodyAtom)
         }
         
         val generalizations = ArrayList<Rule>()
         
-        // For CyclicRule (leftright), normalize head to avoid redundant inverse rules
+        // For CyclicRule (leftright), head is already normalized above
         val leftright = rv.leftRightGeneralization  
         if (leftright != null) {
             leftright.replaceAllConstantsByVariables()
-            
-            // Normalize CyclicRule head to original relation to prevent r(X,Y) and INVERSE_r(X,Y) duplicates
-            val headRelation = leftright.head.r
-            if (IdManager.isInverseRelation(headRelation)) {
-                val originalRelation = IdManager.getInverseRelationId(headRelation)
-                leftright.head = Atom(leftright.head.t, originalRelation, leftright.head.h)
-            }
-            
             generalizations.add(RuleCyclic(leftright, 0.0))
         }
         if (onlyXY) return generalizations
         
-        // For AcyclicRule (left), keep original head relation as r(X,c) and INVERSE_r(c,Y) are different
+        // For AcyclicRule (left), head is already normalized above
         val left = rv.leftGeneralization
         if (left != null) {
             if (left.bodySize == 0) {
@@ -379,7 +383,7 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
         }
         
         // Add Y rules (right generalization) to cover complete semantic space
-        // This ensures we can learn both r(X,c) and r(c,Y) patterns
+        // Head is already normalized above
         val right = rv.rightGeneralization
         if (right != null) {
             if (right.bodySize == 0) {
@@ -392,10 +396,6 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
                 generalizations.add(RuleAcyclic(right))
             }
         }
-        
-        // Skip right generalization to avoid learning redundant inverse rules
-        // With inverse relations, right rules would be semantically equivalent to left rules
-        // e.g., r(X,c) <= r'(X,c') vs INVERSE_r(c,Y) <= INVERSE_r'(c',Y) are equivalent
         
         return generalizations
     }
