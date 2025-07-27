@@ -18,7 +18,7 @@ class RuleUntyped : Rule {
     val isCyclic: Boolean
         get() {
             if (this.head == null) return false
-            if (this.head.isLeftC || this.head.isRightC) return false
+            if (this.head.ishC || this.head.istC) return false
             else return true
         }
 
@@ -26,7 +26,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body[this.bodySize - 1].isLeftC || this.body[this.bodySize - 1].isRightC) {
+                if (this.body[this.bodySize - 1].ishC || this.body[this.bodySize - 1].istC) {
                     return true
                 }
                 return false
@@ -37,7 +37,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body[this.bodySize - 1].isLeftC || this.body[this.bodySize - 1].isRightC) {
+                if (this.body[this.bodySize - 1].ishC || this.body[this.bodySize - 1].istC) {
                     return false
                 }
                 return true
@@ -61,9 +61,9 @@ class RuleUntyped : Rule {
     val leftRightGeneralization: RuleUntyped?
         get() {
             val lrG = this.createCopy()
-            val leftConstant = lrG.head.left
+            val leftConstant = lrG.head.h
             val xcount = lrG.replaceByVariable(leftConstant, IdManager.getXId())
-            val rightConstant = lrG.head.right
+            val rightConstant = lrG.head.t
             val ycount = lrG.replaceByVariable(rightConstant, IdManager.getYId())
             if (xcount < 2 || ycount < 2) return null
             return lrG
@@ -72,7 +72,7 @@ class RuleUntyped : Rule {
     val leftGeneralization: RuleUntyped?
         get() {
             val leftG = this.createCopy()
-            val leftConstant = leftG.head.left
+            val leftConstant = leftG.head.h
             val xcount = leftG.replaceByVariable(leftConstant, IdManager.getXId())
             if (this.bodySize == 0) return leftG
             if (xcount < 2) return null
@@ -82,7 +82,7 @@ class RuleUntyped : Rule {
     val rightGeneralization: RuleUntyped?
         get() {
             val rightG = this.createCopy()
-            val rightConstant = rightG.head.right
+            val rightConstant = rightG.head.t
             val ycount = rightG.replaceByVariable(rightConstant, IdManager.getYId())
             if (this.bodySize == 0) return rightG
             if (ycount < 2) return null
@@ -101,9 +101,9 @@ class RuleUntyped : Rule {
 
     protected fun replaceByVariable(constant: Int, variable: Int): Int {
         var count = this.head.replaceByVariable(constant, variable)
-        for (batom in this.body) {
-            val bcount = batom.replaceByVariable(constant, variable)
-            count += bcount
+        
+        for (i in body.indices) {
+            count += body[i].replaceByVariable(constant, variable)
         }
         return count
     }
@@ -113,13 +113,13 @@ class RuleUntyped : Rule {
         for (atom in body) {
             counter++
             if (counter == body.size) break
-            if (atom.isLeftC) {
-                val c = atom.left
+            if (atom.ishC) {
+                val c = atom.h
                 this.replaceByVariable(c, variables[this.nextFreeVariable])
                 this.nextFreeVariable++
             }
-            if (atom.isRightC) {
-                val c = atom.right
+            if (atom.istC) {
+                val c = atom.t
                 this.replaceByVariable(c, variables[this.nextFreeVariable])
                 this.nextFreeVariable++
             }
@@ -129,13 +129,13 @@ class RuleUntyped : Rule {
 
     fun replaceAllConstantsByVariables() {
         for (atom in body) {
-            if (atom.isLeftC) {
-                val c = atom.left
+            if (atom.ishC) {
+                val c = atom.h
                 this.replaceByVariable(c, variables[this.nextFreeVariable])
                 this.nextFreeVariable++
             }
-            if (atom.isRightC) {
-                val c = atom.right
+            if (atom.istC) {
+                val c = atom.t
                 this.replaceByVariable(c, variables[this.nextFreeVariable])
                 this.nextFreeVariable++
             }

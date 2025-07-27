@@ -166,10 +166,10 @@ class TripleSet(
                         o = token[2].intern()
                     }
 
-                    if (token.size == 3) t = Triple.createTriple(s, r, o)
-                    if (token.size != 3 && ignore4Plus) t = Triple.createTriple(s, r, o)
+                    if (token.size == 3) t = Triple(s, r, o)
+                    if (token.size != 3 && ignore4Plus) t = Triple(s, r, o)
                     if (token.size == 4 && !ignore4Plus) {
-                        if (token[3] == ".") t = Triple.createTriple(s, r, o)
+                        if (token[3] == ".") t = Triple(s, r, o)
                         else {
                             System.err.println("could not parse line " + line)
                             t = null
@@ -183,7 +183,7 @@ class TripleSet(
                         subject = subject.replace(" ", "_")
                         relation = relation.replace(" ", "_")
                         `object` = `object`.replace(" ", "_")
-                        t = Triple.createTriple(subject, relation, `object`)
+                        t = Triple(subject, relation, `object`)
                     }
 
                     if (t == null) {

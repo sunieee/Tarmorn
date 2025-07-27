@@ -3,17 +3,17 @@ package tarmorn.structure
 import tarmorn.data.IdManager
 
 data class Atom(
-    var left: Int,          // entity or variable ID
-    var relation: Long,     // relation ID
-    var right: Int          // entity or variable ID
+    var h: Int,          // entity or variable ID
+    var r: Long,     // relation ID
+    var t: Int          // entity or variable ID
 ) {
-    val isLeftC: Boolean
-        get() = !IdManager.isVariable(left)
-    val isRightC: Boolean
-        get() = !IdManager.isVariable(right)
+    val ishC: Boolean
+        get() = !IdManager.isVariable(h)
+    val istC: Boolean
+        get() = !IdManager.isVariable(t)
 
     val xYGeneralization: Atom
-        get() = this.copy(left = IdManager.getXId(), right = IdManager.getYId())
+        get() = this.copy(h = IdManager.getXId(), t = IdManager.getYId())
 
     constructor(input: String) : this(0, 0, 0) {
         // 清理输入字符串，移除尾部的空格、逗号和分号
@@ -33,9 +33,9 @@ data class Atom(
             args.substring(0, lastCommaIndex) to args.substring(lastCommaIndex + 1)
         }
         
-        this.relation = IdManager.getRelationId(relationStr.intern())
-        this.left = IdManager.getEntityId(leftStr.intern())
-        this.right = IdManager.getEntityId(rightStr.intern())
+        this.r = IdManager.getRelationId(relationStr.intern())
+        this.h = IdManager.getEntityId(leftStr.intern())
+        this.t = IdManager.getEntityId(rightStr.intern())
     }
 
     // Constructor from string values (for backward compatibility)
@@ -57,94 +57,77 @@ data class Atom(
      * 4. This has constants on both sides while g has variables on both sides
      */
     fun moreSpecial(g: Atom): Boolean {
-        if (this.relation != g.relation) return false
+        if (this.r != g.r) return false
         
         return when {
             this == g -> true
-            this.left == g.left -> !g.isRightC && this.isRightC
-            this.right == g.right -> !g.isLeftC && this.isLeftC
-            else -> !g.isLeftC && !g.isRightC && this.isLeftC && this.isRightC
+            this.h == g.h -> !g.istC && this.istC
+            this.t == g.t -> !g.ishC && this.ishC
+            else -> !g.ishC && !g.istC && this.ishC && this.istC
         }
     }
 
     fun replaceByVariable(constantId: Int, variableId: Int): Int {
         var count = 0
-        if (isLeftC && left == constantId) {
-            left = variableId
+        if (ishC && h == constantId) {
+            h = variableId
             count++
         }
-        if (isRightC && right == constantId) {
-            right = variableId
+        if (istC && t == constantId) {
+            t = variableId
             count++
         }
         return count
     }
 
-    // String version for backward compatibility
-    fun replaceByVariable(constant: String, variable: Int): Int = 
-        replaceByVariable(IdManager.getEntityId(constant), variable)
-
     fun replace(vOldId: Int, vNewId: Int, block: Int = 0): Int = when {
-        left == vOldId && block != -1 -> {
-            left = vNewId
+        h == vOldId && block != -1 -> {
+            h = vNewId
             -1
         }
-        right == vOldId && block != 1 -> {
-            right = vNewId
+        t == vOldId && block != 1 -> {
+            t = vNewId
             1
         }
         else -> 0
     }
 
     fun uses(constantOrVariableId: Int): Boolean = 
-        left == constantOrVariableId || right == constantOrVariableId
+        h == constantOrVariableId || t == constantOrVariableId
 
     fun isLRC(leftNotRight: Boolean): Boolean = 
-        if (leftNotRight) isLeftC else isRightC
+        if (leftNotRight) ishC else istC
 
     fun getLR(leftNotRight: Boolean): Int = 
-        if (leftNotRight) left else right
+        if (leftNotRight) h else t
 
     fun contains(termId: Int): Boolean =
-        left == termId || right == termId
+        h == termId || t == termId
 
     val constant: Int
         get() = when {
-            isLeftC -> left
-            isRightC -> right
+            ishC -> h
+            istC -> t
             else -> -1
         }
 
-    fun isInverse(pos: Int): Boolean {
-        val inverse = when {
-            isRightC || isLeftC -> !isRightC
-            else -> {
-                val leftStr = IdManager.getEntityString(left)
-                val rightStr = IdManager.getEntityString(right)
-                val baseInverse = rightStr < leftStr
-                if (pos == 0) !baseInverse else baseInverse
-            }
-        }
-        return inverse
-    }
-
     val variables: MutableSet<Int>
         get() = mutableSetOf<Int>().apply {
-            if (!isLeftC && left != IdManager.getXId() && left != IdManager.getYId()) add(left)
-            if (!isRightC && right != IdManager.getXId() && right != IdManager.getYId()) add(right)
+            if (!ishC && h != IdManager.getXId() && h != IdManager.getYId()) add(h)
+            if (!istC && t != IdManager.getXId() && t != IdManager.getYId()) add(t)
         }
 
     fun toString(cId: Int, vId: Int): String {
-        val relationStr = IdManager.getRelationString(relation)
-        val leftStr = if (left == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(left)
-        val rightStr = if (right == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(right)
+        val relationStr = IdManager.getRelationString(r)
+        val leftStr = if (h == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(h)
+        val rightStr = if (t == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(t)
         return "$relationStr($leftStr,$rightStr)"
     }
 
     override fun toString(): String {
-        val relationStr = IdManager.getRelationString(relation)
-        val leftStr = IdManager.getEntityString(left)
-        val rightStr = IdManager.getEntityString(right)
+        val relationStr = IdManager.getRelationString(r)
+        val leftStr = IdManager.getEntityString(h)
+        val rightStr = IdManager.getEntityString(t)
         return "$relationStr($leftStr,$rightStr)"
     }
 }

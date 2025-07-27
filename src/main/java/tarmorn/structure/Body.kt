@@ -23,7 +23,7 @@ class Body : MutableList<Atom> by ArrayList() {
             val atom1 = this[i]
             val atom2 = that[i]
             
-            if (atom1.relation != atom2.relation) return false
+            if (atom1.r != atom2.r) return false
             
             if (!checkValuesAndVariables(variablesThis2That, variablesThat2This, atom1, atom2, true)) return false
             if (!checkValuesAndVariables(variablesThis2That, variablesThat2This, atom1, atom2, false)) return false
@@ -101,7 +101,7 @@ class Body : MutableList<Atom> by ArrayList() {
                     old2New[v] = vNew
                     indexNewVariableNames++
                 }
-                block = atom.replace(v, old2New[v]!!, block)
+                val block = atom.replace(v, old2New[v]!!, block)
             }
         }
     }

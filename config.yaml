@@ -5,7 +5,7 @@ PATH_TEST: data/FB15k/test.txt
 # Path to the file that contains the triple set used validation purpose (e.g. learning hyper parameter).
 PATH_VALID: data/FB15k/valid.txt
 # Path to the file that contains the rules that will be refined or will be sued for prediction.
-PATH_RULES: out/FB15k/rules-100
+PATH_RULES: out/FB15k/preds-100-400
 # Path to the output file where the rules / predictions  will be stored.
 PATH_OUTPUT: out/FB15k/preds-100
 # The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.

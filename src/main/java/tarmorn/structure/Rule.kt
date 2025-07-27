@@ -55,7 +55,7 @@ abstract class Rule {
     fun getBodyAtom(index: Int) = body[index]
 
     // Remove redundant getter declarations
-    val targetRelation get() = head.relation
+    val targetRelation get() = head.r
 
     val bodySize get() = body.size
 
@@ -64,9 +64,9 @@ abstract class Rule {
     open val appliedConfidence: Double
         get() = correctlyPredicted.toDouble() / (predicted.toDouble() + Settings.UNSEEN_NEGATIVE_EXAMPLES)
 
-    val isXYRule get() = !head.isLeftC && !head.isRightC
-    val isXRule get() = !isXYRule && !head.isLeftC
-    val isYRule get() = !isXYRule && !head.isRightC
+    val isXYRule get() = !head.ishC && !head.istC
+    val isXRule get() = !isXYRule && !head.ishC
+    val isYRule get() = !isXYRule && !head.istC
 
     override fun toString() = buildString {
         append("$predicted\t$correctlyPredicted\t$confidence\t$head <= $body")

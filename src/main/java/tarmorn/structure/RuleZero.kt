@@ -3,7 +3,6 @@ package tarmorn.structure
 import tarmorn.Settings
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
-import tarmorn.data.IdManager
 
 /**
  * A rule with an empty body, that fires only because something is asked.
@@ -23,7 +22,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     override fun computeScores(ts: TripleSet) {
         val c = this.head.constant
         val tr = this.targetRelation
-        val cIsHead = this.head.isLeftC
+        val cIsHead = this.head.ishC
 
         val triplesTR = ts.getTriplesByRelation(tr)
         val triplesTRC = ts.getEntities(tr, c, cIsHead)
@@ -35,18 +34,18 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
 
     override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> {
         val results = hashSetOf<Int>()
-        if (this.head.isRightC) {
+        if (this.head.istC) {
             // Convert string to entity ID
-            results.add(this.head.right)
+            results.add(this.head.t)
         }
         return results
     }
 
     override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
         val results = hashSetOf<Int>()
-        if (this.head.isLeftC) {
+        if (this.head.ishC) {
             // Convert string to entity ID
-            results.add(this.head.left)
+            results.add(this.head.h)
         }
         return results
     }
@@ -101,11 +100,11 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         val groundings = hashSetOf<Triple>()
         val prediction = tarmorn.data.Triple(head, this.targetRelation, tail)
         if (excludedTriples.contains(prediction)) return groundings
-        if (this.isXRule && tail == this.head.right) {
+        if (this.isXRule && tail == this.head.t) {
             groundings.add(prediction)
             return groundings
         }
-        if (this.isYRule && head == this.head.left) {
+        if (this.isYRule && head == this.head.h) {
             groundings.add(prediction)
             return groundings
         }

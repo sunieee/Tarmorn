@@ -95,7 +95,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (key in xypairsReverse.values.keys) {
             for (value in xypairsReverse.values.get(key)!!) {
                 predicted++
-                if (triples.isTrue(key, this.head.relation, value)) correctlyPredicted++
+                if (triples.isTrue(key, this.head.r, value)) correctlyPredicted++
             }
         }
 
@@ -108,7 +108,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (key in xypairs.values.keys) {
             for (value in xypairs.values.get(key)!!) {
                 predicted++
-                if (triples.isTrue(key, this.head.relation, value)) correctlyPredicted++
+                if (triples.isTrue(key, this.head.r, value)) correctlyPredicted++
             }
         }
 
@@ -171,7 +171,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                 val explanation = that.getTripleExplanation(key, value, hashSetOf(), triples)
                 if (explanation != null && explanation.size > 0) {
                     predictedBoth++
-                    if (triples.isTrue(key, this.head.relation, value)) correctlyPredictedBoth++
+                    if (triples.isTrue(key, this.head.r, value)) correctlyPredictedBoth++
                 }
             }
         }
@@ -181,7 +181,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                 val explanation = that.getTripleExplanation(key, value, hashSetOf(), triples)
                 if (explanation != null && explanation.size > 0) {
                     predictedBoth++
-                    if (triples.isTrue(key, this.head.relation, value)) correctlyPredictedBoth++
+                    if (triples.isTrue(key, this.head.r, value)) correctlyPredictedBoth++
                 }
             }
         }
@@ -231,17 +231,17 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (key in xypairs.values.keys) {
             for (value in xypairs.values.get(key)!!) {
                 if (valid == 1) {
-                    if (triples.isTrue(key, this.head.relation, value)) {
-                        val validPrediction = Triple(key, this.head.relation, value)
+                    if (triples.isTrue(key, this.head.r, value)) {
+                        val validPrediction = Triple(key, this.head.r, value)
                         predictions.add(validPrediction)
                     }
                 } else if (valid == -1) {
-                    if (!triples.isTrue(key, this.head.relation, value)) {
-                        val invalidPrediction = Triple(key, this.head.relation, value)
+                    if (!triples.isTrue(key, this.head.r, value)) {
+                        val invalidPrediction = Triple(key, this.head.r, value)
                         predictions.add(invalidPrediction)
                     }
                 } else {
-                    val validPrediction = Triple(key, this.head.relation, value)
+                    val validPrediction = Triple(key, this.head.r, value)
                     predictions.add(validPrediction)
                 }
             }
@@ -274,20 +274,20 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         // XXX if (!Rule.APPLICATION_MODE && finalResults.size() >= Settings.SAMPLE_SIZE) return;
         // check if the value has been seen before as grounding of another variable
         val atom = this.body.get(bodyIndex)
-        val ifHead = atom.left == currentVariable
+        val ifHead = atom.h == currentVariable
         if (previousValues.contains(value)) return
 
         // the current atom is the last
         if ((direction == true && this.body.size - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
             // get groundings
-            for (v in triples.getEntities(atom.relation, value, ifHead)) {
+            for (v in triples.getEntities(atom.r, value, ifHead)) {
                 if (!previousValues.contains(v) && value != v) finalResults.add(v)
             }
             return
         } else {
-            val results = triples.getEntities(atom.relation, value, ifHead)
+            val results = triples.getEntities(atom.r, value, ifHead)
             if (results.size > Settings.BRANCHINGFACTOR_BOUND && Settings.DFS_SAMPLING_ON == true) return
-            val nextVariable = if (ifHead) atom.right else atom.left
+            val nextVariable = if (ifHead) atom.t else atom.h
             val currentValues = HashSet<Int>()
             currentValues.addAll(previousValues)
             if (Settings.OI_CONSTRAINTS_ACTIVE) currentValues.add(value)
@@ -321,8 +321,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
         val atom = this.body.get(0)
-        val ifHead = atom.left == firstVariable
-        val rtriples = triples.getTriplesByRelation(atom.relation)
+        val ifHead = atom.h == firstVariable
+        val rtriples = triples.getTriplesByRelation(atom.r)
         var counter = 0
         for (t in rtriples) {
             counter++
@@ -365,11 +365,11 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
         val atom = this.body.get(0)
-        val ifHead = atom.left == firstVariable
+        val ifHead = atom.h == firstVariable
         var t: Triple?
         var attempts = 0
         var repetitions = 0
-        while ((triples.getRandomTripleByRelation(atom.relation).also { t = it }) != null) {
+        while ((triples.getRandomTripleByRelation(atom.r).also { t = it }) != null) {
             attempts++
             val lastVarGrounding =
                 this.beamCyclic(firstVariable, t!!.getValue(ifHead), 0, true, triples, HashSet<Int>())
@@ -399,10 +399,10 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
         val atom = this.body.get(0)
-        val ifHead = atom.left == firstVariable
+        val ifHead = atom.h == firstVariable
         var repetitions = 0
         val entities = triples.getNRandomEntitiesByRelation(
-            atom.relation,
+            atom.r,
             ifHead,
             Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS
         )
@@ -439,11 +439,11 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
         val atom = this.body.last
-        val ifHead = atom.left == lastVariable
+        val ifHead = atom.h == lastVariable
         var t: Triple?
         var attempts = 0
         var repetitions = 0
-        while ((triples.getRandomTripleByRelation(atom.relation).also { t = it }) != null) {
+        while ((triples.getRandomTripleByRelation(atom.r).also { t = it }) != null) {
             attempts++
             val firstVarGrounding = this.beamCyclic(
                 lastVariable,
@@ -479,10 +479,10 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
         val atom = this.body.last
-        val ifHead = atom.left == lastVariable
+        val ifHead = atom.h == lastVariable
         var repetitions = 0
         val entities = triples.getNRandomEntitiesByRelation(
-            atom.relation,
+            atom.r,
             ifHead,
             Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS
         )
@@ -561,13 +561,13 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         if (value == null || value == 0) return null
         // check if the value has been seen before as grounding of another variable
         val atom = this.body.get(bodyIndex)
-        val ifHead = atom.left == currentVariable
+        val ifHead = atom.h == currentVariable
         // OI-OFF
         if (previousValues.contains(value)) return null
 
         // the current atom is the last
         if ((direction == true && this.body.size - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
-            val finalValue = triples.getRandomEntity(atom.relation, value, ifHead)
+            val finalValue = triples.getRandomEntity(atom.r, value, ifHead)
 
             // println("Y = " + finalValue + " out of " + triples.getEntities(atom.getRelation(), value, ifHead).size());
 
@@ -577,8 +577,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             if (value == finalValue) return null
             return finalValue
         } else {
-            val nextValue = triples.getRandomEntity(atom.relation, value, ifHead)
-            val nextVariable = if (ifHead) atom.right else atom.left
+            val nextValue = triples.getRandomEntity(atom.r, value, ifHead)
+            val nextVariable = if (ifHead) atom.t else atom.h
             // OI-OFF
             if (Settings.OI_CONSTRAINTS_ACTIVE) previousValues.add(value)
             val updatedBodyIndex = if (direction) bodyIndex + 1 else bodyIndex - 1
@@ -654,17 +654,17 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
         if (firstIndex == lastIndex) {
             val atom = this.getBodyAtom(firstIndex)
-            if (atom.left == firstVar) {
-                if (triples.isTrue(firstValue, atom.relation, lastValue)) {
-                    val g = Triple(firstValue, atom.relation, lastValue)
+            if (atom.h == firstVar) {
+                if (triples.isTrue(firstValue, atom.r, lastValue)) {
+                    val g = Triple(firstValue, atom.r, lastValue)
                     if (!excludedTriples.contains(g)) {
                         groundings.add(g)
                         // println("Hit! ADDED " +  g + " and extended the groundings to " + groundings.size() + " triples");
                     }
                 }
             } else {
-                if (triples.isTrue(lastValue, atom.relation, firstValue)) {
-                    val g = Triple(lastValue, atom.relation, firstValue)
+                if (triples.isTrue(lastValue, atom.r, firstValue)) {
+                    val g = Triple(lastValue, atom.r, firstValue)
                     if (!excludedTriples.contains(g)) {
                         groundings.add(g)
                         // println("Hit! ADDED " +  g + " and extended the groundings to " + groundings.size() + " triples");
@@ -678,27 +678,27 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
 
         var valuesFromFirst: MutableSet<Int>? = null
         val firstValuesAreTails: Boolean
-        if (firstAtom.left == firstVar) {
-            valuesFromFirst = triples.getTailEntities(firstAtom.relation, firstValue)
+        if (firstAtom.h == firstVar) {
+            valuesFromFirst = triples.getTailEntities(firstAtom.r, firstValue)
             firstValuesAreTails = true
         } else {
-            valuesFromFirst = triples.getHeadEntities(firstAtom.relation, firstValue)
+            valuesFromFirst = triples.getHeadEntities(firstAtom.r, firstValue)
             firstValuesAreTails = false
         }
         var valuesFromLast: MutableSet<Int>? = null
         val lastValuesAreTails: Boolean
-        if (lastAtom.left == lastVar) {
-            valuesFromLast = triples.getTailEntities(lastAtom.relation, lastValue)
+        if (lastAtom.h == lastVar) {
+            valuesFromLast = triples.getTailEntities(lastAtom.r, lastValue)
             lastValuesAreTails = true
         } else {
-            valuesFromLast = triples.getHeadEntities(lastAtom.relation, lastValue)
+            valuesFromLast = triples.getHeadEntities(lastAtom.r, lastValue)
             lastValuesAreTails = false
         }
         if (valuesFromFirst.size < valuesFromLast.size) {
             for (value in valuesFromFirst) {
                 val g: Triple?
-                if (firstValuesAreTails) g = Triple(firstValue, firstAtom.relation, value)
-                else g = Triple(value, firstAtom.relation, firstValue)
+                if (firstValuesAreTails) g = Triple(firstValue, firstAtom.r, value)
+                else g = Triple(value, firstAtom.r, firstValue)
                 if (excludedTriples.contains(g)) continue
                 if (visitedValues.contains(value)) continue
                 groundings.add(g)
@@ -723,8 +723,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         } else {
             for (value in valuesFromLast) {
                 val g: Triple?
-                if (lastValuesAreTails) g = Triple(lastValue, lastAtom.relation, value)
-                else g = Triple(value, lastAtom.relation, lastValue)
+                if (lastValuesAreTails) g = Triple(lastValue, lastAtom.r, value)
+                else g = Triple(value, lastAtom.r, lastValue)
                 if (excludedTriples.contains(g)) continue
                 if (visitedValues.contains(value)) continue
                 groundings.add(g)

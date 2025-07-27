@@ -30,16 +30,10 @@ data class Triple(
 
     val confidence: Double get() = 1.0
 
-    companion object {
-        fun createTriple(h: String, r: String, t: String, reverse: Boolean = false): Triple {
-            val headId = IdManager.getEntityId(h)
-            val relId = IdManager.getRelationId(r)
-            val tailId = IdManager.getEntityId(t)
-            return if (reverse) Triple(tailId, relId, headId) else Triple(headId, relId, tailId)
-        }
-
-        fun createTriple(h: Int, r: Long, t: Int, reverse: Boolean = false): Triple {
-            return if (reverse) Triple(t, r, h) else Triple(h, r, t)
-        }
-    }
+    // Constructor from string values (for backward compatibility)
+    constructor(left: String, relation: String, right: String) : this(
+        IdManager.getEntityId(left),
+        IdManager.getRelationId(relation),
+        IdManager.getEntityId(right)
+    )
 }
