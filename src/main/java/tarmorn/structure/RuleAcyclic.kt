@@ -26,6 +26,13 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
             return unboundVariable0
         }
 
+    // Convenience properties to identify rule type
+    val isAcyclic1: Boolean
+        get() = unboundVariable == null  // RuleAcyclic1 logic: last atom has constant
+    
+    val isAcyclic2: Boolean
+        get() = unboundVariable != null  // RuleAcyclic2 logic: last atom has unbound variable
+
     override val appliedConfidence: Double
         get() = if (unboundVariable != null) {
             Settings.RULE_AC2_WEIGHT * super.appliedConfidence

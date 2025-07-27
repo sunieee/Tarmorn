@@ -1,6 +1,7 @@
 package tarmorn.structure
 
 import tarmorn.Settings
+import tarmorn.data.IdManager
 import kotlin.math.pow
 import java.util.LinkedList
 import java.util.LinkedHashMap
@@ -45,6 +46,13 @@ class ScoreTree {
         //	println(score + ": " + v);
         //}
         this.addValues(score, values, explanation, 0)
+    }
+
+    // Overloaded method to support Int entity IDs
+    @JvmName("addValuesInt")
+    fun addValues(score: Double, values: MutableSet<Int>, explanation: Rule?) {
+        val stringValues = values.map { IdManager.getEntityString(it) }.toMutableSet()
+        this.addValues(score, stringValues, explanation, 0)
     }
 
     private fun addValues(score: Double, values: MutableSet<String>, explanation: Rule?, counter: Int) {
@@ -179,6 +187,11 @@ class ScoreTree {
 
     fun getAsLinkedList(list: LinkedHashMap<String, Double>, myself: String) {
         this.getAsLinkedList(list, 0.0, 0, myself)
+    }
+
+    // Overloaded method to support Int entity IDs
+    fun getAsLinkedList(list: LinkedHashMap<String, Double>, myself: Int) {
+        this.getAsLinkedList(list, 0.0, 0, IdManager.getEntityString(myself))
     }
 
 

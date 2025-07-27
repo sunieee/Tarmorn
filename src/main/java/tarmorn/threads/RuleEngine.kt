@@ -8,6 +8,7 @@ import java.io.PrintWriter
 import java.util.Collections
 import kotlin.math.ln
 import tarmorn.data.Triple
+import tarmorn.data.IdManager
 
 
 class RuleConfidenceComparator : Comparator<Rule> {
@@ -24,6 +25,25 @@ class RuleConfidenceComparator : Comparator<Rule> {
     }
 }
 
+class Predictor(
+    private val testSet: TripleSet,
+    private val trainingSet: TripleSet,
+    private val validationSet: TripleSet,
+    private val k: Int,
+    private val relation2Rules4Prediction: MutableMap<Long, MutableList<Rule>>
+) : Thread() {
+    override fun run() {
+        var triple = RuleEngine.nextPredictionTask
+        // Rule rule = null;
+        while (triple != null) {
+            // println(this.getName() + " making prediction for " + triple);
+            if (Settings.AGGREGATION_ID == 1) {
+                RuleEngine.predictMax(testSet, trainingSet, validationSet, k, relation2Rules4Prediction, triple)
+            }
+            triple = RuleEngine.nextPredictionTask
+        }
+    }
+}
 
 // import java.text.DecimalFormat;
 object RuleEngine {
@@ -42,7 +62,7 @@ object RuleEngine {
         for (rule in rules) {
             ruleCounter++
             if (ruleCounter % (rules.size / 100) == 0) println("* " + (100.0 * (ruleCounter / rules.size.toDouble())) + "% of all rules materialized")
-            if (rule.bodysize() > 2) continue
+            if (rule.bodySize > 2) continue
             val materializedRule = rule.materialize(trainingSet)
             if (materializedRule != null) {
                 // println(materializedRule.size());
@@ -66,11 +86,11 @@ object RuleEngine {
             println("* debugging mode, choosing small fraction of testset")
             val testSetReduced = TripleSet()
             for (i in 0..<DEBUG_TESTSET_SUBSET) {
-                val t = testSet.triples.get(i)
+                val t = testSet.get(i)
                 testSetReduced.addTriple(t)
             }
-            for (i in DEBUG_TESTSET_SUBSET..<testSet.triples.size) {
-                val t = testSet.triples.get(i)
+            for (i in DEBUG_TESTSET_SUBSET..<testSet.size) {
+                val t = testSet.get(i)
                 validationSet.addTriple(t)
             }
             testSet = testSetReduced
@@ -111,7 +131,7 @@ object RuleEngine {
         ScoreTree.EPSILON = EPSILON
 
 
-        predictionTasks.addAll(testSet.triples)
+        predictionTasks.addAll(testSet)
         predictionsWriter = resultsWriter
 
         val predictors = Array(Settings.WORKER_THREADS) {
@@ -197,7 +217,7 @@ object RuleEngine {
         trainingSet: TripleSet,
         validationSet: TripleSet,
         k: Int,
-        relation2Rules4Prediction: MutableMap<String, MutableList<Rule>>,
+        relation2Rules4Prediction: MutableMap<Long, MutableList<Rule>>,
         triple: tarmorn.data.Triple
     ) {
         //println("=== " + triple + " ===");
@@ -241,7 +261,7 @@ object RuleEngine {
         trainingSet: TripleSet,
         filterSet: TripleSet,
         k: Int,
-        relation2Rules: MutableMap<String, MutableList<Rule>>,
+        relation2Rules: MutableMap<Long, MutableList<Rule>>,
         triple: tarmorn.data.Triple,
         predictHeadNotTail: Boolean,
         kTree: ScoreTree
@@ -254,14 +274,14 @@ object RuleEngine {
             val relevantRules: MutableList<Rule> = relation2Rules.get(relation)!!
 
             var previousRule: Rule? = null
-            var candidates: MutableSet<String> = mutableSetOf<String>()
-            val fCandidates: MutableSet<String> = mutableSetOf<String>()
+            var candidates: MutableSet<Int> = mutableSetOf<Int>()
+            val fCandidates: MutableSet<Int> = mutableSetOf<Int>()
 
             for (rule in relevantRules) {
                 // long startTime = System.currentTimeMillis();
                 if (previousRule != null) {
-                    if (predictHeadNotTail) candidates = previousRule.computeHeadResults(tail!!, trainingSet)
-                    else candidates = previousRule.computeTailResults(head, trainingSet)
+                    if (predictHeadNotTail) candidates = previousRule.computeHeadResults(tail, trainingSet).toMutableSet()
+                    else candidates = previousRule.computeTailResults(head, trainingSet).toMutableSet()
                     fCandidates.addAll(
                         getFilteredEntities(
                             trainingSet,
@@ -290,8 +310,8 @@ object RuleEngine {
             }
 
             if (!kTree.fine() && previousRule != null) {
-                if (predictHeadNotTail) candidates = previousRule.computeHeadResults(tail!!, trainingSet)
-                else candidates = previousRule.computeTailResults(head, trainingSet)
+                if (predictHeadNotTail) candidates = previousRule.computeHeadResults(tail, trainingSet).toMutableSet()
+                else candidates = previousRule.computeTailResults(head, trainingSet).toMutableSet()
                 fCandidates.addAll(
                     getFilteredEntities(
                         trainingSet,
@@ -325,7 +345,7 @@ object RuleEngine {
         trainingSet: TripleSet,
         validationSet: TripleSet,
         k: Int,
-        relation2Rules: MutableMap<String, MutableList<Rule>>,
+        relation2Rules: MutableMap<Long, MutableList<Rule>>,
         triple: tarmorn.data.Triple,
         predictHeadNotTail: Boolean,
         kTree: ScoreTree
@@ -336,11 +356,11 @@ object RuleEngine {
 
         if (relation2Rules.containsKey(relation)) {
             val relevantRules: MutableList<Rule> = relation2Rules.get(relation)!!
-            var candidates: MutableSet<String> = mutableSetOf<String>()
-            val fCandidates: MutableSet<String> = mutableSetOf<String>()
+            var candidates: MutableSet<Int> = mutableSetOf<Int>()
+            val fCandidates: MutableSet<Int> = mutableSetOf<Int>()
             for (rule in relevantRules) {
-                if (predictHeadNotTail) candidates = rule.computeHeadResults(tail!!, trainingSet)
-                else candidates = rule.computeTailResults(head, trainingSet)
+                if (predictHeadNotTail) candidates = rule.computeHeadResults(tail, trainingSet).toMutableSet()
+                else candidates = rule.computeTailResults(head, trainingSet).toMutableSet()
                 fCandidates.addAll(
                     getFilteredEntities(
                         trainingSet,
@@ -376,7 +396,7 @@ object RuleEngine {
         trainingSet: TripleSet,
         validationSet: TripleSet,
         k: Int,
-        relation2Rules: MutableMap<String, MutableList<Rule>>,
+        relation2Rules: MutableMap<Long, MutableList<Rule>>,
         triple: tarmorn.data.Triple
     ) {
         val relation = triple.r
@@ -392,27 +412,29 @@ object RuleEngine {
                 val tailCandidates = rule.computeTailResults(head, trainingSet)
                 val fTailCandidates = getFilteredEntities(
                     trainingSet, validationSet, testSet, triple,
-                    tailCandidates, true
+                    tailCandidates.toMutableSet(), true
                 )
                 for (fTailCandidate in fTailCandidates) {
-                    if (!explainedTailCandidates.containsKey(fTailCandidate)) explainedTailCandidates.put(
-                        fTailCandidate,
+                    val candidateStr = IdManager.getEntityString(fTailCandidate)
+                    if (!explainedTailCandidates.containsKey(candidateStr)) explainedTailCandidates.put(
+                        candidateStr,
                         mutableListOf<Rule>()
                     )
-                    explainedTailCandidates.get(fTailCandidate)!!.add(rule)
+                    explainedTailCandidates.get(candidateStr)!!.add(rule)
                 }
 
-                val headCandidates = rule.computeHeadResults(tail!!, trainingSet)
+                val headCandidates = rule.computeHeadResults(tail, trainingSet)
                 val fHeadCandidates = getFilteredEntities(
                     trainingSet, validationSet, testSet, triple,
-                    headCandidates, false
+                    headCandidates.toMutableSet(), false
                 )
                 for (fHeadCandidate in fHeadCandidates) {
-                    if (!explainedHeadCandidates.containsKey(fHeadCandidate)) explainedHeadCandidates.put(
-                        fHeadCandidate,
+                    val candidateStr = IdManager.getEntityString(fHeadCandidate)
+                    if (!explainedHeadCandidates.containsKey(candidateStr)) explainedHeadCandidates.put(
+                        candidateStr,
                         ArrayList<Rule>()
                     )
-                    explainedHeadCandidates.get(fHeadCandidate)!!.add(rule)
+                    explainedHeadCandidates.get(candidateStr)!!.add(rule)
                 }
             }
         }
@@ -464,67 +486,9 @@ object RuleEngine {
         }
     }
 
-
-    // fun replaceMyselfByEntity(candidates: LinkedHashMap<String, Double>, replacement: String) {
-    //     if (candidates.containsKey(Settings.REWRITE_REFLEXIV_TOKEN)) {
-    //         val myselfConf: Double = candidates.get(Settings.REWRITE_REFLEXIV_TOKEN)!!
-    //         candidates.remove(Settings.REWRITE_REFLEXIV_TOKEN)
-    //         candidates.put(replacement, myselfConf)
-    //     }
-    // }
-
-
-    /*
-	private static void show(LinkedHashMap<String, Double> kCandidates, String headline) {
-		println("*** " + headline + " ***");
-		for (String candidate : kCandidates.keySet()) {
-			double conf = kCandidates.get(candidate);
-			println(conf + " = " + candidate);
-		}
-	}
-
-	private static HashMap<String, HashSet<Rule>> createRuleIndex(List<Rule> rules) {
-
-		// int counterL1C = 0;
-		// int counterL2C = 0;
-		// int counterL1AC = 0;
-		// int counterL1AN = 0;
-		// int counterOther = 0;
-
-		HashMap<String, HashSet<Rule>> relation2Rules = new HashMap<String, HashSet<Rule>>();
-		for (Rule rule : rules) {
-
-
-
-			if (rule.isXYRule()) {
-				if (rule.bodysize() == 1)  counterL1C++;
-				if (rule.bodysize() == 2)  counterL2C++;
-			}
-			else {
-
-				if (rule.bodysize() == 1)  {
-					if (rule.hasConstantInBody()) counterL1AC++;
-					else counterL1AN++;
-				}
-				else {
-					if (rule.hasConstantInBody()) continue;
-				}
-			}
-
-
-			String relation = rule.getTargetRelation();
-			if (!relation2Rules.containsKey(relation)) relation2Rules.put(relation, new HashSet<Rule>());
-			relation2Rules.get(relation).add(rule);
-
-
-		}
-		// println("L1C=" + counterL1C + " L2C=" + counterL2C + " L1AC=" + counterL1AC + " L1AN=" + counterL1AN + " OTHER=" + counterOther);
-		return relation2Rules;
-	}
-	*/
-    fun createOrderedRuleIndex(rules: MutableList<Rule>): MutableMap<String, MutableList<Rule>> {
+    fun createOrderedRuleIndex(rules: MutableList<Rule>): MutableMap<Long, MutableList<Rule>> {
         // String predictionGoal = headNotTailPrediction ? "head" : "tail";
-        val relation2Rules = mutableMapOf<String, MutableList<Rule>>()
+        val relation2Rules = mutableMapOf<Long, MutableList<Rule>>()
         var l: Long = 0
         for (rule in rules) {
             if (Settings.THRESHOLD_CORRECT_PREDICTIONS > rule.correctlyPredicted) continue
@@ -548,56 +512,16 @@ object RuleEngine {
         return relation2Rules
     }
 
-
-    /*
-	private static void updateCandidateProbabailities(Rule rule, boolean tailNotHead, String candidate, HashMap<String, Double> candidates2Probabilities) {
-		double prob = rule.getAppliedConfidence();
-		if (!candidates2Probabilities.containsKey(candidate)) candidates2Probabilities.put(candidate, prob);
-		else {
-			double previousProb = candidates2Probabilities.get(candidate);
-			double newProb = combineProbability(prob, previousProb);
-			candidates2Probabilities.put(candidate, newProb);
-		}
-	}
-	*/
-    /*
-	private static LinkedHashMapK getFilteredCandidates(TripleSet filterSet, TripleSet testSet, Triple t, HashMap<String, Double> candidates, boolean tailNotHead) {
-		// LinkedHashMap<String, Double> candidatesSorted = sortByValue(candidates);
-		LinkedHashMap<String, Double> kCandidates = new LinkedHashMap<String, Double>();
-		int i = 0;
-		for (Entry<String, Double> entry : candidates.entrySet()) {
-			if (!tailNotHead) {
-				if (!filterSet.isTrue(entry.getKey(), t.getRelation(), t.getTail())) {
-					kCandidates.put(entry.getKey(), entry.getValue());
-					i++;
-				}
-				if (testSet.isTrue(entry.getKey(), t.getRelation(), t.getTail())) {
-					kCandidates.put(entry.getKey(), entry.getValue());
-				}
-			}
-			if (tailNotHead) {
-				if (!filterSet.isTrue(t.getHead(), t.getRelation(), entry.getKey())) {
-					kCandidates.put(entry.getKey(), entry.getValue());
-					i++;
-				}
-				if (testSet.isTrue(t.getHead(), t.getRelation(), entry.getKey())) {
-					kCandidates.put(entry.getKey(), entry.getValue());
-				}
-			}
-		}
-		return (new LinkedHashMapK(kCandidates, i));
-	}
-	*/
     private fun getFilteredEntities(
         trainingSet: TripleSet,
         validationSet: TripleSet,
         testSet: TripleSet,
         t: tarmorn.data.Triple,
-        candidateEntities: MutableSet<String>,
+        candidateEntities: MutableSet<Int>,
         tailNotHead: Boolean
-    ): HashSet<String> {
+    ): HashSet<Int> {
         // LinkedHashMap<String, Double> candidatesSorted = sortByValue(candidates);
-        val filteredEntities = HashSet<String>()
+        val filteredEntities = HashSet<Int>()
         for (entity in candidateEntities) {
             if (!tailNotHead) {
                 if (!validationSet.isTrue(entity, t.r, t.t) && !trainingSet.isTrue(entity, t.r, t.t) && !testSet.isTrue(
@@ -644,7 +568,8 @@ object RuleEngine {
         var i = 0
         writer.print("Heads: ")
         for (entry in kHeadCandidates.entries) {
-            if (t.h == entry.key || !testSet.isTrue(entry.key, t.r, t.t)) {
+            val entityId = IdManager.getEntityId(entry.key)
+            if (t.h == entityId || !testSet.isTrue(entityId, t.r, t.t)) {
                 writer.print(entry.key + "\t" + entry.value + "\t")
                 i++
             }
@@ -654,7 +579,8 @@ object RuleEngine {
         i = 0
         writer.print("Tails: ")
         for (entry in kTailCandidates.entries) {
-            if (t.t == entry.key || !testSet.isTrue(t.h, t.r, entry.key)) {
+            val entityId = IdManager.getEntityId(entry.key)
+            if (t.t == entityId || !testSet.isTrue(t.h, t.r, entityId)) {
                 writer.print(entry.key + "\t" + entry.value + "\t")
                 i++
             }
@@ -682,80 +608,6 @@ object RuleEngine {
         Settings.EXPLANATION_WRITER!!.flush()
     }
 
-
-    /*
-	private static synchronized void writeTopKCandidatesPlusExplanation(Triple t, TripleSet testSet, LinkedHashMap<String, Double> kHeadCandidates, ScoreTree allHeadCandidates, LinkedHashMap<String, Double> kTailCandidates, ScoreTree allTailCandidates,	PrintWriter writer, int k) {
-		Settings.EXPLANATION_WRITER.println(t);
-		Settings.EXPLANATION_WRITER.println("Heads:");
-		Settings.EXPLANATION_WRITER.println(allHeadCandidates);
-		Settings.EXPLANATION_WRITER.println("Tails:");
-		Settings.EXPLANATION_WRITER.println(allTailCandidates);
-		Settings.EXPLANATION_WRITER.flush();
-	}
-	*/
-    /*
-	private static void processTopKCandidates(TripleSet testSet, Triple t, HashMap<String, Double> tailCandidates, HashMap<String, Double> headCandidates, TripleSet filterSet, int k, PrintWriter writer, HashMap<String, Double> kTailCandidates, HashMap<String, Double> kHeadCandidates) {
-		LinkedHashMap<String, Double> tailCandidatesSorted = sortByValue(tailCandidates);
-		LinkedHashMap<String, Double> headCandidatesSorted = sortByValue(headCandidates);
-		writer.println(t);
-		writer.print("Heads: ");
-		int i = 0;
-		for (Entry<String, Double> entry : headCandidatesSorted.entrySet()) {
-			if (i < k) {
-				if (!filterSet.isTrue(entry.getKey(), t.getRelation(), t.getTail()) || t.getHead().equals(entry.getKey())) {
-					writer.print(entry.getKey() + "\t" + entry.getValue() + "\t");
-					kHeadCandidates.put(entry.getKey(), entry.getValue());
-					i++;
-				}
-				if (testSet.isTrue(entry.getKey(), t.getRelation(), t.getTail())) {
-					kHeadCandidates.put(entry.getKey(), entry.getValue());
-				}
-			}
-		}
-		writer.println();
-		writer.print("Tails: ");
-		int j = 0;
-		for (Entry<String, Double> entry : tailCandidatesSorted.entrySet()) {
-			if (j < k) {
-				if (!filterSet.isTrue(t.getHead(), t.getRelation(), entry.getKey())
-						|| t.getTail().equals(entry.getKey())) {
-					writer.print(entry.getKey() + "\t" + entry.getValue() + "\t");
-					kTailCandidates.put(entry.getKey(), entry.getValue());
-					j++;
-				}
-				if (testSet.isTrue(t.getHead(), t.getRelation(), entry.getKey())) {
-					kTailCandidates.put(entry.getKey(), entry.getValue());
-				}
-			}
-		}
-		writer.println();
-		writer.flush();
-	}
-	*/
-    /*
-	private static double combineProbability(double prob, double previousProb) {
-		double newProb;
-		switch (COMBINATION_RULE_ID) {
-		case 1: // multiplication
-			newProb = 1.0 - ((1.0 - previousProb) * (1.0 - prob));
-			break;
-		case 2: // maxplus
-			newProb = Math.max(previousProb, prob) + EPSILON;
-			break;
-		case 3: // max
-		default:
-			newProb = Math.max(previousProb, prob);
-			break;
-		}
-		return newProb;
-	}
-	*/
-    /*
-	private static <K, V extends Comparable<? super V>> LinkedHashMap<K, V> sortByValue(Map<K, V> map) {
-		return map.entrySet().stream().sorted(Map.Entry.comparingByValue(Collections.reverseOrder()))
-				.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue, (e1, e2) -> e1, LinkedHashMap::new));
-	}
-	*/
     fun sortByValue(m: LinkedHashMap<String, Double>) {
         val entries: MutableList<MutableMap.MutableEntry<String, Double>> =
             ArrayList<MutableMap.MutableEntry<String, Double>>(m.entries)

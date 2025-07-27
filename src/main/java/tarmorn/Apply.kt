@@ -114,7 +114,7 @@ object Apply {
             val rulesThresholded = mutableListOf<Rule>()
             if (Settings.THRESHOLD_CONFIDENCE > 0.0) {
                 for (r in rules) {
-                    // if (r instanceof RuleAcyclic1 && (r.bodysize() == 3 || r.bodysize() == 2) && r.getHead().getConstant().equals(r.getBodyAtom(r.bodysize()-1).getConstant())) continue;
+                    // if (r instanceof RuleAcyclic1 && (r.bodySize == 3 || r.bodySize == 2) && r.getHead().getConstant().equals(r.getBodyAtom(r.bodySize-1).getConstant())) continue;
 
                     if (r.confidence > Settings.THRESHOLD_CONFIDENCE) {
                         rulesThresholded.add(r)
@@ -129,7 +129,7 @@ object Apply {
 
 
             val endTime = System.currentTimeMillis()
-            println("* evaluated " + rulesSize + " rules to propose candiates for " + testSet.triples.size + "*2 completion tasks")
+            println("* evaluated " + rulesSize + " rules to propose candiates for " + testSet.size + "*2 completion tasks")
             println("* finished in " + (endTime - startTime) + "ms.")
 
 
@@ -150,20 +150,20 @@ object Apply {
     private fun filterTSA(TSA: Array<String>, TSAindex: Int, rulesThresholded: MutableList<Rule>, r: Rule) {
         when (TSA[TSAindex]) {
             "ALL" -> rulesThresholded.add(r)
-            "C-1" -> if (r is RuleCyclic && r.bodysize() == 1) rulesThresholded.add(r)
-            "C-2" -> if (r is RuleCyclic && r.bodysize() == 2) rulesThresholded.add(r)
-            "C-3" -> if (r is RuleCyclic && r.bodysize() == 3) rulesThresholded.add(r)
-            "AC1-1" -> if (r is RuleAcyclic1 && r.bodysize() == 1) rulesThresholded.add(r)
-            "AC1-2" -> if (r is RuleAcyclic1 && r.bodysize() == 2) rulesThresholded.add(r)
-            "AC2-1" -> if (r is RuleAcyclic2 && r.bodysize() == 1) rulesThresholded.add(r)
-            "AC2-2" -> if (r is RuleAcyclic2 && r.bodysize() == 2) rulesThresholded.add(r)
-            "N-C-1" -> if (!(r is RuleCyclic && r.bodysize() == 1)) rulesThresholded.add(r)
-            "N-C-2" -> if (!(r is RuleCyclic && r.bodysize() == 2)) rulesThresholded.add(r)
-            "N-C-3" -> if (!(r is RuleCyclic && r.bodysize() == 3)) rulesThresholded.add(r)
-            "N-AC1-1" -> if (!(r is RuleAcyclic1 && r.bodysize() == 1)) rulesThresholded.add(r)
-            "N-AC1-2" -> if (!(r is RuleAcyclic1 && r.bodysize() == 2)) rulesThresholded.add(r)
-            "N-AC2-1" -> if (!(r is RuleAcyclic2 && r.bodysize() == 1)) rulesThresholded.add(r)
-            "N-AC2-2" -> if (!(r is RuleAcyclic2 && r.bodysize() == 2)) rulesThresholded.add(r)
+            "C-1" -> if (r is RuleCyclic && r.bodySize == 1) rulesThresholded.add(r)
+            "C-2" -> if (r is RuleCyclic && r.bodySize == 2) rulesThresholded.add(r)
+            "C-3" -> if (r is RuleCyclic && r.bodySize == 3) rulesThresholded.add(r)
+            "AC1-1" -> if (r is RuleAcyclic && r.isAcyclic1 && r.bodySize == 1) rulesThresholded.add(r)
+            "AC1-2" -> if (r is RuleAcyclic && r.isAcyclic1 && r.bodySize == 2) rulesThresholded.add(r)
+            "AC2-1" -> if (r is RuleAcyclic && r.isAcyclic2 && r.bodySize == 1) rulesThresholded.add(r)
+            "AC2-2" -> if (r is RuleAcyclic && r.isAcyclic2 && r.bodySize == 2) rulesThresholded.add(r)
+            "N-C-1" -> if (!(r is RuleCyclic && r.bodySize == 1)) rulesThresholded.add(r)
+            "N-C-2" -> if (!(r is RuleCyclic && r.bodySize == 2)) rulesThresholded.add(r)
+            "N-C-3" -> if (!(r is RuleCyclic && r.bodySize == 3)) rulesThresholded.add(r)
+            "N-AC1-1" -> if (!(r is RuleAcyclic && r.isAcyclic1 && r.bodySize == 1)) rulesThresholded.add(r)
+            "N-AC1-2" -> if (!(r is RuleAcyclic && r.isAcyclic1 && r.bodySize == 2)) rulesThresholded.add(r)
+            "N-AC2-1" -> if (!(r is RuleAcyclic && r.isAcyclic2 && r.bodySize == 1)) rulesThresholded.add(r)
+            "N-AC2-2" -> if (!(r is RuleAcyclic && r.isAcyclic2 && r.bodySize == 2)) rulesThresholded.add(r)
         }
     }
 

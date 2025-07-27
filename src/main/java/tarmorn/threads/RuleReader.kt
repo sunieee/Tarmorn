@@ -25,7 +25,7 @@ class RuleReader {
             while (line != null) {
                 if (line == null || line == "") break
                 val r = this.getRule(line)
-                if (r != null && r.confidence >= Settings.READ_THRESHOLD_CONFIDENCE && r.correctlyPredicted >= Settings.READ_THRESHOLD_CORRECT_PREDICTIONS && r.bodysize() <= Settings.READ_THRESHOLD_MAX_RULE_LENGTH) {
+                if (r != null && r.confidence >= Settings.READ_THRESHOLD_CONFIDENCE && r.correctlyPredicted >= Settings.READ_THRESHOLD_CORRECT_PREDICTIONS && r.bodySize <= Settings.READ_THRESHOLD_MAX_RULE_LENGTH) {
                     rules.add(r)
                     counter++
                     if (counter % 1000000 == 0L) print(" ~")
@@ -97,10 +97,10 @@ class RuleReader {
             if (Settings.READ_CYCLIC_RULES == 1) return RuleCyclic(r, 0.0)
         }
         if (r.isAcyclic1) {
-            if (Settings.READ_ACYCLIC1_RULES == 1) return RuleAcyclic1(r)
+            if (Settings.READ_ACYCLIC1_RULES == 1) return RuleAcyclic(r)
         }
         if (r.isAcyclic2) {
-            if (Settings.READ_ACYCLIC2_RULES == 1) return RuleAcyclic2(r)
+            if (Settings.READ_ACYCLIC2_RULES == 1) return RuleAcyclic(r)
         }
         if (r.isZero) {
             if (Settings.READ_ZERO_RULES == 1) return RuleZero(r)
