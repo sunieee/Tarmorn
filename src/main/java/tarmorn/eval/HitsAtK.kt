@@ -2,6 +2,7 @@ package tarmorn.eval
 
 import tarmorn.data.Triple
 import tarmorn.data.TripleSet
+import tarmorn.data.IdManager
 import java.text.DecimalFormat
 import java.text.NumberFormat
 import java.util.Locale
@@ -21,8 +22,6 @@ class HitsAtK {
     private var hitsADnHeadFiltered = IntArray(ATKMAX)
     private var counterHead = 0
     private var counterHeadCovered = 0
-
-    private var am: AlternativeMentions? = null
 
     // private StringBuffer storedResult = new StringBuffer("");
     init {
@@ -170,7 +169,7 @@ class HitsAtK {
         while (rank < candidates.size && rank < ATKMAX) {
             val candidate = candidates.get(rank)
 
-            if (candidate == triple.h || (this.am != null && this.am!!.sameAs(triple.h, candidate))) {
+            if (candidate == IdManager.getEntityString(triple.h)) {
                 var index = rank
                 while (index - filterCount < ATKMAX) {
                     if (index < ATKMAX) hitsADnHead[index]++
@@ -182,7 +181,8 @@ class HitsAtK {
                 break
             } else {
                 for (filterSet in filterSets) {
-                    if (filterSet.isTrue(candidate, triple.r, triple.t)) {
+                    val candidateId = IdManager.getEntityId(candidate)
+                    if (filterSet.isTrue(candidateId, triple.r, triple.t)) {
                         filterCount++
                         break
                     }
@@ -195,7 +195,7 @@ class HitsAtK {
         var ranked = false
         for (candidate in candidates) {
             counter++
-            if (candidate == triple.h) {
+            if (candidate == IdManager.getEntityString(triple.h)) {
                 this.headRanks.add(counter)
                 ranked = true
                 break
@@ -214,7 +214,7 @@ class HitsAtK {
         while (rank < candidates.size && rank < ATKMAX) {
             val candidate = candidates.get(rank)
 
-            if (candidate == triple.t || (this.am != null && this.am!!.sameAs(triple.t, candidate))) {
+            if (candidate == IdManager.getEntityString(triple.t)) {
                 var index = rank
                 while (index - filterCount < ATKMAX) {
                     if (index < ATKMAX) hitsADnTail[index]++
@@ -226,7 +226,8 @@ class HitsAtK {
                 break
             } else {
                 for (filterSet in filterSets) {
-                    if (filterSet.isTrue(triple.h, triple.r, candidate)) {
+                    val candidateId = IdManager.getEntityId(candidate)
+                    if (filterSet.isTrue(triple.h, triple.r, candidateId)) {
                         filterCount++
                         break
                     }
@@ -239,7 +240,7 @@ class HitsAtK {
         var ranked = false
         for (candidate in candidates) {
             counter++
-            if (candidate == triple.t) {
+            if (candidate == IdManager.getEntityString(triple.t)) {
                 this.tailRanks.add(counter)
                 ranked = true
                 break
@@ -318,10 +319,6 @@ class HitsAtK {
         }
         mrr = mrr / numbers.size.toDouble()
         return mrr
-    }
-
-    fun addAlternativeMentions(am: AlternativeMentions?) {
-        this.am = am
     }
 
     companion object {

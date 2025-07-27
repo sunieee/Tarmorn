@@ -10,4 +10,4 @@ awk -v supp="$supp_threshold" -v conf="$conf_threshold" '$2 >= supp && $3+0 >= c
 #     --ranking_file out/${dataset}/ranking_${supp_threshold}_${conf_threshold}.txt \
 #     > out/${dataset}/log_${supp_threshold}_${conf_threshold}.txt
 
-# python eval.py --dataset FB15k --rules out/FB15k/preds-100-400 --ranking_file out/FB15k/ranking_20_0.txt > out/FB15k/log_preds-100-400.txt
+# python eval.py --dataset FB15k --rules out/FB15k/rules-400-400 --ranking_file out/FB15k/eval.txt > out/FB15k/eval.log

@@ -24,7 +24,7 @@ object Settings {
     var PATH_RULES_BASE: String = ""
     // Path to the output file where the rules / predictions  will be stored.
     @JvmField
-    var PATH_OUTPUT: String = "out/FB15k/preds-100"
+    var PATH_OUTPUT: String = "out/FB15k/predictions"
     // The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
     @JvmField
     var WORKER_THREADS: Int = 20

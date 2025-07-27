@@ -67,18 +67,26 @@ class ResultSet : Iterable<CompletionResult> {
 
             // FileInputStream i = null;
             val bufferedReader = BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8))
-            var tripleLine: String
+            var tripleLine: String?
             while ((bufferedReader.readLine().also { tripleLine = it }) != null) {
                 counter++
                 if (counter % stepsize == 0L) println("* parsed " + counter + " lines of results file")
                 if (tripleLine!!.length < 3) continue
                 val cr = CompletionResult(tripleLine)
+                
                 var headLine = bufferedReader.readLine()
                 var tailLine = bufferedReader.readLine()
-                var tempLine = ""
+                
+                // Check for null values
+                if (headLine == null || tailLine == null) {
+                    println("Warning: Incomplete triple at line $counter, skipping...")
+                    continue
+                }
+                
+                // Handle reversed order (sometimes Tails come before Heads)
                 if (headLine.startsWith("Tails:")) {
                     // println("reversed");
-                    tempLine = headLine
+                    val tempLine = headLine
                     headLine = tailLine
                     tailLine = tempLine
                 }

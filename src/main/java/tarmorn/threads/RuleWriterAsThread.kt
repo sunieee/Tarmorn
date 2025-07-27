@@ -12,14 +12,12 @@ class RuleWriterAsThread : Thread {
     private val rules: MutableList<Rule>
     private val filepath: String
     private val elapsedSeconds: Int
-    private val log: PrintWriter?
     private val snapshotCounter: Int
 
     constructor(
         filepath: String,
         snapshotCounter: Int,
         rules307: Array<MutableSet<Rule>>,
-        log: PrintWriter?,
         elapsedSeconds: Int
     ) {
         this.rules = mutableListOf<Rule>()
@@ -31,7 +29,6 @@ class RuleWriterAsThread : Thread {
         }
         this.filepath = filepath
         this.elapsedSeconds = elapsedSeconds
-        this.log = log
         this.snapshotCounter = snapshotCounter
     }
 
@@ -39,7 +36,6 @@ class RuleWriterAsThread : Thread {
         filepath: String,
         snapshotCounter: Int,
         ruless: MutableList<MutableSet<Rule>>,
-        log: PrintWriter?,
         elapsedSeconds: Int
     ) {
         this.rules = mutableListOf<Rule>()
@@ -50,7 +46,6 @@ class RuleWriterAsThread : Thread {
         }
         this.filepath = filepath
         this.elapsedSeconds = elapsedSeconds
-        this.log = log
         this.snapshotCounter = snapshotCounter
     }
 
@@ -85,8 +80,7 @@ class RuleWriterAsThread : Thread {
         val cyclicCounter = IntArray(maxBodySize)
 
         try {
-            if (log != null) log.println()
-            if (log != null) log.println("rule file: " + ruleFile.getPath())
+            println("rule file: " + ruleFile.getPath())
             println(">>> storing rules in file " + ruleFile.getPath())
 
 
@@ -103,24 +97,23 @@ class RuleWriterAsThread : Thread {
             pw.flush()
             pw.close()
 
-            if (log != null) log.println("zero: " + zeroCounter)
-            if (log != null) log.print("cyclic: ")
+            println("zero: " + zeroCounter)
+            print("cyclic: ")
             for (i in 0..<maxBodySize) {
                 if (cyclicCounter[i] == 0) break
-                if (log != null) log.print(cyclicCounter[i].toString() + " | ")
+                print(cyclicCounter[i].toString() + " | ")
             }
-            if (log != null) log.print("\nacyclic: ")
+            print("\nacyclic: ")
             for (i in 0..<maxBodySize) {
                 if (acyclicCounter[i] == 0) break
-                if (log != null) log.print(acyclicCounter[i].toString() + " | ")
+                print(acyclicCounter[i].toString() + " | ")
             }
             // log.println("\nfinally reached coverage: " + df.format(lastC * 100) + "%");
             val stopWriting = System.currentTimeMillis()
-            if (log != null) log.println("time planned: " + snapshotCounter + "s")
-            if (log != null) log.println("time elapsed: " + elapsedSeconds + "s")
+            println("time planned: " + snapshotCounter + "s")
+            println("time elapsed: " + elapsedSeconds + "s")
             println(">>> stored " + numOfRules + " rules in " + (stopWriting - startWriting) + "ms")
-            if (log != null) log.println("")
-            if (log != null) log.flush()
+            println("")
         } catch (e: IOException) {
             e.printStackTrace()
         }

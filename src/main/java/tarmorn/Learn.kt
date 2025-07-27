@@ -45,10 +45,6 @@ object Learn {
         load()
 
         val df = DecimalFormat("000000.00")
-        val log = PrintWriter("${Settings.PATH_OUTPUT}_log")
-        log.println("Logfile")
-        log.println("~~~~~~~\n")
-
         val indexStartTime = System.currentTimeMillis()
         val ts = TripleSet(Settings.PATH_TRAINING, true)
 
@@ -60,11 +56,8 @@ object Learn {
 
         //println("MEMORY REQUIRED (after precomputeNRandomEntitiesPerRelatio): " + df.format(Runtime.getRuntime().totalMemory() / 1000000.0) + " MByte at " + System.currentTimeMillis());
         val indexEndTime = System.currentTimeMillis()
-        log.println("indexing dataset: ${Settings.PATH_TRAINING}")
-        log.println("time elapsed: ${indexEndTime - indexStartTime}ms")
-        log.println()
-//        log.println(IOHelper.params)
-        log.flush()
+        println("indexing dataset: ${Settings.PATH_TRAINING}")
+        println("time elapsed: ${indexEndTime - indexStartTime}ms")
 
         var now = System.currentTimeMillis()
 
@@ -117,7 +110,7 @@ object Learn {
             // snapshotIndex
             val elapsedSeconds = (now - startTime).toInt() / 1000
             val currentIndex = snapshotIndex
-            snapshotIndex = Learn.checkTimeMaybeStoreRules(log, done, snapshotIndex, elapsedSeconds, dice!!)
+            snapshotIndex = Learn.checkTimeMaybeStoreRules(done, snapshotIndex, elapsedSeconds, dice!!)
             if (snapshotIndex > currentIndex) {
                 // this needs t be done to avoid that a zeror time batch conducted because of long rule storage times
                 batchStart = System.currentTimeMillis()
@@ -163,15 +156,9 @@ object Learn {
                 report = false
             }
         }
-
-
-        // =================
-        log.flush()
-        log.close()
     }
 
     private fun checkTimeMaybeStoreRules(
-        log: PrintWriter,
         done: Boolean,
         snapshotIndex: Int,
         elapsedSeconds: Int,
@@ -195,10 +182,9 @@ object Learn {
             
             val suffix = if (done) "0" else Settings.SNAPSHOTS_AT!![snapshotIndex].toString()
             rwt = RuleWriterAsThread(
-                Settings.PATH_OUTPUT,
+                Settings.PATH_RULES,
                 if (done) 0 else Settings.SNAPSHOTS_AT!![snapshotIndex],
                 rules307,
-                log,
                 elapsedSeconds
             )
             rwt!!.start()
@@ -207,7 +193,6 @@ object Learn {
             dice.write(suffix)
             snapshotIndex++
             if (snapshotIndex == Settings.SNAPSHOTS_AT!!.size || done) {
-                log.close()
                 println(">>> Bye, bye.")
                 finished = true
 

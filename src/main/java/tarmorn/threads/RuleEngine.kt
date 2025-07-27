@@ -105,24 +105,6 @@ object RuleEngine {
         // TODO fix something here
         println("* set up index structure covering rules for prediction for " + relation2Rules4Prediction.size + " relations")
 
-
-        //TripleSet filterSet = new TripleSet();
-
-        // filterSet.addTripleSet(trainingSet);
-        // filterSet.addTripleSet(validationSet);
-        // filterSet.addTripleSet(testSet);
-        // if (materializedSet != null) trainingSet.addTripleSet(materializedSet);
-
-
-        // println("* constructed filter set with " + filterSet.getTriples().size() + " triples");
-        //if (filterSet.getTriples().size() == 0) {
-        //	System.err.println("WARNING: using empty filter set!");
-        //}
-        // prepare the data structures used a s cache for question that are reoccuring
-        // HashMap<SimpleImmutableEntry<String, String>, LinkedHashMap<String, Double>> headCandidateCache = new HashMap<SimpleImmutableEntry<String, String>, LinkedHashMap<String, Double>>();
-        // HashMap<SimpleImmutableEntry<String, String>, LinkedHashMap<String, Double>> tailCandidateCache = new HashMap<SimpleImmutableEntry<String, String>, LinkedHashMap<String, Double>>();
-        // start iterating over the test cases
-
         // int counter = 0;
         // long startTime = System.currentTimeMillis();
         // long currentTime = 0;
@@ -172,46 +154,13 @@ object RuleEngine {
         get() {
             predictionsMade++
             val triple = if (predictionTasks.isNotEmpty()) predictionTasks.removeAt(0) else null
-            if (predictionsMade % 100 == 0) {
+            if (predictionsMade % 1000 == 0) {
                 if (triple != null) println("* (#" + predictionsMade + ") trying to guess the tail and head of " + triple.toString())
                 predictionsWriter!!.flush()
             }
             return triple
         }
 
-
-    /*
-
-	public static synchronized Rule getNextRuleMaterializationTask()  {
-		Rule rule = ruleMaterializationTasksListed.poll();
-		if (rule == null) return null;
-		// ruleMaterializationTasks.remove(rule);
-		return rule;
-	}
-
-	public static synchronized void addRuleToBeMaterialized(Rule rule)  {
-		if (ruleMaterializationTasks.contains(rule)) return;
-		ruleMaterializationTasksListed.add(rule);
-		// println("list=" + ruleMaterializationTasksListed.size());
-		ruleMaterializationTasks.add(rule);
-		// println("set=" + ruleMaterializationTasks.size());
-	}
-
-	public static void materializeRule(Rule rule, TripleSet ts) {
-
-		System.err.println("materialize rule: " + rule);
-		TripleSet materializedSet = rule.materialize(ts);
-		System.err.println("finished");
-
-		synchronized (materializedRules) {
-			materializedRules.put(rule, materializedSet);
-			ruleMaterializationsMade++;
-		}
-		System.err.println("... and stored");
-
-	}
-
-	*/
     fun predictMax(
         testSet: TripleSet,
         trainingSet: TripleSet,

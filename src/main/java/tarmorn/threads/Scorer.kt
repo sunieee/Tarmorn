@@ -255,8 +255,8 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
         }
     }
     /**
-     * Sample a path from the triple set (simplified with inverse relations)
-     * No longer needs markers since all relations are represented uniformly
+     * Sample a path from the triple set with support for both forward and inverse relations
+     * Now correctly handles bidirectional traversal through inverse relations
      */
     private fun samplePath(steps: Int, cyclic: Boolean, chosenHeadTriple: Triple? = null): Path? {
         val entityNodes = IntArray(1 + steps)
@@ -284,13 +284,12 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
         relationNodes[0] = triple.r
         entityNodes[1] = triple.t
 
-        // Add next hop - simplified since we only need to search head->tail
-        // Reverse direction is handled by inverse triples
+        // Add next hop - now can explore both directions via inverse relations
         for (index in 1 until steps) {
             val currentNodeId = entityNodes[index]
             
-            // Only search from head to tail (forward direction)
-            val candidateTriples = triples.getTriplesByHead(currentNodeId)
+            // Get all triples connected to current node (both as head and tail via inverse relations)
+            val candidateTriples = triples.getTriplesByEntity(currentNodeId)
             
             if (candidateTriples.isEmpty()) return null
             
@@ -308,7 +307,7 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
             val nextTriple = if (cyclic && index + 1 == steps) {
                 val targetNodeId = entityNodes[0]
                 val cyclicCandidates = filteredCandidates.filter { triple ->
-                    triple.t == targetNodeId // Always head->tail direction
+                    triple.t == targetNodeId // Target should be tail of the triple
                 }
                 if (cyclicCandidates.isEmpty()) return null
                 cyclicCandidates.random(rand)
