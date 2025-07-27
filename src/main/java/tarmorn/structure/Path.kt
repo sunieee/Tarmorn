@@ -2,41 +2,54 @@ package tarmorn.structure
 
 import tarmorn.data.Triple
 import tarmorn.data.IdManager
+import tarmorn.data.RelationPath
 import java.util.*
 
 /**
  * Represents a path in the knowledge graph.
- * With inverse relations, all relations are represented uniformly in positive direction.
- * No markers needed since reverse relations are handled by inverse relation triples.
+ * Now uses a single Long to encode the entire relation path (up to 4 relations).
+ * Path length is limited to 4 hops maximum.
  */
 class Path(
     var entityNodes: IntArray,
-    var relationNodes: LongArray
+    var relation: Long  // Encoded relation path
 ) {
+    
+    // Backward compatibility: construct from LongArray
+    constructor(entityNodes: IntArray, relationNodes: LongArray) : this(
+        entityNodes,
+        RelationPath.encode(relationNodes)
+    )
+    
+    // Get relationNodes for backward compatibility
+    val relationNodes: LongArray
+        get() = RelationPath.decode(relation)
     
     // Get string representation for compatibility
     val nodes: Array<String>
         get() {
-            val result = Array(entityNodes.size + relationNodes.size) { "" }
+            val relations = relationNodes
+            val result = Array(entityNodes.size + relations.size) { "" }
             for (i in result.indices) {
                 if (i % 2 == 0) {
                     result[i] = IdManager.getEntityString(entityNodes[i / 2])
                 } else {
-                    result[i] = IdManager.getRelationString(relationNodes[i / 2])
+                    result[i] = IdManager.getRelationString(relations[i / 2])
                 }
             }
             return result
         }
     
     override fun toString(): String {
+        val relations = relationNodes
         val result = StringBuilder()
         for (i in entityNodes.indices) {
             if (i > 0) result.append(" -> ")
             result.append(IdManager.getEntityString(entityNodes[i]))
             
-            if (i < relationNodes.size) {
+            if (i < relations.size) {
                 result.append(" -> ")
-                result.append(IdManager.getRelationString(relationNodes[i]))
+                result.append(IdManager.getRelationString(relations[i]))
             }
         }
         return result.toString()
@@ -46,11 +59,11 @@ class Path(
         if (this === other) return true
         if (other !is Path) return false
         return entityNodes.contentEquals(other.entityNodes) && 
-               relationNodes.contentEquals(other.relationNodes)
+               relation == other.relation
     }
 
     override fun hashCode(): Int {
-        return Objects.hash(entityNodes.contentHashCode(), relationNodes.contentHashCode())
+        return Objects.hash(entityNodes.contentHashCode(), relation)
     }
 
     /**

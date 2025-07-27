@@ -5,14 +5,13 @@ import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 
 class RuleUntyped : Rule {
-    constructor(head: Atom) {
+    constructor(head: Atom, body: Atom? = null) {
         this.head = head
-        this.body = Body()
+        this.body = body
     }
 
-
     constructor() {
-        this.body = Body()
+        this.body = null
     }
 
     val isCyclic: Boolean
@@ -26,10 +25,7 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body[this.bodySize - 1].ishC || this.body[this.bodySize - 1].istC) {
-                    return true
-                }
-                return false
+                return body?.ishC == true || body?.istC == true
             }
         }
 
@@ -37,26 +33,19 @@ class RuleUntyped : Rule {
         get() {
             if (this.isCyclic || this.isZero) return false
             else {
-                if (this.body[this.bodySize - 1].ishC || this.body[this.bodySize - 1].istC) {
-                    return false
-                }
-                return true
+                return body?.ishC != true && body?.istC != true
             }
         }
 
     val isZero: Boolean
-        get() {
-            if (this.bodySize == 0) return true
-            else return false
-        }
+        get() = body == null
 
     constructor(predicted: Int, correctlyPredicted: Int, confidence: Double) {
         this.predicted = predicted
         this.correctlyPredicted = correctlyPredicted
         this.confidence = confidence
-        this.body = Body()
+        this.body = null
     }
-
 
     val leftRightGeneralization: RuleUntyped?
         get() {
@@ -89,71 +78,55 @@ class RuleUntyped : Rule {
             return rightG
         }
 
-
     fun createCopy(): RuleUntyped {
         val copy = RuleUntyped(this.head.copy())
-        for (bodyLiteral in this.body) {
-            copy.body.add(bodyLiteral.copy())
-        }
+        copy.body = this.body?.copy()
         copy.nextFreeVariable = this.nextFreeVariable
         return copy
     }
 
     protected fun replaceByVariable(constant: Int, variable: Int): Int {
         var count = this.head.replaceByVariable(constant, variable)
-        
-        for (i in body.indices) {
-            count += body[i].replaceByVariable(constant, variable)
+        body?.let {
+            count += it.replaceByVariable(constant, variable)
         }
         return count
     }
 
     fun replaceNearlyAllConstantsByVariables() {
-        var counter = 0
-        for (atom in body) {
-            counter++
-            if (counter == body.size) break
-            if (atom.ishC) {
-                val c = atom.h
-                this.replaceByVariable(c, variables[this.nextFreeVariable])
-                this.nextFreeVariable++
-            }
-            if (atom.istC) {
-                val c = atom.t
-                this.replaceByVariable(c, variables[this.nextFreeVariable])
-                this.nextFreeVariable++
-            }
+        // For single body atom, don't replace anything in the body
+        val bodyAtom = body
+        if (bodyAtom != null) {
+            // Keep body constants as they are - this is for acyclic rules
+            // Only head gets variable replacement through generalization
         }
     }
-
 
     fun replaceAllConstantsByVariables() {
-        for (atom in body) {
-            if (atom.ishC) {
-                val c = atom.h
+        val bodyAtom = body
+        if (bodyAtom != null) {
+            if (bodyAtom.ishC) {
+                val c = bodyAtom.h
                 this.replaceByVariable(c, variables[this.nextFreeVariable])
                 this.nextFreeVariable++
             }
-            if (atom.istC) {
-                val c = atom.t
+            if (bodyAtom.istC) {
+                val c = bodyAtom.t
                 this.replaceByVariable(c, variables[this.nextFreeVariable])
                 this.nextFreeVariable++
             }
         }
     }
-
 
     override fun computeTailResults(head: Int, ts: TripleSet): Set<Int> {
         System.err.println("method not available for an untyped rule")
         return hashSetOf()
     }
 
-
     override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
         System.err.println("method not available for an untyped rule")
         return hashSetOf()
     }
-
 
     override fun computeScores(ts: TripleSet) {
         System.err.println("method not available for an untyped rule")
@@ -167,7 +140,6 @@ class RuleUntyped : Rule {
     override fun isRefinable(): Boolean {
         return false
     }
-
 
     override fun getRandomValidPrediction(ts: TripleSet): Triple? {
         System.err.println("method not available for an untyped rule")
@@ -184,12 +156,10 @@ class RuleUntyped : Rule {
         return null
     }
 
-
     override fun isSingleton(triples: TripleSet): Boolean {
-        // does nit really make sense for this type
+        System.err.println("method not available for an untyped rule")
         return false
     }
-
 
     override fun getTripleExplanation(
         xValue: Int,
@@ -197,13 +167,12 @@ class RuleUntyped : Rule {
         excludedTriples: Set<Triple>,
         triples: TripleSet
     ): Set<Triple> {
-        System.err.println("Your are asking for a triple explanation using an untyped rule. Such a rule cannot explain anything.")
+        System.err.println("method not available for an untyped rule")
         return hashSetOf()
     }
 
-
     override fun computeScores(that: Rule, triples: TripleSet): IntArray {
         System.err.println("method not available for an untyped rule")
-        return IntArray(2)
+        return intArrayOf(0, 0)
     }
 }

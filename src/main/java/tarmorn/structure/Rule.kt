@@ -8,10 +8,10 @@ import java.util.*
 
 abstract class Rule {
     lateinit var head: Atom
-    var body = Body()
+    var body: Atom? = null  // Now body is a single Atom instead of Body
 
     // Use lazy initialization for hashcode
-    private val hashcode by lazy { Objects.hash(head.toString(), body.toString()) }
+    private val hashcode by lazy { Objects.hash(head.toString(), body?.toString() ?: "") }
 
     var predicted = 0
         protected set
@@ -30,8 +30,9 @@ abstract class Rule {
         predicted = r.predicted
     }
 
-    constructor(head: Atom) {
+    constructor(head: Atom, body: Atom? = null) {
         this.head = head
+        this.body = body
     }
 
     constructor()
@@ -40,7 +41,7 @@ abstract class Rule {
     val copy: Rule?
         get() {
             val copy = RuleUntyped(head.copy())
-            body.forEach { copy.body.add(it.copy()) }
+            copy.body = body?.copy()
             copy.nextFreeVariable = nextFreeVariable
             
             return when {
@@ -50,16 +51,21 @@ abstract class Rule {
             }
         }
 
-    fun addBodyAtom(atom: Atom) = body.add(atom)
+    fun setBodyAtom(atom: Atom?) {
+        body = atom
+    }
 
-    fun getBodyAtom(index: Int) = body[index]
+    fun getBodyAtom(): Atom? = body
 
     // Remove redundant getter declarations
     val targetRelation get() = head.r
 
-    val bodySize get() = body.size
+    val bodySize get() = if (body != null) 1 else 0
+    
+    // Compatibility method for existing code
+    fun bodysize(): Int = bodySize
 
-    val isTrivial get() = bodySize == 1 && head == body[0]
+    val isTrivial get() = body != null && head == body
 
     open val appliedConfidence: Double
         get() = correctlyPredicted.toDouble() / (predicted.toDouble() + Settings.UNSEEN_NEGATIVE_EXAMPLES)
@@ -69,7 +75,7 @@ abstract class Rule {
     val isYRule get() = !isXYRule && !head.istC
 
     override fun toString() = buildString {
-        append("$predicted\t$correctlyPredicted\t$confidence\t$head <= $body")
+        append("$predicted\t$correctlyPredicted\t$confidence\t$head <= ${body ?: ""}")
     }
 
     override fun equals(other: Any?) = when {
@@ -163,9 +169,12 @@ abstract class Rule {
         @JvmStatic
         protected var APPLICATION_MODE = false
         
+        // Simplified variables: only X, Y, and · (existence variable)
         val variables = arrayOf(
-            "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"
-        ).map(IdManager::getEntityId).toTypedArray()
+            IdManager.getXId(),      // X variable for head position
+            IdManager.getYId(),      // Y variable for tail position  
+            IdManager.getEntityId("·") // · variable for existence (don't care)
+        )
         
         val variables2Indices = variables.mapIndexed { index, variable ->
             variable to index

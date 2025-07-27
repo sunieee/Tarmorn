@@ -1,6 +1,7 @@
 package tarmorn.structure
 
 import tarmorn.data.IdManager
+import tarmorn.data.RelationPath
 import java.util.Objects
 
 class Atom(
@@ -119,25 +120,101 @@ class Atom(
         }
 
     fun toString(cId: Int, vId: Int): String {
-        val relationStr = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
-            IdManager.getRelationString(r).removePrefix("INVERSE_")
+        // Handle relation path display
+        val relationStr = if (RelationPath.isSingleRelation(r)) {
+            // Single relation
+            val relationName = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
+                IdManager.getRelationString(r).removePrefix("INVERSE_")
+            } else {
+                IdManager.getRelationString(r)
+            }
+            relationName
         } else {
-            IdManager.getRelationString(r)
+            // Relation path - show as chained relations with intermediate variables
+            val relations = RelationPath.decode(r)
+            val pathParts = mutableListOf<String>()
+            
+            for (i in relations.indices) {
+                val relationName = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
+                    IdManager.getRelationString(relations[i]).removePrefix("INVERSE_")
+                } else {
+                    IdManager.getRelationString(relations[i])
+                }
+                
+                if (i == 0) {
+                    // First relation uses actual entities
+                    val leftStr = if (h == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(h)
+                    val intermediateVar = if (relations.size > 1) "A" else (if (t == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(t))
+                    pathParts.add("$relationName($leftStr,$intermediateVar)")
+                } else if (i == relations.size - 1) {
+                    // Last relation
+                    val prevVar = ('A' + i - 1).toString()
+                    val rightStr = if (t == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(t)
+                    pathParts.add("$relationName($prevVar,$rightStr)")
+                } else {
+                    // Intermediate relations
+                    val prevVar = ('A' + i - 1).toString()
+                    val nextVar = ('A' + i).toString()
+                    pathParts.add("$relationName($prevVar,$nextVar)")
+                }
+            }
+            
+            return pathParts.joinToString(", ")
         }
-        val leftStr = if (h == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(h)
-        val rightStr = if (t == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(t)
-        return "$relationStr($leftStr,$rightStr)"
+        
+        if (RelationPath.isSingleRelation(r)) {
+            val leftStr = if (h == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(h)
+            val rightStr = if (t == cId) IdManager.getEntityString(vId) else IdManager.getEntityString(t)
+            return "$relationStr($leftStr,$rightStr)"
+        } else {
+            return relationStr // Already formatted above
+        }
     }
 
     override fun toString(): String {
-        val relationStr = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
-            IdManager.getRelationString(r).removePrefix("INVERSE_")
+        // Handle relation path display  
+        if (RelationPath.isSingleRelation(r)) {
+            // Single relation
+            val relationStr = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
+                IdManager.getRelationString(r).removePrefix("INVERSE_")
+            } else {
+                IdManager.getRelationString(r)
+            }
+            val leftStr = IdManager.getEntityString(h)
+            val rightStr = IdManager.getEntityString(t)
+            return "$relationStr($leftStr,$rightStr)"
         } else {
-            IdManager.getRelationString(r)
+            // Relation path - show as chained relations with intermediate variables
+            val relations = RelationPath.decode(r)
+            val pathParts = mutableListOf<String>()
+            
+            for (i in relations.indices) {
+                val relationName = if (tarmorn.Settings.REMOVE_INVERSE_PREFIX_IN_OUTPUT) {
+                    IdManager.getRelationString(relations[i]).removePrefix("INVERSE_")
+                } else {
+                    IdManager.getRelationString(relations[i])
+                }
+                
+                if (i == 0) {
+                    // First relation uses actual entities
+                    val leftStr = IdManager.getEntityString(h)
+                    val intermediateVar = if (relations.size > 1) "A" else IdManager.getEntityString(t)
+                    pathParts.add("$relationName($leftStr,$intermediateVar)")
+                } else if (i == relations.size - 1) {
+                    // Last relation
+                    val prevVar = ('A' + i - 1).toString()
+                    val rightStr = IdManager.getEntityString(t)
+                    pathParts.add("$relationName($prevVar,$rightStr)")
+                } else {
+                    // Intermediate relations
+                    val prevVar = ('A' + i - 1).toString()
+                    val nextVar = ('A' + i).toString()
+                    pathParts.add("$relationName($prevVar,$nextVar)")
+                }
+            }
+            
+            return pathParts.joinToString(", ")
         }
-        val leftStr = IdManager.getEntityString(h)
-        val rightStr = IdManager.getEntityString(t)
-        return "$relationStr($leftStr,$rightStr)"
     }
 
     override fun equals(other: Any?): Boolean {
@@ -147,36 +224,46 @@ class Atom(
         // Direct match
         if (h == other.h && r == other.r && t == other.t) return true
         
-        // Check inverse relation equivalence
-        // relation(A,B) == INVERSE_relation(B,A)
-        val inverseRelationId = IdManager.getInverseRelationId(r)
-        return h == other.t && inverseRelationId == other.r && t == other.h
+        // For relation paths, we don't do inverse equivalence since they represent
+        // different semantic meanings in the path context
+        // Only single relations can have inverse equivalence
+        if (RelationPath.isSingleRelation(r) && RelationPath.isSingleRelation(other.r)) {
+            // Check inverse relation equivalence: relation(A,B) == INVERSE_relation(B,A)
+            val inverseRelationId = IdManager.getInverseRelationId(r)
+            return h == other.t && inverseRelationId == other.r && t == other.h
+        }
+        
+        return false
     }
 
     override fun hashCode(): Int {
-        // Normalize the representation to ensure equivalent atoms have the same hash
-        // Always use the smaller relation ID and arrange h,t accordingly
-        val originalRelationId = if (IdManager.isInverseRelation(r)) {
-            IdManager.getInverseRelationId(r)
+        // For single relations, normalize the representation
+        if (RelationPath.isSingleRelation(r)) {
+            val originalRelationId = if (IdManager.isInverseRelation(r)) {
+                IdManager.getInverseRelationId(r)
+            } else {
+                r
+            }
+            
+            // For consistent hashing, always put the smaller entity first
+            val (leftEntity, rightEntity) = if (IdManager.isInverseRelation(r)) {
+                t to h  // For inverse relations, swap h and t
+            } else {
+                h to t
+            }
+            
+            // Ensure consistent ordering for hash computation
+            val (hashLeft, hashRight) = if (leftEntity <= rightEntity) {
+                leftEntity to rightEntity
+            } else {
+                rightEntity to leftEntity
+            }
+            
+            return Objects.hash(originalRelationId, hashLeft, hashRight)
         } else {
-            r
+            // For relation paths, use direct hash without normalization
+            return Objects.hash(h, r, t)
         }
-        
-        // For consistent hashing, always put the smaller entity first
-        val (leftEntity, rightEntity) = if (IdManager.isInverseRelation(r)) {
-            t to h  // For inverse relations, swap h and t
-        } else {
-            h to t
-        }
-        
-        // Ensure consistent ordering for hash computation
-        val (hashLeft, hashRight) = if (leftEntity <= rightEntity) {
-            leftEntity to rightEntity
-        } else {
-            rightEntity to leftEntity
-        }
-        
-        return Objects.hash(originalRelationId, hashLeft, hashRight)
     }
 
     fun copy(h: Int = this.h, r: Long = this.r, t: Int = this.t): Atom {

@@ -9,19 +9,8 @@ import kotlin.math.pow
 
 class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     init {
-        // modify it to its canonical form
-        if (this.body[0].contains(IdManager.getYId()) && this.bodySize > 1) {
-            // if (this.bodySize > 3) println("before: " + this);
-            for (i in 0..(this.bodySize / 2) - 1) {
-                val j = (this.bodySize - i) - 1
-                val atom_i = this.body[i]
-                val atom_j = this.body[j]
-                this.body[i] = atom_j
-                this.body[j] = atom_i
-            }
-            this.body.normalizeVariableNames()
-            // if (this.bodySize > 3) println("after: " + this);
-        }
+        // For single atom body, no canonical form modification needed
+        // The original logic was for multi-atom bodies which we no longer support
     }
 
 
@@ -45,20 +34,23 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     override fun computeHeadResults(tail: Int, ts: TripleSet): Set<Int> {
         val results = hashSetOf<Int>()
         // if (Settings.BEAM_NOT_DFS) {
-        //	results = this.beamPGBodyCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodysize() - 1, false, ts);
+        //	results = this.beamPGBodyCyclic(IdManager.getYId(), IdManager.getXId(), tail, 0, false, ts);
         //}
         //else {
-        this.getCyclic(IdManager.getYId(), IdManager.getXId(), tail, this.bodySize - 1, false, ts, HashSet<Int>(), results)
+        this.getCyclic(IdManager.getYId(), IdManager.getXId(), tail, 0, false, ts, HashSet<Int>(), results)
         //}
         return results
     }
 
     override fun computeScores(triples: TripleSet) {
+        println("RuleCyclic.computeScores: Computing scores for rule: $this")
+        
         // X is given in first body atom
         val xypairs: SampledPairedResultSet?
         val xypairsReverse: SampledPairedResultSet?
 
-        if (this.body[0].contains(IdManager.getXId())) {
+        if (this.body?.contains(IdManager.getXId()) == true) {
+            println("RuleCyclic.computeScores: Body contains X variable")
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
                     xypairs = beamBodyCyclicEDIS(IdManager.getXId(), IdManager.getYId(), triples)
@@ -72,6 +64,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                 xypairsReverse = SampledPairedResultSet()
             }
         } else {
+            println("RuleCyclic.computeScores: Body does NOT contain X variable")
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
                     xypairs = beamBodyCyclicEDIS(IdManager.getYId(), IdManager.getXId(), triples)
@@ -86,6 +79,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             }
         }
 
+        println("RuleCyclic.computeScores: xypairs size = ${xypairs.size()}, xypairsReverse size = ${xypairsReverse.size()}")
 
         var predictedAll = 0
         var correctlyPredictedAll = 0
@@ -108,7 +102,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (key in xypairs.values.keys) {
             for (value in xypairs.values.get(key)!!) {
                 predicted++
-                if (triples.isTrue(key, this.head.r, value)) correctlyPredicted++
+                val isCorrect = triples.isTrue(key, this.head.r, value)
+                println("RuleCyclic.computeScores: Checking prediction (${IdManager.getEntityString(key)}, ${IdManager.getRelationString(this.head.r)}, ${IdManager.getEntityString(value)}) = $isCorrect")
+                if (isCorrect) correctlyPredicted++
             }
         }
 
@@ -116,11 +112,13 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         predictedAll += predicted
         correctlyPredictedAll += correctlyPredicted
 
-
+        println("RuleCyclic.computeScores: Final scores - predictedAll=$predictedAll, correctlyPredictedAll=$correctlyPredictedAll")
 
         this.predicted = predictedAll
         this.correctlyPredicted = correctlyPredictedAll
-        this.confidence = this.correctlyPredicted.toDouble() / this.predicted.toDouble()
+        this.confidence = if (predictedAll > 0) this.correctlyPredicted.toDouble() / this.predicted.toDouble() else 0.0
+        
+        println("RuleCyclic.computeScores: Final rule scores - predicted=${this.predicted}, correctlyPredicted=${this.correctlyPredicted}, confidence=${this.confidence}")
     }
 
 
@@ -133,7 +131,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val xypairs: SampledPairedResultSet?
         val xypairsReverse: SampledPairedResultSet?
 
-        if (this.body[0].contains(IdManager.getXId())) {
+        if (this.body?.contains(IdManager.getXId()) == true) {
             if (Settings.BEAM_NOT_DFS) {
                 if (Settings.BEAM_TYPE_EDIS) {
                     xypairs = beamBodyCyclicEDIS(IdManager.getXId(), IdManager.getYId(), triples)
@@ -225,7 +223,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
      */
     protected fun getPredictions(triples: TripleSet, valid: Int): ArrayList<Triple> {
         val xypairs: SampledPairedResultSet?
-        if (this.body[0].contains(IdManager.getXId())) xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
+        if (this.body?.contains(IdManager.getXId()) == true) xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
         else xypairs = groundBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
         val predictions = ArrayList<Triple>()
         for (key in xypairs.values.keys) {
@@ -272,43 +270,43 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             return
         }
         // XXX if (!Rule.APPLICATION_MODE && finalResults.size() >= Settings.SAMPLE_SIZE) return;
-        // check if the value has been seen before as grounding of another variable
-        val atom = this.body.get(bodyIndex)
-        val ifHead = atom.h == currentVariable
+        
+        if (body == null) return
+        val atom = body!!
+        
+        // Check if the value has been seen before as grounding of another variable
         if (previousValues.contains(value)) return
-
-        // the current atom is the last
-        if ((direction == true && this.body.size - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
-            // get groundings
-            for (v in triples.getEntities(atom.r, value, ifHead)) {
-                if (!previousValues.contains(v) && value != v) finalResults.add(v)
+        
+        println("RuleCyclic.getCyclic: Processing currentVariable=$currentVariable, lastVariable=$lastVariable, value=$value, bodyIndex=$bodyIndex")
+        println("RuleCyclic.getCyclic: Atom = $atom")
+        
+        // For single atom body, we need to handle the case where we process the only atom
+        val ifHead = atom.h == currentVariable
+        println("RuleCyclic.getCyclic: ifHead=$ifHead (currentVariable is head of atom)")
+        
+        // Get all possible groundings for this atom
+        val groundings = triples.getEntities(atom.r, value, ifHead)
+        println("RuleCyclic.getCyclic: Found ${groundings.size} groundings for relation ${atom.r} with value $value")
+        
+        for (v in groundings) {
+            println("RuleCyclic.getCyclic: Checking grounding value $v")
+            if (!previousValues.contains(v) && value != v) {
+                // Check if this grounding leads to the target variable
+                val nextVariable = if (ifHead) atom.t else atom.h
+                println("RuleCyclic.getCyclic: Next variable would be $nextVariable, target is $lastVariable")
+                
+                if (nextVariable == lastVariable) {
+                    // We found a complete path to the target variable
+                    println("RuleCyclic.getCyclic: Found complete path, adding result $v")
+                    finalResults.add(v)
+                } else {
+                    // Continue search if we haven't reached the target variable
+                    val newPreviousValues = HashSet(previousValues)
+                    newPreviousValues.add(value)
+                    println("RuleCyclic.getCyclic: Continuing search with next variable $nextVariable")
+                    getCyclic(nextVariable, lastVariable, v, bodyIndex + 1, direction, triples, newPreviousValues, finalResults)
+                }
             }
-            return
-        } else {
-            val results = triples.getEntities(atom.r, value, ifHead)
-            if (results.size > Settings.BRANCHINGFACTOR_BOUND && Settings.DFS_SAMPLING_ON == true) return
-            val nextVariable = if (ifHead) atom.t else atom.h
-            val currentValues = HashSet<Int>()
-            currentValues.addAll(previousValues)
-            if (Settings.OI_CONSTRAINTS_ACTIVE) currentValues.add(value)
-
-            // int i = 0;
-            for (nextValue in results) {
-                // XXX if (!Rule.APPLICATION_MODE && i >= Settings.SAMPLE_SIZE) break;
-                val updatedBodyIndex = if (direction) bodyIndex + 1 else bodyIndex - 1
-                this.getCyclic(
-                    nextVariable,
-                    lastVariable,
-                    nextValue,
-                    updatedBodyIndex,
-                    direction,
-                    triples,
-                    currentValues,
-                    finalResults
-                )
-                // i++;
-            }
-            return
         }
     }
 
@@ -320,7 +318,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         samplingOn: Boolean = Settings.DFS_SAMPLING_ON
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
-        val atom = this.body.get(0)
+        if (body == null) return groundings
+        
+        val atom = body!!
         val ifHead = atom.h == firstVariable
         val rtriples = triples.getTriplesByRelation(atom.r)
         var counter = 0
@@ -364,7 +364,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
-        val atom = this.body.get(0)
+        if (body == null) return groundings
+        
+        val atom = body!!
         val ifHead = atom.h == firstVariable
         var t: Triple?
         var attempts = 0
@@ -398,7 +400,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
-        val atom = this.body.get(0)
+        if (body == null) return groundings
+        
+        val atom = body!!
         val ifHead = atom.h == firstVariable
         var repetitions = 0
         val entities = triples.getNRandomEntitiesByRelation(
@@ -438,7 +442,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
-        val atom = this.body.last
+        if (body == null) return groundings
+        
+        val atom = body!! // For single atom body, this is the only atom
         val ifHead = atom.h == lastVariable
         var t: Triple?
         var attempts = 0
@@ -448,7 +454,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             val firstVarGrounding = this.beamCyclic(
                 lastVariable,
                 t!!.getValue(ifHead),
-                this.bodySize - 1,
+                0, // For single atom body, bodyIndex is always 0
                 false,
                 triples,
                 HashSet<Int>()
@@ -478,7 +484,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         triples: TripleSet
     ): SampledPairedResultSet {
         val groundings = SampledPairedResultSet()
-        val atom = this.body.last
+        if (body == null) return groundings
+        
+        val atom = body!! // For single atom body, this is the only atom
         val ifHead = atom.h == lastVariable
         var repetitions = 0
         val entities = triples.getNRandomEntitiesByRelation(
@@ -489,7 +497,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         for (e in entities) {
             // println("e="+ e);
             val firstVarGrounding =
-                this.beamCyclic(lastVariable, e, this.bodySize - 1, false, triples, HashSet<Int>())
+                this.beamCyclic(lastVariable, e, 0, false, triples, HashSet<Int>()) // bodyIndex is 0 for single atom
             if (firstVarGrounding != null) {
                 if (firstVariable == IdManager.getXId()) {
                     groundings.addKey(firstVarGrounding)
@@ -559,14 +567,16 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     ): Int? {
         // println(currentVariable + ", " + value + ", " + bodyIndex +", " +direction + ", " + previousValues.size());
         if (value == null || value == 0) return null
+        if (body == null) return null
+        
         // check if the value has been seen before as grounding of another variable
-        val atom = this.body.get(bodyIndex)
+        val atom = body!!
         val ifHead = atom.h == currentVariable
         // OI-OFF
         if (previousValues.contains(value)) return null
 
-        // the current atom is the last
-        if ((direction == true && this.body.size - 1 == bodyIndex) || (direction == false && bodyIndex == 0)) {
+        // For single atom body, this is always the last (and only) atom
+        if (bodyIndex == 0) {
             val finalValue = triples.getRandomEntity(atom.r, value, ifHead)
 
             // println("Y = " + finalValue + " out of " + triples.getEntities(atom.getRelation(), value, ifHead).size());
@@ -577,12 +587,8 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             if (value == finalValue) return null
             return finalValue
         } else {
-            val nextValue = triples.getRandomEntity(atom.r, value, ifHead)
-            val nextVariable = if (ifHead) atom.t else atom.h
-            // OI-OFF
-            if (Settings.OI_CONSTRAINTS_ACTIVE) previousValues.add(value)
-            val updatedBodyIndex = if (direction) bodyIndex + 1 else bodyIndex - 1
-            return this.beamCyclic(nextVariable, nextValue, updatedBodyIndex, direction, triples, previousValues)
+            // This shouldn't happen with single atom body
+            return null
         }
     }
 
@@ -614,138 +620,37 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         triples: TripleSet
     ): Set<Triple> {
         val groundings = hashSetOf<Triple>()
-        val bodyAtoms = ArrayList<Atom>()
-        val variables = ArrayList<Int>()
-        for (i in 0..<this.bodySize) bodyAtoms.add(this.getBodyAtom(i))
-        variables.add(IdManager.getXId())
-        for (i in 0..<this.bodySize - 1) variables.add(Rule.Companion.variables[i])
-        variables.add(IdManager.getYId())
-        val visitedValues = HashSet<Int>()
-        visitedValues.add(xValue)
-        visitedValues.add(yValue)
-        searchTripleExplanation(
-            xValue,
-            yValue,
-            0,
-            this.bodySize - 1,
-            variables,
-            excludedTriples,
-            triples,
-            groundings,
-            visitedValues
-        )
+        
+        // For single atom body, the explanation is straightforward
+        if (body == null) return groundings
+        
+        val atom = body!!
+        
+        // Check if the body atom connects X and Y values according to the rule
+        val relevantTriples = when {
+            atom.h == IdManager.getXId() && atom.t == IdManager.getYId() -> {
+                // Body is relation(X,Y) - check if relation(xValue, yValue) exists
+                if (triples.isTrue(xValue, atom.r, yValue)) {
+                    setOf(Triple(xValue, atom.r, yValue))
+                } else {
+                    emptySet()
+                }
+            }
+            atom.h == IdManager.getYId() && atom.t == IdManager.getXId() -> {
+                // Body is relation(Y,X) - check if relation(yValue, xValue) exists  
+                if (triples.isTrue(yValue, atom.r, xValue)) {
+                    setOf(Triple(yValue, atom.r, xValue))
+                } else {
+                    emptySet()
+                }
+            }
+            else -> {
+                // More complex cases with constants - simplified implementation
+                emptySet()
+            }
+        }
+        
+        relevantTriples.filterNot { excludedTriples.contains(it) }.forEach { groundings.add(it) }
         return groundings
-    }
-
-
-    private fun searchTripleExplanation(
-        firstValue: Int,
-        lastValue: Int,
-        firstIndex: Int,
-        lastIndex: Int,
-        variables: ArrayList<Int>,
-        excludedTriples: Set<Triple>,
-        triples: TripleSet,
-        groundings: MutableSet<Triple>,
-        visitedValues: HashSet<Int>
-    ) {
-        val firstVar = variables.get(firstIndex)
-        val lastVar = variables.get(lastIndex + 1)
-
-        if (firstIndex == lastIndex) {
-            val atom = this.getBodyAtom(firstIndex)
-            if (atom.h == firstVar) {
-                if (triples.isTrue(firstValue, atom.r, lastValue)) {
-                    val g = Triple(firstValue, atom.r, lastValue)
-                    if (!excludedTriples.contains(g)) {
-                        groundings.add(g)
-                        // println("Hit! ADDED " +  g + " and extended the groundings to " + groundings.size() + " triples");
-                    }
-                }
-            } else {
-                if (triples.isTrue(lastValue, atom.r, firstValue)) {
-                    val g = Triple(lastValue, atom.r, firstValue)
-                    if (!excludedTriples.contains(g)) {
-                        groundings.add(g)
-                        // println("Hit! ADDED " +  g + " and extended the groundings to " + groundings.size() + " triples");
-                    }
-                }
-            }
-            return
-        }
-        val firstAtom = this.getBodyAtom(firstIndex)
-        val lastAtom = this.getBodyAtom(lastIndex)
-
-        var valuesFromFirst: MutableSet<Int>? = null
-        val firstValuesAreTails: Boolean
-        if (firstAtom.h == firstVar) {
-            valuesFromFirst = triples.getTailEntities(firstAtom.r, firstValue)
-            firstValuesAreTails = true
-        } else {
-            valuesFromFirst = triples.getHeadEntities(firstAtom.r, firstValue)
-            firstValuesAreTails = false
-        }
-        var valuesFromLast: MutableSet<Int>? = null
-        val lastValuesAreTails: Boolean
-        if (lastAtom.h == lastVar) {
-            valuesFromLast = triples.getTailEntities(lastAtom.r, lastValue)
-            lastValuesAreTails = true
-        } else {
-            valuesFromLast = triples.getHeadEntities(lastAtom.r, lastValue)
-            lastValuesAreTails = false
-        }
-        if (valuesFromFirst.size < valuesFromLast.size) {
-            for (value in valuesFromFirst) {
-                val g: Triple?
-                if (firstValuesAreTails) g = Triple(firstValue, firstAtom.r, value)
-                else g = Triple(value, firstAtom.r, firstValue)
-                if (excludedTriples.contains(g)) continue
-                if (visitedValues.contains(value)) continue
-                groundings.add(g)
-                visitedValues.add(value)
-                // println("add [" + firstIndex + ","  + lastIndex + "]" + g);
-                searchTripleExplanation(
-                    value,
-                    lastValue,
-                    firstIndex + 1,
-                    lastIndex,
-                    variables,
-                    excludedTriples,
-                    triples,
-                    groundings,
-                    visitedValues
-                )
-                if (groundings.size < this.bodySize) {
-                    // println("removing " + g + " (num of triples in groundings = " + groundings.size() + ")");
-                    groundings.remove(g)
-                } else break
-            }
-        } else {
-            for (value in valuesFromLast) {
-                val g: Triple?
-                if (lastValuesAreTails) g = Triple(lastValue, lastAtom.r, value)
-                else g = Triple(value, lastAtom.r, lastValue)
-                if (excludedTriples.contains(g)) continue
-                if (visitedValues.contains(value)) continue
-                groundings.add(g)
-                visitedValues.add(value)
-                // println("add [" + firstIndex + ","  + lastIndex + "]" + g);
-                searchTripleExplanation(
-                    firstValue,
-                    value,
-                    firstIndex,
-                    lastIndex - 1,
-                    variables,
-                    excludedTriples,
-                    triples,
-                    groundings,
-                    visitedValues
-                )
-                if (groundings.size < this.bodySize) {
-                    groundings.remove(g)
-                    // println("removing " + g + " (num of triples in groundings = " + groundings.size() + ")");
-                } else break
-            }
-        }
     }
 }
