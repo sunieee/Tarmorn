@@ -13,4 +13,4 @@ WORKER_THREADS: 24
 THRESHOLD_CORRECT_PREDICTIONS: 20
 
 # If set to true, remove the INVERSE_ prefix from relation names in rule output
-REMOVE_INVERSE_PREFIX_IN_OUTPUT: false
+REMOVE_INVERSE_PREFIX_IN_OUTPUT: true
