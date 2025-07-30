@@ -124,7 +124,12 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
-                    <mainClass>tarmorn.Learn</mainClass>
+                    <mainClass>tarmorn.topdown.TLearn</mainClass>
+                    <options>
+                        <option>-Xmx64g</option>
+                        <option>-XX:+UseG1GC</option>
+                        <option>-XX:MaxGCPauseMillis=200</option>
+                    </options>
                 </configuration>
             </plugin>
         </plugins>

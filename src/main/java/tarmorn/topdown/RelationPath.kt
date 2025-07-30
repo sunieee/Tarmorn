@@ -40,13 +40,37 @@ object RelationPath {
         return encoded
     }
 
-    fun connect(rp: Long, relation: Long): Long {
+    /**
+     * Connect a single relation to the head of an existing path.
+     * Used when the first parameter is a single relation (< MAX_RELATION_ID).
+     * Creates: relation -> existing_path
+     */
+    fun connectHead(relation: Long, existingPath: Long): Long {
         require(relation in 1..MAX_RELATION_ID) {
             "Relation ID must be between 1 and $MAX_RELATION_ID, got $relation"
         }
 
-        // Shift existing relations left and add new relation at the end
-        return (rp shl BITS_PER_RELATION) or (relation and RELATION_MASK)
+        // Shift existing path left and add new relation at the end (becomes first in logical order)
+        return (existingPath shl BITS_PER_RELATION) or (relation and RELATION_MASK)
+    }
+    
+    /**
+     * Connect a single relation to the tail of an existing path.
+     * Used when the second parameter is a single relation (< MAX_RELATION_ID).
+     * Creates: existing_path -> relation
+     */
+    fun connectTail(existingPath: Long, relation: Long): Long {
+        require(relation in 1..MAX_RELATION_ID) {
+            "Relation ID must be between 1 and $MAX_RELATION_ID, got $relation"
+        }
+
+        // Add relation at the lowest bits (becomes last in logical order)
+        return (existingPath shl BITS_PER_RELATION) or (relation and RELATION_MASK)
+    }
+
+    @Deprecated("Use connectHead or connectTail instead", ReplaceWith("connectHead(rp, relation)"))
+    fun connect(rp: Long, relation: Long): Long {
+        return connectHead(rp, relation)
     }
     
     /**
@@ -133,6 +157,26 @@ object RelationPath {
      * Check if this is a single relation (length = 1).
      */
     fun isSingleRelation(encoded: Long): Boolean = getLength(encoded) == 1
+    
+    /**
+     * Get the inverse of a relation path.
+     * For single relations (rp <= MAX_RELATION_ID), uses IdManager.getInverseRelation.
+     * For relation paths (rp > MAX_RELATION_ID), decomposes into r1, ..., rm 
+     * and returns rm', ..., r1' where ' denotes inverse relation.
+     */
+    fun getInverseRelation(encoded: Long): Long {
+        if (encoded <= MAX_RELATION_ID) {
+            // Single relation case
+            return IdManager.getInverseRelation(encoded)
+        } else {
+            // Relation path case: decompose and reverse with inverses
+            val relations = decode(encoded)
+            val inverseRelations = relations.reversed().map { 
+                IdManager.getInverseRelation(it) 
+            }.toLongArray()
+            return encode(inverseRelations)
+        }
+    }
     
     /**
      * Convert to string representation for debugging.

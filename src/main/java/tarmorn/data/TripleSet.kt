@@ -27,6 +27,9 @@ class TripleSet(
     var h2r2tSet = mutableMapOf<Int, MutableMap<Long, MutableSet<Int>>>()
     var r2h2tSet = mutableMapOf<Long, MutableMap<Int, MutableSet<Int>>>()
 
+    // 性能优化索引：relation -> head entities (避免每次调用keys)
+    var r2hSet = mutableMapOf<Long, MutableSet<Int>>()
+
     // 用于大关系的随机访问优化
     var h2r2tList = mutableMapOf<Int, MutableMap<Long, MutableList<Int>>>()
 
@@ -133,6 +136,9 @@ class TripleSet(
         val htMap = r2h2tSet.getOrPut(key=r) { mutableMapOf() }
         htMap.getOrPut(h) { mutableSetOf() }.add(t)
 
+        // 性能优化索引：relation -> head entities
+        r2hSet.getOrPut(r) { mutableSetOf() }.add(h)
+
         // 核心查询索引：head -> relation -> tails
         val relationMap = h2r2tSet.getOrPut(h) { mutableMapOf() }
         relationMap.getOrPut(r) { mutableSetOf() }.add(t)
@@ -143,6 +149,9 @@ class TripleSet(
         // 逆关系索引：t --inverse_r--> h
         val inverseRelationMap = h2r2tSet.getOrPut(t) { mutableMapOf() }
         inverseRelationMap.getOrPut(inverseRelationId) { mutableSetOf() }.add(h)
+        
+        // 为逆关系也建立头实体索引
+        r2hSet.getOrPut(inverseRelationId) { mutableSetOf() }.add(t)
     }
 
 
