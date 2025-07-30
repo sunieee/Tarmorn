@@ -1,7 +1,7 @@
 package tarmorn.structure
 
 import tarmorn.Settings
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 
 /**
@@ -54,7 +54,7 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
         get() = Settings.RULE_ZERO_WEIGHT * super.appliedConfidence
 
 
-    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: MyTriple?, ts: TripleSet): Boolean {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
@@ -63,17 +63,17 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     }
 
 
-    override fun getRandomValidPrediction(ts: TripleSet): Triple? {
+    override fun getRandomValidPrediction(ts: TripleSet): MyTriple? {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
 
-    override fun getRandomInvalidPrediction(ts: TripleSet): Triple? {
+    override fun getRandomInvalidPrediction(ts: TripleSet): MyTriple? {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
 
-    override fun getPredictions(ts: TripleSet): List<Triple>? {
+    override fun getPredictions(ts: TripleSet): List<MyTriple>? {
         throw Exception(RuleFunctionalityBasicSupportOnly)
     }
 
@@ -94,11 +94,11 @@ class RuleZero(r: RuleUntyped) : Rule(r) {
     override fun getTripleExplanation(
         head: Int,
         tail: Int,
-        excludedTriples: Set<Triple>,
+        excludedTriples: Set<MyTriple>,
         triples: TripleSet
-    ): Set<Triple> {
-        val groundings = hashSetOf<Triple>()
-        val prediction = tarmorn.data.Triple(head, this.targetRelation, tail)
+    ): Set<MyTriple> {
+        val groundings = hashSetOf<MyTriple>()
+        val prediction = tarmorn.data.MyTriple(head, this.targetRelation, tail)
         if (excludedTriples.contains(prediction)) return groundings
         if (this.isXRule && tail == this.head.t) {
             groundings.add(prediction)

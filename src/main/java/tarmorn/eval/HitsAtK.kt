@@ -1,6 +1,6 @@
 package tarmorn.eval
 
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 import java.text.DecimalFormat
@@ -159,7 +159,7 @@ class HitsAtK {
         counterTail++
     }
 
-    fun evaluateHead(candidates: MutableList<String>, triple: Triple): Int {
+    fun evaluateHead(candidates: MutableList<String>, triple: MyTriple): Int {
         var foundAt = -1
         counterHead++
         if (candidates.size > 0) counterHeadCovered++
@@ -205,7 +205,7 @@ class HitsAtK {
         return foundAt
     }
 
-    fun evaluateTail(candidates: MutableList<String>, triple: Triple): Int {
+    fun evaluateTail(candidates: MutableList<String>, triple: MyTriple): Int {
         var foundAt = -1
         counterTail++
         if (candidates.size > 0) counterTailCovered++

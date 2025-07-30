@@ -1,12 +1,10 @@
 package tarmorn.data
 
-import tarmorn.Settings
-
 /**
  * A triple represents a labeled edge in a knowledge graph.
  * Uses numeric IDs for better performance: entities (Int), relations (Long).
  */
-data class Triple(
+data class MyTriple(
     val h: Int, // head entity ID
     val r: Long, // relation ID
     val t: Int // tail entity ID

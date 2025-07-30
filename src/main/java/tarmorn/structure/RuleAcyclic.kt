@@ -1,7 +1,7 @@
 package tarmorn.structure
 
 import tarmorn.Settings
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 
@@ -144,7 +144,7 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     }
 
 
-    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean = when {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: MyTriple?, ts: TripleSet): Boolean = when {
         forbidden == null -> {
             val (variable, value) = when {
                 isXRule -> IdManager.getXId() to leftValue
@@ -215,7 +215,7 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         variable: Int,
         value: Int,
         bodyIndex: Int,
-        forbidden: Triple,
+        forbidden: MyTriple,
         previousValues: HashSet<Int>,
         triples: TripleSet
     ): Boolean {
@@ -406,23 +406,23 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         }
     }
 
-    override fun getRandomValidPrediction(ts: TripleSet): Triple? {
+    override fun getRandomValidPrediction(ts: TripleSet): MyTriple? {
         val validPredictions = getPredictions(ts, 1)
         return validPredictions.randomOrNull()
     }
 
-    override fun getRandomInvalidPrediction(ts: TripleSet): Triple? {
+    override fun getRandomInvalidPrediction(ts: TripleSet): MyTriple? {
         val invalidPredictions = getPredictions(ts, -1)
         return invalidPredictions.randomOrNull()
     }
 
-    override fun getPredictions(ts: TripleSet): ArrayList<Triple> = getPredictions(ts, 0)
+    override fun getPredictions(ts: TripleSet): ArrayList<MyTriple> = getPredictions(ts, 0)
 
     /**
      * @param valid 1 = valid; -1 = invalid; 0 = valid/invalid does not matter
      */
-    protected fun getPredictions(ts: TripleSet, valid: Int): ArrayList<Triple> {
-        val materialized = arrayListOf<Triple>()
+    protected fun getPredictions(ts: TripleSet, valid: Int): ArrayList<MyTriple> {
+        val materialized = arrayListOf<MyTriple>()
         val resultSet = when {
             isXRule -> computeHeadResults(head.t, ts)
             else -> computeTailResults(head.h, ts)
@@ -434,8 +434,8 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
         
         resultSet.forEach { vId ->
             val t = when {
-                isXRule -> Triple(vId, relationId, headRightId)
-                else -> Triple(headLeftId, relationId, vId)
+                isXRule -> MyTriple(vId, relationId, headRightId)
+                else -> MyTriple(headLeftId, relationId, vId)
             }
             
             when (valid) {
@@ -514,9 +514,9 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: Set<Triple>,
+        excludedTriples: Set<MyTriple>,
         triples: TripleSet
-    ): Set<Triple> {
+    ): Set<MyTriple> {
         val unboundVariable = this.unboundVariable
         
         return if (unboundVariable == null) {
@@ -527,7 +527,7 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
                 return emptySet()
             }
             
-            val groundings = hashSetOf<Triple>()
+            val groundings = hashSetOf<MyTriple>()
             val xInHead = head.h == IdManager.getXId()
             
             if (xInHead) {
@@ -539,11 +539,11 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
                     
                     when {
                         left == IdManager.getXId() && triples.isTrue(xValue, rel, right) -> {
-                            val t = Triple(xValue, rel, right)
+                            val t = MyTriple(xValue, rel, right)
                             if (!excludedTriples.contains(t)) groundings.add(t)
                         }
                         right == IdManager.getXId() && triples.isTrue(left, rel, xValue) -> {
-                            val t = Triple(left, rel, xValue)
+                            val t = MyTriple(left, rel, xValue)
                             if (!excludedTriples.contains(t)) groundings.add(t)
                         }
                     }
@@ -557,11 +557,11 @@ class RuleAcyclic(r: RuleUntyped) : Rule(r) {
                     
                     when {
                         left == IdManager.getYId() && triples.isTrue(yValue, rel, right) -> {
-                            val t = Triple(yValue, rel, right)
+                            val t = MyTriple(yValue, rel, right)
                             if (!excludedTriples.contains(t)) groundings.add(t)
                         }
                         right == IdManager.getYId() && triples.isTrue(left, rel, yValue) -> {
-                            val t = Triple(left, rel, yValue)
+                            val t = MyTriple(left, rel, yValue)
                             if (!excludedTriples.contains(t)) groundings.add(t)
                         }
                     }

@@ -1,6 +1,6 @@
 package tarmorn.eval
 
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import java.io.*
 import java.nio.charset.StandardCharsets
 import java.util.Collections
@@ -34,7 +34,7 @@ class ResultSet : Iterable<CompletionResult> {
         return cr
     }
 
-    fun getCompletionResult(triple: Triple): CompletionResult? {
+    fun getCompletionResult(triple: MyTriple): CompletionResult? {
         val cr = this.results.get(triple.toString())
         return cr
     }

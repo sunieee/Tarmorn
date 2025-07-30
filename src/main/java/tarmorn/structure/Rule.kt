@@ -1,7 +1,7 @@
 package tarmorn.structure
 
 import tarmorn.Settings
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 import java.util.*
@@ -116,7 +116,7 @@ abstract class Rule {
      * Checks if the body of the rule is true for the given subject/object pair.
      * This method is called in the context of rule refinement (also called rule extension).
      */
-    abstract fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean
+    abstract fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: MyTriple?, ts: TripleSet): Boolean
 
     /**
      * Returns true if this rule is refineable.
@@ -126,17 +126,17 @@ abstract class Rule {
     /**
      * Returns a randomly chosen triple that is both predicted and valid against the given triple set.
      */
-    abstract fun getRandomValidPrediction(ts: TripleSet): Triple?
+    abstract fun getRandomValidPrediction(ts: TripleSet): MyTriple?
 
     /**
      * Returns a randomly chosen triple that is both predicted and not valid against the given triple set.
      */
-    abstract fun getRandomInvalidPrediction(ts: TripleSet): Triple?
+    abstract fun getRandomInvalidPrediction(ts: TripleSet): MyTriple?
 
     /**
      * Retrieves a sample of predictions (correct or incorrect).
      */
-    abstract fun getPredictions(ts: TripleSet): List<Triple>?
+    abstract fun getPredictions(ts: TripleSet): List<MyTriple>?
 
     /**
      * If the rule body has only one head variable, it is called singleton, if only one entity fulfills the body.
@@ -150,9 +150,9 @@ abstract class Rule {
     abstract fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: Set<Triple>,
+        excludedTriples: Set<MyTriple>,
         triples: TripleSet
-    ): Set<Triple>
+    ): Set<MyTriple>
 
     open fun materialize(trainingSet: TripleSet): TripleSet? = null
 

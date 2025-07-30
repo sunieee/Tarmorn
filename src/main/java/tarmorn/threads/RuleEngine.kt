@@ -7,7 +7,7 @@ import tarmorn.structure.ScoreTree
 import java.io.PrintWriter
 import java.util.Collections
 import kotlin.math.ln
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.IdManager
 
 
@@ -49,7 +49,7 @@ class Predictor(
 object RuleEngine {
     private val EPSILON = 0.0001
 
-    private val predictionTasks = mutableListOf<Triple>()
+    private val predictionTasks = mutableListOf<MyTriple>()
     private var predictionsMade = 0
     private var predictionsWriter: PrintWriter? = null
 
@@ -150,7 +150,7 @@ object RuleEngine {
     }
 
     @get:Synchronized
-    val nextPredictionTask: Triple?
+    val nextPredictionTask: MyTriple?
         get() {
             predictionsMade++
             val triple = if (predictionTasks.isNotEmpty()) predictionTasks.removeAt(0) else null
@@ -167,7 +167,7 @@ object RuleEngine {
         validationSet: TripleSet,
         k: Int,
         relation2Rules4Prediction: MutableMap<Long, MutableList<Rule>>,
-        triple: tarmorn.data.Triple
+        triple: tarmorn.data.MyTriple
     ) {
         //println("=== " + triple + " ===");
         var kTree = ScoreTree()
@@ -211,7 +211,7 @@ object RuleEngine {
         filterSet: TripleSet,
         k: Int,
         relation2Rules: MutableMap<Long, MutableList<Rule>>,
-        triple: tarmorn.data.Triple,
+        triple: tarmorn.data.MyTriple,
         predictHeadNotTail: Boolean,
         kTree: ScoreTree
     ): LinkedHashMap<String, Double> {
@@ -295,7 +295,7 @@ object RuleEngine {
         validationSet: TripleSet,
         k: Int,
         relation2Rules: MutableMap<Long, MutableList<Rule>>,
-        triple: tarmorn.data.Triple,
+        triple: tarmorn.data.MyTriple,
         predictHeadNotTail: Boolean,
         kTree: ScoreTree
     ): LinkedHashMap<String, Double> {
@@ -346,7 +346,7 @@ object RuleEngine {
         validationSet: TripleSet,
         k: Int,
         relation2Rules: MutableMap<Long, MutableList<Rule>>,
-        triple: tarmorn.data.Triple
+        triple: tarmorn.data.MyTriple
     ) {
         val relation = triple.r
         val head = triple.h
@@ -465,7 +465,7 @@ object RuleEngine {
         trainingSet: TripleSet,
         validationSet: TripleSet,
         testSet: TripleSet,
-        t: tarmorn.data.Triple,
+        t: tarmorn.data.MyTriple,
         candidateEntities: MutableSet<Int>,
         tailNotHead: Boolean
     ): HashSet<Int> {
@@ -506,7 +506,7 @@ object RuleEngine {
 
     @Synchronized
     private fun writeTopKCandidates(
-        t: tarmorn.data.Triple,
+        t: tarmorn.data.MyTriple,
         testSet: TripleSet,
         kHeadCandidates: LinkedHashMap<String, Double>,
         kTailCandidates: LinkedHashMap<String, Double>,
@@ -541,7 +541,7 @@ object RuleEngine {
 
     @Synchronized
     private fun writeTopKExplanation(
-        t: tarmorn.data.Triple?,
+        t: tarmorn.data.MyTriple?,
         testSet: TripleSet?,
         kHeadCandidates: LinkedHashMap<String, Double>?,
         headTree: ScoreTree?,

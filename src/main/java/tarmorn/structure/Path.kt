@@ -1,6 +1,6 @@
 package tarmorn.structure
 
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.IdManager
 import java.util.*
 
@@ -85,7 +85,7 @@ class Path(
     /**
      * Checks if a path is non cyclic, i.e, does not connect the entities of the given triple.
      */
-    fun isNonCyclic(t: Triple): Boolean {
+    fun isNonCyclic(t: MyTriple): Boolean {
         return (2 until entityNodes.size - 1).none { i ->
             entityNodes[i] == t.h || entityNodes[i] == t.t
         }

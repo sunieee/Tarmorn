@@ -106,11 +106,11 @@ object IdManager {
     }
     
     // Check if a relation is an inverse relation (much more efficient now!)
-    fun isInverseRelation(relationId: Long)= relationId > originalRelationCount
+    fun isInverseRelation(relation: Long)= relation > originalRelationCount
 
     // Get the inverse relation ID for a given relation
-    fun getInverseRelationId(relationId: Long) =
-        relationId + if (relationId <= originalRelationCount) originalRelationCount else -originalRelationCount
+    fun getInverseRelation(relation: Long) =
+        relation + if (relation <= originalRelationCount) originalRelationCount else -originalRelationCount
 
     // Get KG variable ID for specific letters.
     fun getXId(): Int = getEntityId("X")

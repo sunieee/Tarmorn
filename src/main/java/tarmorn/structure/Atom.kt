@@ -1,6 +1,7 @@
 package tarmorn.structure
 
 import tarmorn.data.IdManager
+import tarmorn.data.TripleSet
 import java.util.Objects
 
 class Atom(
@@ -15,6 +16,54 @@ class Atom(
 
     val xYGeneralization: Atom
         get() = this.copy(h = IdManager.getXId(), t = IdManager.getYId())
+
+    // 判断是否为二元原子 (X,Y两个自由变量)
+    val isBinary: Boolean
+        get() = h == IdManager.getXId() && t == IdManager.getYId()
+
+    // 获取二元原子的实例 r(X,Y) -> Set<Pair<Int,Int>>
+    fun binaryInstances(tripleSet: TripleSet): Set<Pair<Int, Int>> {
+        return if (isBinary) {
+            tripleSet.r2tripleSet[r]?.map { it.h to it.t }?.toSet() ?: emptySet()
+        } else {
+            emptySet()
+        }
+    }
+
+    // 获取一元原子的实例
+    fun unaryInstances(tripleSet: TripleSet): Set<Int> {
+        val inverseRelation = IdManager.getInverseRelation(r)
+        return when {
+            isBinary -> emptySet()
+            // r(X,c): 获取所有以c为尾部的逆关系实例的头部
+            h == IdManager.getXId() && istC -> {
+                tripleSet.r2h2tSet[inverseRelation]?.get(t) ?: emptySet()
+            }
+            // r(X,·): 获取逆关系的所有尾部实体
+            h == IdManager.getXId() && t == 0 -> {
+                tripleSet.r2h2tSet[r]?.keys?: emptySet()
+            }
+            // r(c,Y): 获取所有以c为头部的该关系实例的尾部
+            ishC && t == IdManager.getYId() -> {
+                tripleSet.r2h2tSet[r]?.get(h) ?: emptySet()
+            }
+            // r(·,Y): 获取该关系的所有尾部实体
+            h == 0 && t == IdManager.getYId() -> {
+                tripleSet.r2h2tSet[inverseRelation]?.keys?: emptySet()
+            }
+            else -> emptySet()
+        }
+    }
+
+    // 通用的instances属性，根据是否为二元返回不同类型
+    @Suppress("UNCHECKED_CAST")
+    fun <T> instances(tripleSet: TripleSet): Set<T> {
+        return if (isBinary) {
+            binaryInstances(tripleSet) as Set<T>
+        } else {
+            unaryInstances(tripleSet) as Set<T>
+        }
+    }
 
     constructor(input: String) : this(0, 0, 0) {
         // 清理输入字符串，移除尾部的空格、逗号和分号
@@ -149,7 +198,7 @@ class Atom(
         
         // Check inverse relation equivalence
         // relation(A,B) == INVERSE_relation(B,A)
-        val inverseRelationId = IdManager.getInverseRelationId(r)
+        val inverseRelationId = IdManager.getInverseRelation(r)
         return h == other.t && inverseRelationId == other.r && t == other.h
     }
 
@@ -157,7 +206,7 @@ class Atom(
         // Normalize the representation to ensure equivalent atoms have the same hash
         // Always use the smaller relation ID and arrange h,t accordingly
         val originalRelationId = if (IdManager.isInverseRelation(r)) {
-            IdManager.getInverseRelationId(r)
+            IdManager.getInverseRelation(r)
         } else {
             r
         }

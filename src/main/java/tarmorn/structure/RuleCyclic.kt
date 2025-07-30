@@ -2,7 +2,7 @@ package tarmorn.structure
 
 import tarmorn.Settings
 import tarmorn.data.SampledPairedResultSet
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 import kotlin.math.pow
@@ -195,7 +195,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         return scores
     }
 
-    override fun getRandomValidPrediction(triples: TripleSet): Triple? {
+    override fun getRandomValidPrediction(triples: TripleSet): MyTriple? {
         val validPredictions = this.getPredictions(triples, 1)
         if (validPredictions == null || validPredictions.size == 0) return null
         if (validPredictions.size == 0) return null
@@ -203,7 +203,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         return validPredictions.get(index)
     }
 
-    override fun getRandomInvalidPrediction(triples: TripleSet): Triple? {
+    override fun getRandomInvalidPrediction(triples: TripleSet): MyTriple? {
         val validPredictions = this.getPredictions(triples, -1)
         if (validPredictions == null || validPredictions.size == 0) return null
         if (validPredictions.size == 0) return null
@@ -212,7 +212,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
 
-    override fun getPredictions(triples: TripleSet): List<Triple> {
+    override fun getPredictions(triples: TripleSet): List<MyTriple> {
         return this.getPredictions(triples, 0)
     }
 
@@ -223,25 +223,25 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
      * @param valid 1= must be valid; -1 = must be invalid; 0 = valid and invalid is okay
      * @return
      */
-    protected fun getPredictions(triples: TripleSet, valid: Int): ArrayList<Triple> {
+    protected fun getPredictions(triples: TripleSet, valid: Int): ArrayList<MyTriple> {
         val xypairs: SampledPairedResultSet?
         if (this.body[0].contains(IdManager.getXId())) xypairs = groundBodyCyclic(IdManager.getXId(), IdManager.getYId(), triples)
         else xypairs = groundBodyCyclic(IdManager.getYId(), IdManager.getXId(), triples)
-        val predictions = ArrayList<Triple>()
+        val predictions = ArrayList<MyTriple>()
         for (key in xypairs.values.keys) {
             for (value in xypairs.values.get(key)!!) {
                 if (valid == 1) {
                     if (triples.isTrue(key, this.head.r, value)) {
-                        val validPrediction = Triple(key, this.head.r, value)
+                        val validPrediction = MyTriple(key, this.head.r, value)
                         predictions.add(validPrediction)
                     }
                 } else if (valid == -1) {
                     if (!triples.isTrue(key, this.head.r, value)) {
-                        val invalidPrediction = Triple(key, this.head.r, value)
+                        val invalidPrediction = MyTriple(key, this.head.r, value)
                         predictions.add(invalidPrediction)
                     }
                 } else {
-                    val validPrediction = Triple(key, this.head.r, value)
+                    val validPrediction = MyTriple(key, this.head.r, value)
                     predictions.add(validPrediction)
                 }
             }
@@ -250,7 +250,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     }
 
 
-    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: MyTriple?, ts: TripleSet): Boolean {
         System.err.println("method not YET available for an extended/refinde rule")
         return false
     }
@@ -366,7 +366,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val groundings = SampledPairedResultSet()
         val atom = this.body.get(0)
         val ifHead = atom.h == firstVariable
-        var t: Triple?
+        var t: MyTriple?
         var attempts = 0
         var repetitions = 0
         while ((triples.getRandomTripleByRelation(atom.r).also { t = it }) != null) {
@@ -440,7 +440,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         val groundings = SampledPairedResultSet()
         val atom = this.body.last
         val ifHead = atom.h == lastVariable
-        var t: Triple?
+        var t: MyTriple?
         var attempts = 0
         var repetitions = 0
         while ((triples.getRandomTripleByRelation(atom.r).also { t = it }) != null) {
@@ -610,10 +610,10 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: Set<Triple>,
+        excludedTriples: Set<MyTriple>,
         triples: TripleSet
-    ): Set<Triple> {
-        val groundings = hashSetOf<Triple>()
+    ): Set<MyTriple> {
+        val groundings = hashSetOf<MyTriple>()
         val bodyAtoms = ArrayList<Atom>()
         val variables = ArrayList<Int>()
         for (i in 0..<this.bodySize) bodyAtoms.add(this.getBodyAtom(i))
@@ -644,9 +644,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         firstIndex: Int,
         lastIndex: Int,
         variables: ArrayList<Int>,
-        excludedTriples: Set<Triple>,
+        excludedTriples: Set<MyTriple>,
         triples: TripleSet,
-        groundings: MutableSet<Triple>,
+        groundings: MutableSet<MyTriple>,
         visitedValues: HashSet<Int>
     ) {
         val firstVar = variables.get(firstIndex)
@@ -656,7 +656,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             val atom = this.getBodyAtom(firstIndex)
             if (atom.h == firstVar) {
                 if (triples.isTrue(firstValue, atom.r, lastValue)) {
-                    val g = Triple(firstValue, atom.r, lastValue)
+                    val g = MyTriple(firstValue, atom.r, lastValue)
                     if (!excludedTriples.contains(g)) {
                         groundings.add(g)
                         // println("Hit! ADDED " +  g + " and extended the groundings to " + groundings.size() + " triples");
@@ -664,7 +664,7 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
                 }
             } else {
                 if (triples.isTrue(lastValue, atom.r, firstValue)) {
-                    val g = Triple(lastValue, atom.r, firstValue)
+                    val g = MyTriple(lastValue, atom.r, firstValue)
                     if (!excludedTriples.contains(g)) {
                         groundings.add(g)
                         // println("Hit! ADDED " +  g + " and extended the groundings to " + groundings.size() + " triples");
@@ -696,9 +696,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
         }
         if (valuesFromFirst.size < valuesFromLast.size) {
             for (value in valuesFromFirst) {
-                val g: Triple?
-                if (firstValuesAreTails) g = Triple(firstValue, firstAtom.r, value)
-                else g = Triple(value, firstAtom.r, firstValue)
+                val g: MyTriple?
+                if (firstValuesAreTails) g = MyTriple(firstValue, firstAtom.r, value)
+                else g = MyTriple(value, firstAtom.r, firstValue)
                 if (excludedTriples.contains(g)) continue
                 if (visitedValues.contains(value)) continue
                 groundings.add(g)
@@ -722,9 +722,9 @@ class RuleCyclic(r: RuleUntyped, appliedConfidence1: Double) : Rule(r) {
             }
         } else {
             for (value in valuesFromLast) {
-                val g: Triple?
-                if (lastValuesAreTails) g = Triple(lastValue, lastAtom.r, value)
-                else g = Triple(value, lastAtom.r, lastValue)
+                val g: MyTriple?
+                if (lastValuesAreTails) g = MyTriple(lastValue, lastAtom.r, value)
+                else g = MyTriple(value, lastAtom.r, lastValue)
                 if (excludedTriples.contains(g)) continue
                 if (visitedValues.contains(value)) continue
                 groundings.add(g)

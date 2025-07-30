@@ -9,27 +9,31 @@ import java.nio.charset.Charset
 import java.nio.file.Files
 import kotlin.random.Random
 
+
 class TripleSet(
     filepath: String? = null,
     ignore4Plus: Boolean = true,
     evaluate: Boolean = false
-) : MutableList<Triple> by mutableListOf() {
+) : MutableList<MyTriple> by mutableListOf() {
     private val rand = Random
 
     // 统一的实体索引：entity -> 以该实体为相关的所有三元组
-    var entityTriples = mutableMapOf<Int, MutableList<Triple>>()
+    var h2tripleList = mutableMapOf<Int, MutableList<MyTriple>>()
     
     // 关系索引：relation -> 该关系的所有三元组
-    var relationTriples = mutableMapOf<Long, MutableSet<Triple>>()
+    var r2tripleSet = mutableMapOf<Long, MutableSet<MyTriple>>()
 
     // 核心查询索引：head -> relation -> tails
-    var headRelationTails = mutableMapOf<Int, MutableMap<Long, MutableSet<Int>>>()
+    var h2r2tSet = mutableMapOf<Int, MutableMap<Long, MutableSet<Int>>>()
+    var r2h2tSet = mutableMapOf<Long, MutableMap<Int, MutableSet<Int>>>()
 
     // 用于大关系的随机访问优化
-    var headRelationTailsList = mutableMapOf<Int, MutableMap<Long, MutableList<Int>>>()
+    var h2r2tList = mutableMapOf<Int, MutableMap<Long, MutableList<Int>>>()
+
 
     // 统一的关系采样缓存：relation -> sampled entities (作为head)
-    var relationSampleCache = mutableMapOf<Long, MutableList<Int>>()
+    var r2hSample = mutableMapOf<Long, MutableList<Int>>()
+    var r2tSample = mutableMapOf<Long, MutableList<Int>>()
 
     init {
         filepath?.let {
@@ -48,8 +52,8 @@ class TripleSet(
         // Then, create inverse triples for all existing triples
         val originalTriples = this.toList() // Create a copy to avoid concurrent modification
         originalTriples.forEach { triple ->
-            val inverseRelationId = IdManager.getInverseRelationId(triple.r)
-            add(Triple(triple.t, inverseRelationId, triple.h))
+            val inverseRelationId = IdManager.getInverseRelation(triple.r)
+            add(MyTriple(triple.t, inverseRelationId, triple.h))
         }
         
         println("* Added ${originalTriples.size} inverse triples for ${IdManager.originalRelationCount} relations")
@@ -64,11 +68,11 @@ class TripleSet(
         ts.forEach { addTriple(it) }
     }
 
-    fun addTriples(triples: List<Triple>) {
+    fun addTriples(triples: List<MyTriple>) {
         triples.forEach { addTriple(it) }
     }
 
-    fun addTriple(t: Triple) {
+    fun addTriple(t: MyTriple) {
         if (!isTrue(t)) {
             add(t)
             addTripleToIndex(t)
@@ -89,19 +93,19 @@ class TripleSet(
             addTripleToIndex(triple)
         }
         
-        println("* set up index for ${relationTriples.keys.size} relations, ${entityTriples.keys.size} entities")
+        println("* set up index for ${r2tripleSet.keys.size} relations, ${h2tripleList.keys.size} entities")
     }
 
     fun setupListStructure() {
         print("* set up list structure for randomized access searches during rule learning ... ")
 
         // 只需要设置一个方向的索引，另一个方向通过逆关系访问
-        headRelationTails.forEach { (entity, relationMap) ->
-            headRelationTailsList[entity] = mutableMapOf()
+        h2r2tSet.forEach { (entity, relationMap) ->
+            h2r2tList[entity] = mutableMapOf()
             relationMap.forEach { (relation, entitySet) ->
                 if (entitySet.size > 10) {
-                    headRelationTailsList[entity]!![relation] = entitySet.toMutableList()
-                    sampleSubset(headRelationTailsList[entity]!![relation]!!)
+                    h2r2tList[entity]!![relation] = entitySet.toMutableList()
+                    sampleSubset(h2r2tList[entity]!![relation]!!)
                 }
             }
         }
@@ -116,24 +120,28 @@ class TripleSet(
         }
     }
 
-    private fun addTripleToIndex(triple: Triple) {
+    private fun addTripleToIndex(triple: MyTriple) {
         val (h, r, t) = triple
         
         // 统一的实体索引：每个实体都索引以它为头的三元组
-        entityTriples.getOrPut(h) { mutableListOf() }.add(triple)
+        h2tripleList.getOrPut(h) { mutableListOf() }.add(triple)
         
         // 关系索引 - 只存储原始关系
-        relationTriples.getOrPut(r) { mutableSetOf() }.add(triple)
+        r2tripleSet.getOrPut(r) { mutableSetOf() }.add(triple)
+
+        // 核心查询索引：relation -> head  -> tails
+        val htMap = r2h2tSet.getOrPut(key=r) { mutableMapOf() }
+        htMap.getOrPut(h) { mutableSetOf() }.add(t)
 
         // 核心查询索引：head -> relation -> tails
-        val relationMap = headRelationTails.getOrPut(h) { mutableMapOf() }
+        val relationMap = h2r2tSet.getOrPut(h) { mutableMapOf() }
         relationMap.getOrPut(r) { mutableSetOf() }.add(t)
         
         // 为逆关系建立索引条目（不创建实际的反向三元组）
-        val inverseRelationId = IdManager.getInverseRelationId(r)
+        val inverseRelationId = IdManager.getInverseRelation(r)
         
         // 逆关系索引：t --inverse_r--> h
-        val inverseRelationMap = headRelationTails.getOrPut(t) { mutableMapOf() }
+        val inverseRelationMap = h2r2tSet.getOrPut(t) { mutableMapOf() }
         inverseRelationMap.getOrPut(inverseRelationId) { mutableSetOf() }.add(h)
     }
 
@@ -160,7 +168,7 @@ class TripleSet(
                     var token = line.split("\t".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
                     if (token.size < 3) token =
                         line.split(" ".toRegex()).dropLastWhile { it.isEmpty() }.toTypedArray()
-                    var t: Triple? = null
+                    var t: MyTriple? = null
                     if (Settings.SAFE_PREFIX_MODE) {
                         s = (Settings.PREFIX_ENTITY + token[0]).intern()
                         r = (Settings.PREFIX_RELATION + token[1]).intern()
@@ -171,10 +179,10 @@ class TripleSet(
                         o = token[2].intern()
                     }
 
-                    if (token.size == 3) t = Triple(s, r, o)
-                    if (token.size != 3 && ignore4Plus) t = Triple(s, r, o)
+                    if (token.size == 3) t = MyTriple(s, r, o)
+                    if (token.size != 3 && ignore4Plus) t = MyTriple(s, r, o)
                     if (token.size == 4 && !ignore4Plus) {
-                        if (token[3] == ".") t = Triple(s, r, o)
+                        if (token[3] == ".") t = MyTriple(s, r, o)
                         else {
                             System.err.println("could not parse line " + line)
                             t = null
@@ -188,7 +196,7 @@ class TripleSet(
                         subject = subject.replace(" ", "_")
                         relation = relation.replace(" ", "_")
                         `object` = `object`.replace(" ", "_")
-                        t = Triple(subject, relation, `object`)
+                        t = MyTriple(subject, relation, `object`)
                     }
 
                     if (t == null) {
@@ -205,26 +213,26 @@ class TripleSet(
         println("* read " + this.size + " triples")
     }
 
-    fun getTriplesByHead(head: Int) = entityTriples[head] ?: mutableListOf()
+    fun getTriplesByHead(head: Int) = h2tripleList[head] ?: mutableListOf()
 
     /**
      * Get all triples connected to an entity (both as head and tail)
      * This includes original triples where the entity is head, and virtual inverse triples where it's tail
      */
-    fun getTriplesByEntity(entityId: Int): MutableList<Triple> {
-        val result = mutableListOf<Triple>()
+    fun getTriplesByEntity(entityId: Int): MutableList<MyTriple> {
+        val result = mutableListOf<MyTriple>()
         
         // Add triples where entity is head (original triples)
-        result.addAll(entityTriples[entityId] ?: mutableListOf())
+        result.addAll(h2tripleList[entityId] ?: mutableListOf())
         
         // Add virtual inverse triples where entity is tail
         // Use the headRelationTails index to efficiently find incoming relations
-        val incomingRelations = headRelationTails[entityId] ?: mutableMapOf()
+        val incomingRelations = h2r2tSet[entityId] ?: mutableMapOf()
         incomingRelations.forEach { (relationId, tailEntities) ->
             if (IdManager.isInverseRelation(relationId)) {
                 // This is an inverse relation, so entityId is actually tail in the original triple
                 tailEntities.forEach { headEntity ->
-                    result.add(Triple(entityId, relationId, headEntity))
+                    result.add(MyTriple(entityId, relationId, headEntity))
                 }
             }
         }
@@ -232,33 +240,38 @@ class TripleSet(
         return result
     }
 
-    fun getTriplesByRelation(relation: Long): MutableList<Triple> {
+    fun getTriplesByRelation(relation: Long): MutableList<MyTriple> {
         if (IdManager.isInverseRelation(relation)) {
             // For inverse relations, get original triples and create virtual inverse triples
-            val originalRelation = IdManager.getInverseRelationId(relation)
-            val originalTriples = relationTriples[originalRelation] ?: mutableSetOf()
-            return originalTriples.map { Triple(it.t, relation, it.h) }.toMutableList()
+            val originalRelation = IdManager.getInverseRelation(relation)
+            val originalTriples = r2tripleSet[originalRelation] ?: mutableSetOf()
+            return originalTriples.map { MyTriple(it.t, relation, it.h) }.toMutableList()
         } else {
             // For original relations, return as-is
-            return relationTriples[relation]?.toMutableList() ?: mutableListOf()
+            return r2tripleSet[relation]?.toMutableList() ?: mutableListOf()
         }
     }
 
-    fun getRandomTripleByRelation(relation: Long): Triple? {
+    fun getRandomTripleByRelation(relation: Long): MyTriple? {
         if (IdManager.isInverseRelation(relation)) {
             // For inverse relations, get a random original triple and create virtual inverse triple
-            val originalRelation = IdManager.getInverseRelationId(relation)
-            val originalTriple = relationTriples[originalRelation]?.randomOrNull(rand)
-            return originalTriple?.let { Triple(it.t, relation, it.h) }
+            val originalRelation = IdManager.getInverseRelation(relation)
+            val originalTriple = r2tripleSet[originalRelation]?.randomOrNull(rand)
+            return originalTriple?.let { MyTriple(it.t, relation, it.h) }
         } else {
             // For original relations, return as-is
-            return relationTriples[relation]?.randomOrNull(rand)
+            return r2tripleSet[relation]?.randomOrNull(rand)
         }
     }
 
 
+//    fun getNRandomEntitiesByRelation(relation: Long, ifHead: Boolean, n: Int): MutableList<Int> {
+//        return r2hSample[relation] ?: computeNRandomEntitiesByRelation(relation, ifHead, n)
+//    }
+
     fun getNRandomEntitiesByRelation(relation: Long, ifHead: Boolean, n: Int): MutableList<Int> {
-        return relationSampleCache[relation] ?: computeNRandomEntitiesByRelation(relation, ifHead, n)
+        val sampleMap = if (ifHead) r2hSample else r2tSample
+        return sampleMap[relation] ?: computeNRandomEntitiesByRelation(relation, ifHead, n)
     }
 
     fun precomputeNRandomEntitiesPerRelation(n: Int) {
@@ -274,10 +287,10 @@ class TripleSet(
     private fun computeNRandomEntitiesByRelation(relation: Long, ifHead: Boolean, n: Int): MutableList<Int> {
         val relationTriples = if (IdManager.isInverseRelation(relation)) {
             // For inverse relations, get original triples
-            val originalRelation = IdManager.getInverseRelationId(relation)
-            relationTriples[originalRelation]
+            val originalRelation = IdManager.getInverseRelation(relation)
+            r2tripleSet[originalRelation]
         } else {
-            relationTriples[relation]
+            r2tripleSet[relation]
         }
         
         if (relationTriples == null) {
@@ -299,18 +312,20 @@ class TripleSet(
 
         val sampledEntities = (0 until n).map { entities.random(rand) }.toMutableList()
         
-        relationSampleCache[relation] = sampledEntities
+//        r2hSample[relation] = sampledEntities
+        val targetMap = if (ifHead) r2hSample else r2tSample
+        targetMap[relation] = sampledEntities
         
         return sampledEntities
     }
 
     val relations: MutableSet<Long> 
         get() {
-            val allRelations = relationTriples.keys.toMutableSet()
+            val allRelations = r2tripleSet.keys.toMutableSet()
             // Add inverse relations for all original relations
-            relationTriples.keys.forEach { relationId ->
+            r2tripleSet.keys.forEach { relationId ->
                 if (!IdManager.isInverseRelation(relationId)) {
-                    allRelations.add(IdManager.getInverseRelationId(relationId))
+                    allRelations.add(IdManager.getInverseRelation(relationId))
                 }
             }
             return allRelations
@@ -318,7 +333,7 @@ class TripleSet(
 
     // Get only original relations (excluding inverse relations)
     val originalRelations: MutableSet<Long> 
-        get() = relationTriples.keys.filter { !IdManager.isInverseRelation(it) }.toMutableSet()
+        get() = r2tripleSet.keys.filter { !IdManager.isInverseRelation(it) }.toMutableSet()
 
     // Check if a triple exists, considering inverse relations
     fun isTrueWithInverse(head: Int, relation: Long, tail: Int): Boolean {
@@ -326,7 +341,7 @@ class TripleSet(
         if (isTrue(head, relation, tail)) return true
         
         // Then check using inverse relation
-        val inverseRelationId = IdManager.getInverseRelationId(relation)
+        val inverseRelationId = IdManager.getInverseRelation(relation)
         return if (inverseRelationId != null) {
             isTrue(tail, inverseRelationId, head)
         } else {
@@ -336,13 +351,13 @@ class TripleSet(
 
     fun getHeadEntities(relation: Long, tail: Int): MutableSet<Int> {
         // 使用逆关系：tail --INVERSE_relation--> heads
-        val inverseRelation = IdManager.getInverseRelationId(relation)
-        return headRelationTails[tail]?.get(inverseRelation) ?: mutableSetOf()
+        val inverseRelation = IdManager.getInverseRelation(relation)
+        return h2r2tSet[tail]?.get(inverseRelation) ?: mutableSetOf()
     }
 
     fun getTailEntities(relation: Long, head: Int): MutableSet<Int> {
         // 直接查询：head --relation--> tails
-        return headRelationTails[head]?.get(relation) ?: mutableSetOf()
+        return h2r2tSet[head]?.get(relation) ?: mutableSetOf()
     }
 
     fun getEntities(relation: Long, value: Int, ifHead: Boolean): MutableSet<Int> =
@@ -353,9 +368,9 @@ class TripleSet(
 
     private fun getRandomHeadEntity(relation: Long, tail: Int): Int? {
         // 使用逆关系查询
-        val inverseRelation = IdManager.getInverseRelationId(relation)
-        val list = headRelationTailsList[tail]?.get(inverseRelation) ?: run {
-            val headSet = headRelationTails[tail]?.get(inverseRelation)
+        val inverseRelation = IdManager.getInverseRelation(relation)
+        val list = h2r2tList[tail]?.get(inverseRelation) ?: run {
+            val headSet = h2r2tSet[tail]?.get(inverseRelation)
             if (headSet?.isNotEmpty() == true) headSet.toMutableList() else return null
         }
         return list.randomOrNull(rand)
@@ -363,17 +378,17 @@ class TripleSet(
 
     private fun getRandomTailEntity(relation: Long, head: Int): Int? {
         // 直接查询
-        val list = headRelationTailsList[head]?.get(relation) ?: run {
-            val tailSet = headRelationTails[head]?.get(relation)
+        val list = h2r2tList[head]?.get(relation) ?: run {
+            val tailSet = h2r2tSet[head]?.get(relation)
             if (tailSet?.isNotEmpty() == true) tailSet.toMutableList() else return null
         }
         return list.randomOrNull(rand)
     }
 
     fun isTrue(head: Int, relation: Long, tail: Int) =
-        headRelationTails[head]?.get(relation)?.contains(tail) == true
+        h2r2tSet[head]?.get(relation)?.contains(tail) == true
 
-    fun isTrue(triple: Triple) = isTrue(triple.h, triple.r, triple.t)
+    fun isTrue(triple: MyTriple) = isTrue(triple.h, triple.r, triple.t)
 
     fun compareTo(that: TripleSet, thisId: String, thatId: String) {
         println("* Comparing two triple sets")
@@ -393,7 +408,7 @@ class TripleSet(
     }
 
     val entities: MutableSet<Int>
-        get() = entityTriples.keys.toMutableSet()
+        get() = h2tripleList.keys.toMutableSet()
 
     @Throws(FileNotFoundException::class)
     fun write(filepath: String) {

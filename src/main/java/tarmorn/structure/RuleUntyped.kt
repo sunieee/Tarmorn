@@ -1,6 +1,6 @@
 package tarmorn.structure
 
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 import tarmorn.data.IdManager
 
@@ -159,7 +159,7 @@ class RuleUntyped : Rule {
         System.err.println("method not available for an untyped rule")
     }
 
-    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: Triple?, ts: TripleSet): Boolean {
+    override fun isPredictedX(leftValue: Int, rightValue: Int, forbidden: MyTriple?, ts: TripleSet): Boolean {
         System.err.println("method not available for an untyped rule")
         return false
     }
@@ -169,17 +169,17 @@ class RuleUntyped : Rule {
     }
 
 
-    override fun getRandomValidPrediction(ts: TripleSet): Triple? {
+    override fun getRandomValidPrediction(ts: TripleSet): MyTriple? {
         System.err.println("method not available for an untyped rule")
         return null
     }
 
-    override fun getRandomInvalidPrediction(ts: TripleSet): Triple? {
+    override fun getRandomInvalidPrediction(ts: TripleSet): MyTriple? {
         System.err.println("method not available for an untyped rule")
         return null
     }
 
-    override fun getPredictions(ts: TripleSet): List<Triple>? {
+    override fun getPredictions(ts: TripleSet): List<MyTriple>? {
         System.err.println("method not available for an untyped rule")
         return null
     }
@@ -194,9 +194,9 @@ class RuleUntyped : Rule {
     override fun getTripleExplanation(
         xValue: Int,
         yValue: Int,
-        excludedTriples: Set<Triple>,
+        excludedTriples: Set<MyTriple>,
         triples: TripleSet
-    ): Set<Triple> {
+    ): Set<MyTriple> {
         System.err.println("Your are asking for a triple explanation using an untyped rule. Such a rule cannot explain anything.")
         return hashSetOf()
     }

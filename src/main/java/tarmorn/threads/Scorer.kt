@@ -7,7 +7,7 @@ import tarmorn.Learn.isStored
 import tarmorn.Learn.storeRule
 import tarmorn.Settings
 import tarmorn.data.IdManager
-import tarmorn.data.Triple
+import tarmorn.data.MyTriple
 import tarmorn.data.TripleSet
 import tarmorn.structure.*
 import kotlin.math.pow
@@ -258,7 +258,7 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
      * Sample a path from the triple set with support for both forward and inverse relations
      * Now correctly handles bidirectional traversal through inverse relations
      */
-    private fun samplePath(steps: Int, cyclic: Boolean, chosenHeadTriple: Triple? = null): Path? {
+    private fun samplePath(steps: Int, cyclic: Boolean, chosenHeadTriple: MyTriple? = null): Path? {
         val entityNodes = IntArray(1 + steps)
         val relationNodes = LongArray(steps)
         
@@ -298,7 +298,7 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
             val filteredCandidates = candidateTriples.filter { triple ->
                 // Don't allow consecutive inverse relations
                 val currentRel = triple.r
-                val prevInverse = IdManager.getInverseRelationId(previousRelation)
+                val prevInverse = IdManager.getInverseRelation(previousRelation)
                 currentRel != prevInverse
             }
             
@@ -339,7 +339,7 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
         // Create rule head from first edge - normalize to use original relation
         val headRelation = p.relationNodes[0]
         rv.head = if (IdManager.isInverseRelation(headRelation)) {
-            val originalRelation = IdManager.getInverseRelationId(headRelation)
+            val originalRelation = IdManager.getInverseRelation(headRelation)
             Atom(p.entityNodes[1], originalRelation, p.entityNodes[0])  // Swap entities for inverse
         } else {
             Atom(p.entityNodes[0], headRelation, p.entityNodes[1])
@@ -349,7 +349,7 @@ class Scorer(val triples: TripleSet, val id: Int) : Thread() {
         for (i in 1..<p.relationNodes.size) {
             val bodyRelation = p.relationNodes[i]
             val bodyAtom = if (IdManager.isInverseRelation(bodyRelation)) {
-                val originalRelation = IdManager.getInverseRelationId(bodyRelation)
+                val originalRelation = IdManager.getInverseRelation(bodyRelation)
                 Atom(p.entityNodes[i + 1], originalRelation, p.entityNodes[i])  // Swap entities for inverse
             } else {
                 Atom(p.entityNodes[i], bodyRelation, p.entityNodes[i + 1])
