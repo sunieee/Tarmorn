@@ -8,6 +8,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.mutableSetOf
 import kotlin.collections.mutableMapOf
 import kotlin.collections.mutableListOf
+import java.io.File
+import java.io.FileWriter
+import java.io.BufferedWriter
 
 /**
  * TLearn - Top-down relation path learning algorithm
@@ -15,7 +18,7 @@ import kotlin.collections.mutableListOf
  */
 object TLearn {
 
-    const val MIN_SUPP = 24
+    const val MIN_SUPP = 50
     const val MAX_PATH_LENGTH = 3
 
     // Core data structures
@@ -34,6 +37,36 @@ object TLearn {
     // Backup of L1 relations for connection attempts
     lateinit var relationL1: List<Long>
     
+    // Synchronized logger for workers
+    private val logFile = File("out/workers.log")
+    private lateinit var logWriter: BufferedWriter
+    
+    // Initialize logger and clear the log file
+    private fun initializeLogger() {
+        synchronized(Any()) {
+            try {
+                logFile.parentFile?.mkdirs() // Create out directory if it doesn't exist
+                logFile.writeText("") // Clear the file content
+                logWriter = BufferedWriter(FileWriter(logFile, true)) // Append mode
+            } catch (e: Exception) {
+                println("Error initializing log file: ${e.message}")
+            }
+        }
+    }
+    
+    // Synchronized logging function
+    private fun logWorkerResult(connectedPath: Long, support: Int) {
+        synchronized(logWriter) {
+            try {
+                val pathString = RelationPath.toString(connectedPath)
+                logWriter.write("$pathString: $support\n")
+                logWriter.flush()
+            } catch (e: Exception) {
+                println("Error writing to log: ${e.message}")
+            }
+        }
+    }
+    
     data class RelationPathItem(
         val relationPath: Long,
         val supportSize: Int
@@ -44,6 +77,7 @@ object TLearn {
      */
     @JvmStatic
     fun main(args: Array<String>) {
+        Settings.load()
         println("TLearn - Top-down relation path learning algorithm")
         println("Loading triple set...")
 
@@ -60,6 +94,9 @@ object TLearn {
      * Main entry point for the learning algorithm
      */
     fun learn() {
+        // Initialize and clear the log file
+        initializeLogger()
+        
         // Initialize data structures
         // r2tripleSet = ts.r2tripleSet
         r2h2tSet = ts.r2h2tSet
@@ -81,6 +118,15 @@ object TLearn {
         } finally {
             println("TLearn algorithm completed. Total relation paths: ${r2tripleCount.size}")
             println(r2tripleCount)
+            
+            // Close the log file
+            synchronized(logWriter) {
+                try {
+                    logWriter.close()
+                } catch (e: Exception) {
+                    println("Error closing log file: ${e.message}")
+                }
+            }
             // return r2tripleSet.mapValues { it.value.toSet() }
         }
     }
@@ -169,12 +215,13 @@ object TLearn {
                                 relationQueue.offer(newItem)
                             }
                             addedCount.incrementAndGet()
-                            
-                            if (addedCount.get() > 7000) {
-                                println("Thread $threadId: path $connectedPath added with support $support (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
-                            }
+
+                            // Log the successful path addition
+                            logWorkerResult(connectedPath, support)
+
                             if (addedCount.get() % 100 == 0) {
                                 println("Thread $threadId: Added ${addedCount.get()} new paths")
+                                println("Thread $threadId: path $connectedPath added with support $support (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
                             }
                         }
                     }
@@ -194,11 +241,11 @@ object TLearn {
      */
     fun attemptConnection(r1: Long, ri: Long): Long? {
         // Check if ri's last relation conflicts with inverse of r1
-        val riLastRelation = RelationPath.getLastRelation(ri)
+        val riFirstRelation = RelationPath.getFirstRelation(ri)
         val inverser1 = IdManager.getInverseRelation(r1)
 
         // Simple check without accessing RELATION_MASK
-        if (riLastRelation == inverser1) {
+        if (riFirstRelation == inverser1) {
             return null // Skip conflicting inverse relations
         }
 
@@ -222,6 +269,72 @@ object TLearn {
      */
     fun computeSupport(rp: Long, r1: Long, ri: Long): Int {
         // Get tail entities of r1 (these become connecting entities)
+        val pathLength = RelationPath.getLength(rp)
+        val r1TailEntities = r2hSet[IdManager.getInverseRelation(r1)] ?: emptySet()
+
+        // Get head entities for ri
+        val riHeadEntities = r2hSet[ri] ?: emptySet()
+
+        // Find intersection of possible connecting entities
+        // val connectingEntities = r1TailEntities.intersect(riHeadEntities)
+        // if (connectingEntities.isEmpty()) return 0
+
+        val connectingEntities = r1TailEntities.asSequence()
+            .filter { it in riHeadEntities } 
+        // if (!connectingEntities.any()) return 0
+
+        // Compute Cartesian product
+        // val resultTriples = mutableSetOf<MyTriple>()
+        val resultH2TSet = mutableMapOf<Int, MutableSet<Int>>()
+        val resultHSet = mutableSetOf<Int>()
+        val resultTSet = mutableSetOf<Int>()
+        // val resultT2HSet = mutableMapOf<Int, MutableSet<Int>>()
+        var size = 0
+
+        for (connectingEntity in connectingEntities) {
+            // Get head entities that can reach this connecting entity via r1
+            // This is equivalent to: entities where (entity, r1, connectingEntity) exists
+            val r1HeadEntities = r2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
+
+            // Get tail entities reachable from this connecting entity via ri
+            val riTailEntities = r2h2tSet[ri]?.get(connectingEntity) ?: emptySet()
+            
+            size += r1HeadEntities.size * riTailEntities.size // Count the number of valid triples
+            resultHSet.addAll(r1HeadEntities)
+            resultTSet.addAll(riTailEntities)
+            // Create Cartesian product
+            if (pathLength < 3) {
+                // For paths with length < 3, we store the full h2t mapping
+                for (r1Head in r1HeadEntities) {
+                    for (riTail in riTailEntities) {
+                        resultH2TSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
+                    }
+                }
+            }
+        }
+
+        if (size >= MIN_SUPP) {
+            // Add to main data structures
+            // r2tripleSet[rp] = resultTriples
+            r2tripleCount[rp] = size
+            r2tripleCount[RelationPath.getInverseRelation(rp)] = size // Inverse relation also has same support
+            if (pathLength < 3) {
+                // For paths with length < 3, we store the full h2t mapping
+                r2h2tSet[rp] = resultH2TSet
+                // r2h2tSet[RelationPath.getInverseRelation(rp)] = resultH2TSet
+            }
+            
+            // Update head entity index for the new relation path
+            r2hSet[rp] = resultHSet
+            r2hSet[RelationPath.getInverseRelation(rp)] = resultTSet
+        }
+
+        return size
+    }
+    
+
+    fun computeSupportSet(rp: Long, r1: Long, ri: Long): MutableMap<Int, MutableSet<Int>> {
+        // Get tail entities of r1 (these become connecting entities)
         val r1TailEntities = r2hSet[IdManager.getInverseRelation(r1)] ?: emptySet()
 
         // Get head entities for ri
@@ -231,13 +344,9 @@ object TLearn {
         val connectingEntities = r1TailEntities.intersect(riHeadEntities)
         
         
-        if (connectingEntities.isEmpty()) return 0
+        if (connectingEntities.isEmpty()) return mutableMapOf()
 
-        // Compute Cartesian product
-        // val resultTriples = mutableSetOf<MyTriple>()
         val resultH2TSet = mutableMapOf<Int, MutableSet<Int>>()
-        val resultT2HSet = mutableMapOf<Int, MutableSet<Int>>()
-        var size = 0
 
         for (connectingEntity in connectingEntities) {
             // Get head entities that can reach this connecting entity via r1
@@ -250,31 +359,10 @@ object TLearn {
             // Create Cartesian product
             for (r1Head in r1HeadEntities) {
                 for (riTail in riTailEntities) {
-                    // val triple = MyTriple(r1Head, rp, riTail)
-                    // resultTriples.add(triple)
-                    size++ // Count the number of valid triples
-
-                    // Update h2t index
                     resultH2TSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
-                    // resultT2HSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
                 }
             }
         }
-
-        if (size >= MIN_SUPP) {
-            // Add to main data structures
-            // r2tripleSet[rp] = resultTriples
-            r2tripleCount[rp] = size
-            r2tripleCount[IdManager.getInverseRelation(rp)] = size // Inverse relation also has same support
-            r2h2tSet[rp] = resultH2TSet
-            // r2h2tSet[IdManager.getInverseRelation(rp)] = resultT2HSet
-            
-            // Update head entity index for the new relation path
-            r2hSet[rp] = resultH2TSet.keys.toMutableSet()
-            r2hSet[IdManager.getInverseRelation(rp)] = resultT2HSet.keys.toMutableSet()
-        }
-
-        return size
+        return resultH2TSet
     }
-    
 }
