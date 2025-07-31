@@ -132,6 +132,10 @@ class TripleSet(
         // 关系索引 - 只存储原始关系
         r2tripleSet.getOrPut(r) { mutableSetOf() }.add(triple)
 
+        if (h==t) {
+            println("Warning: Triple with head equals tail detected: $triple")
+            return
+        }
         // 核心查询索引：relation -> head  -> tails
         val htMap = r2h2tSet.getOrPut(key=r) { mutableMapOf() }
         htMap.getOrPut(h) { mutableSetOf() }.add(t)
