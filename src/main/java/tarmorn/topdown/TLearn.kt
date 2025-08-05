@@ -17,7 +17,7 @@ import java.io.BufferedWriter
  */
 object TLearn {
 
-    const val MIN_SUPP = 50
+    const val MIN_SUPP = 100
     const val MAX_PATH_LENGTH = 3
 
     // Core data structures
@@ -25,12 +25,12 @@ object TLearn {
     // lateinit var r2tripleSet: MutableMap<Long, MutableSet<MyTriple>>
     lateinit var r2supp: MutableMap<Long, Int>
     lateinit var r2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
-    lateinit var r2hSet: MutableMap<Long, MutableSet<Int>>
     lateinit var r2h2supp: MutableMap<Long, MutableMap<Int, Int>>
 
     // Thread-safe relation queue using ConcurrentLinkedQueue for producer-consumer pattern
     val relationQueue = PriorityQueue<RelationPathItem>(
         compareByDescending { it.supportSize }
+//        compareBy { it.supportSize }
     )
     val queueLock = Object()
     
@@ -100,7 +100,6 @@ object TLearn {
         // Initialize data structures
         // r2tripleSet = ts.r2tripleSet
         r2h2tSet = ts.r2h2tSet
-        r2hSet = ts.r2hSet
         r2supp = ts.r2tripleSet.mapValues { it.value.size }.toMutableMap()
         r2h2supp = r2h2tSet.mapValues { entry ->
             entry.value.mapValues { it.value.size }.toMutableMap()
@@ -271,10 +270,10 @@ object TLearn {
     fun computeSupport(rp: Long, r1: Long, ri: Long): Int {
         // Get tail entities of r1 (these become connecting entities)
         val pathLength = RelationPath.getLength(rp)
-        val r1TailEntities = r2hSet[IdManager.getInverseRelation(r1)] ?: emptySet()
+        val r1TailEntities = r2h2supp[IdManager.getInverseRelation(r1)]?.keys ?: emptySet()
 
         // Get head entities for ri
-        val riHeadEntities = r2hSet[ri] ?: emptySet()
+        val riHeadEntities = r2h2supp[ri]?.keys ?: emptySet()
 
         // Find intersection of possible connecting entities
         // val connectingEntities = r1TailEntities.intersect(riHeadEntities)
@@ -339,8 +338,6 @@ object TLearn {
             }
             
             // Update head entity index for the new relation path
-            r2hSet[rp] = h2supp.keys.toMutableSet()
-            r2hSet[RelationPath.getInverseRelation(rp)] = t2supp.keys.toMutableSet()
             r2h2supp[rp] = h2supp
             r2h2supp[RelationPath.getInverseRelation(rp)] = t2supp
         }
@@ -351,10 +348,10 @@ object TLearn {
 
     fun computeSupportSet(rp: Long, r1: Long, ri: Long): MutableMap<Int, MutableSet<Int>> {
         // Get tail entities of r1 (these become connecting entities)
-        val r1TailEntities = r2hSet[IdManager.getInverseRelation(r1)] ?: emptySet()
+        val r1TailEntities = r2h2supp[IdManager.getInverseRelation(r1)]?.keys ?: emptySet()
 
         // Get head entities for ri
-        val riHeadEntities = r2hSet[ri] ?: emptySet()
+        val riHeadEntities = r2h2supp[ri]?.keys ?: emptySet()
 
         // Find intersection of possible connecting entities
         val connectingEntities = r1TailEntities.intersect(riHeadEntities)

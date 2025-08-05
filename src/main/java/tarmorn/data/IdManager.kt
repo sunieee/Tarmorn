@@ -117,6 +117,16 @@ object IdManager {
     fun getYId(): Int = getEntityId("Y")
     fun getZId(): Int = getEntityId("Z")
 
+    // Convert unary atom to string representation
+    fun UnaryAtomToString(r: Long, c: Int): String {
+        return "${getRelationString(r)}(X, ${getEntityString(c)})"
+    }
+
+    // Convert binary atom to string representation
+    fun BinaryAtomToString(r: Long): String {
+        return "${getRelationString(r)}(X,Y)"
+    }
+
     // Clear all mappings except KG variables (useful for testing).
     fun clear() {
         // Preserve KG variables A-Z
