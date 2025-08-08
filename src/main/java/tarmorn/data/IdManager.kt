@@ -59,9 +59,14 @@ object IdManager {
         return id2entity[id] ?: throw IllegalArgumentException("Unknown entity ID: $id")
     }
 
-    // Get the string representation of a relation ID.
+    // Get the string representation of a relation(path) ID.
     fun getRelationString(id: Long): String {
-        return id2relation[id] ?: throw IllegalArgumentException("Unknown relation ID: $id")
+        if (id <= MAX_RELATION_ID) {
+            return id2relation[id] ?: throw IllegalArgumentException("Unknown relation ID: $id")
+        } else {
+            val relations = decode(id)
+            return relations.joinToString("·") { getRelationString(it) }
+        }
     }
 
     // Check if an entity ID is a KG variable (A-Z).

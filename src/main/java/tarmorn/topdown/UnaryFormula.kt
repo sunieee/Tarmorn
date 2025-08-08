@@ -8,33 +8,9 @@ import tarmorn.data.IdManager
  * 实现equals基于hashCode相等判断
  */
 class UnaryFormula : Triple<Pair<Long, Int>, Pair<Long, Int>, Pair<Long, Int>> {
-    
-    /**
-     * 构造函数：接受1个元素
-     */
-    constructor(first: Pair<Long, Int>) : super(
-        first,
-        0L to 0,
-        0L to 0
-    )
-    
-    /**
-     * 构造函数：接受2个元素
-     */
-    constructor(first: Pair<Long, Int>, second: Pair<Long, Int>) : super(
-        first,
-        second,
-        0L to 0
-    )
-    
-    /**
-     * 构造函数：接受3个元素
-     */
-    constructor(first: Pair<Long, Int>, second: Pair<Long, Int>, third: Pair<Long, Int>) : super(
-        first,
-        second,
-        third
-    )
+    constructor(first: Pair<Long, Int>) : super(first, 0L to 0, 0L to 0)
+    constructor(first: Pair<Long, Int>, second: Pair<Long, Int>) : super(first, second, 0L to 0)
+    constructor(first: Pair<Long, Int>, second: Pair<Long, Int>, third: Pair<Long, Int>) : super(first, second, third)
     
     /**
      * hashCode实现：三个元素的hashCode直接相加

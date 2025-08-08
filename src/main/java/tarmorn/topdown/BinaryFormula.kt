@@ -8,33 +8,9 @@ import tarmorn.data.IdManager
  * 实现equals基于hashCode相等判断
  */
 class BinaryFormula : Triple<Long, Long, Long> {
-    
-    /**
-     * 构造函数：接受1个元素
-     */
-    constructor(first: Long) : super(
-        first,
-        0L,
-        0L
-    )
-    
-    /**
-     * 构造函数：接受2个元素
-     */
-    constructor(first: Long, second: Long) : super(
-        first,
-        second,
-        0L
-    )
-    
-    /**
-     * 构造函数：接受3个元素
-     */
-    constructor(first: Long, second: Long, third: Long) : super(
-        first,
-        second,
-        third
-    )
+    constructor(first: Long) : super(first, 0L, 0L)
+    constructor(first: Long, second: Long) : super(first, second, 0L)
+    constructor(first: Long, second: Long, third: Long) : super(first, second, third)
     
     /**
      * hashCode实现：三个元素的hashCode直接相加

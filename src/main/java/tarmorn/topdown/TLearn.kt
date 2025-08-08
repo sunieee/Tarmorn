@@ -58,7 +58,7 @@ object TLearn {
     private fun logWorkerResult(connectedPath: Long, support: Int) {
         synchronized(logWriter) {
             try {
-                val pathString = RelationPath.toString(connectedPath)
+                val pathString = IdManager.getRelationString(connectedPath)
                 logWriter.write("$pathString: $support\n")
                 logWriter.flush()
             } catch (e: Exception) {

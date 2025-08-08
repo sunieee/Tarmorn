@@ -177,12 +177,4 @@ object RelationPath {
             return encode(inverseRelations)
         }
     }
-    
-    /**
-     * Convert to string representation for debugging.
-     */
-    fun toString(encoded: Long): String {
-        val relations = decode(encoded)
-        return relations.joinToString(" -> ") { IdManager.getRelationString(it) }
-    }
 }
