@@ -133,7 +133,7 @@ class TripleSet(
         r2tripleSet.getOrPut(r) { mutableSetOf() }.add(triple)
 
         if (h==t) {
-            println("Warning: Triple with head equals tail detected: $triple")
+//            println("Warning: Triple with head equals tail detected: $triple")
             return
         }
         // 核心查询索引：relation -> head  -> tails
@@ -149,6 +149,10 @@ class TripleSet(
         
         // 为逆关系建立索引条目（不创建实际的反向三元组）
         val inverseRelationId = IdManager.getInverseRelation(r)
+        
+        // 逆关系的r2h2tSet索引：inverse_r -> t -> {h}
+//        val inverseHtMap = r2h2tSet.getOrPut(inverseRelationId) { mutableMapOf() }
+//        inverseHtMap.getOrPut(t) { mutableSetOf() }.add(h)
         
         // 逆关系索引：t --inverse_r--> h
         val inverseRelationMap = h2r2tSet.getOrPut(t) { mutableMapOf() }

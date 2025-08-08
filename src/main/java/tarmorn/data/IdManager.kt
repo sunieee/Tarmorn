@@ -61,10 +61,10 @@ object IdManager {
 
     // Get the string representation of a relation(path) ID.
     fun getRelationString(id: Long): String {
-        if (id <= MAX_RELATION_ID) {
+        if (id <= RelationPath.MAX_RELATION_ID) {
             return id2relation[id] ?: throw IllegalArgumentException("Unknown relation ID: $id")
         } else {
-            val relations = decode(id)
+            val relations = RelationPath.decode(id)
             return relations.joinToString("·") { getRelationString(it) }
         }
     }

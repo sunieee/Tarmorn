@@ -13,7 +13,7 @@ package tarmorn.data
  */
 object RelationPath {
     private const val BITS_PER_RELATION = 15
-    private const val MAX_RELATION_ID = (1L shl BITS_PER_RELATION) - 1 // 2^15 - 1 = 32767
+    const val MAX_RELATION_ID = (1L shl BITS_PER_RELATION) - 1 // 2^15 - 1 = 32767
     private const val RELATION_MASK = MAX_RELATION_ID
     
     /**
