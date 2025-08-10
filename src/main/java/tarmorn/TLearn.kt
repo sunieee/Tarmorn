@@ -218,27 +218,29 @@ object TLearn {
                     relationQueue.offer(item)
                     addedCount++
 
-                    // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
-                    val h2tSet = r2h2tSet[relation]?.toMutableMap() ?: mutableMapOf()
-                    val inverseRelation = RelationPath.getInverseRelation(relation)
-                    val t2hSet = r2h2tSet[inverseRelation]?.toMutableMap() ?: mutableMapOf()
+                    if (!IdManager.isInverseRelation(relation)) {
+                        // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
+                        val h2tSet = r2h2tSet[relation]?.toMutableMap() ?: mutableMapOf()
+                        val inverseRelation = RelationPath.getInverseRelation(relation)
+                        val t2hSet = r2h2tSet[inverseRelation]?.toMutableMap() ?: mutableMapOf()
 
-                    // 计算Binary原子的MinHash签名
-                    val binaryInstanceSet = h2tSet.flatMap { (head, tails) ->
-                        tails.map { tail -> Pair(head, tail) }
-                    }.toSet()
-                    val inverseBinaryInstanceSet = t2hSet.flatMap { (tail, heads) ->
-                        heads.map { head -> Pair(tail, head) }
-                    }.toSet()
+                        // 计算Binary原子的MinHash签名
+                        val binaryInstanceSet = h2tSet.flatMap { (head, tails) ->
+                            tails.map { tail -> Pair(head, tail) }
+                        }.toSet()
+                        val inverseBinaryInstanceSet = t2hSet.flatMap { (tail, heads) ->
+                            heads.map { head -> Pair(tail, head) }
+                        }.toSet()
+                        
+                        val binaryMinHash = computeBinaryMinHash(binaryInstanceSet)
+                        val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
                     
-                    val binaryMinHash = computeBinaryMinHash(binaryInstanceSet)
-                    val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
+                        // 处理Binary原子
+                        atomizeBinaryRelationPath(relation, binaryMinHash, inverseBinaryMinHash)
+                        // 处理Unary原子
+                        atomizeUnaryRelationPath(relation, h2tSet, t2hSet)
+                    }
                     
-                    // 处理Binary原子
-                    atomizeBinaryRelationPath(relation, binaryMinHash, inverseBinaryMinHash)
-                    
-                    // 处理Unary原子
-                    atomizeUnaryRelationPath(relation, h2tSet, t2hSet)
                 }
             }
 
@@ -729,7 +731,8 @@ object TLearn {
             formulas.take(10).forEach { formula ->
                 val atom = formula.atom1
                 if (atom != null) {
-                    val atomStr = "Binary(${IdManager.getRelationString(atom.relationId)})"
+                    val relationStr = IdManager.getRelationString(atom.relationId)
+                    val atomStr = "$relationStr(X,Y)"   // Binary($relationStr) 
                     println("    $atomStr")
                 }
             }
@@ -745,10 +748,12 @@ object TLearn {
             formulas.take(10).forEach { formula ->
                 val atom = formula.atom1
                 if (atom != null) {
+                    val relationStr = IdManager.getRelationString(atom.relationId)
                     val atomStr = if (atom.entityId == 0) {
-                        "Existence(${IdManager.getRelationString(atom.relationId)})"
+                        "$relationStr(X,·)"  // Existence($relationStr)
                     } else {
-                        "Unary(${IdManager.getRelationString(atom.relationId)}, ${IdManager.getEntityString(atom.entityId)})"
+                        val entityStr = IdManager.getEntityString(atom.entityId)
+                        "$relationStr(X,$entityStr)"    // Unary($relationStr, $entityStr)
                     }
                     println("    $atomStr")
                 }

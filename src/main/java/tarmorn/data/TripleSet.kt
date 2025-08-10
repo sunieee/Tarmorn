@@ -20,11 +20,13 @@ class TripleSet(
     // 统一的实体索引：entity -> 以该实体为相关的所有三元组
     var h2tripleList = mutableMapOf<Int, MutableList<MyTriple>>()
     
-    // 关系索引：relation -> 该关系的所有三元组
+    // 关系索引：relation -> 该关系的所有三元组，不存储逆关系
     var r2tripleSet = mutableMapOf<Long, MutableSet<MyTriple>>()
 
     // 核心查询索引：head -> relation -> tails
     var h2r2tSet = mutableMapOf<Int, MutableMap<Long, MutableSet<Int>>>()
+
+    // 核心查询索引：relation -> head -> tails，不存储逆关系
     var r2h2tSet = mutableMapOf<Long, MutableMap<Int, MutableSet<Int>>>()
 
     // 性能优化索引：relation -> head entities (避免每次调用keys)
