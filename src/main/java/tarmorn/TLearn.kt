@@ -208,7 +208,7 @@ object TLearn {
     fun initializeLevel1Relations() {
         println("Initializing level 1 relations...")
 
-        var addedCount = 0
+        var computeCount = 0
 
         synchronized(queueLock) {
             for ((relation, tripleSet) in ts.r2tripleSet) {
@@ -216,7 +216,7 @@ object TLearn {
 //                    val pathId = RelationPath.encode(relation)
                     val item = RelationPathItem(relation, tripleSet.size)
                     relationQueue.offer(item)
-                    addedCount++
+                    computeCount++
 
                     if (!IdManager.isInverseRelation(relation)) {
                         // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
@@ -236,7 +236,7 @@ object TLearn {
                         val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
                     
                         // 处理Binary原子
-                        atomizeBinaryRelationPath(relation, binaryMinHash, inverseBinaryMinHash)
+                        val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(relation, binaryMinHash, inverseBinaryMinHash)
                         // 处理Unary原子
                         atomizeUnaryRelationPath(relation, h2tSet, t2hSet)
                     }
@@ -258,12 +258,12 @@ object TLearn {
 
         val threadPool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
         val processedCount = AtomicInteger(0)
-        val addedCount = AtomicInteger(0)
+        val computeCount = AtomicInteger(0)
 
         // Create worker threads
         val futures = (1..Settings.WORKER_THREADS).map { threadId ->
             threadPool.submit {
-                connectRelationsWorker(threadId, processedCount, addedCount)
+                connectRelationsWorker(threadId, processedCount, computeCount)
             }
         }
 
@@ -271,13 +271,13 @@ object TLearn {
         futures.forEach { it.get() }
         threadPool.shutdown()
 
-        println("Connection completed. Processed: ${processedCount.get()}, Added: ${addedCount.get()}")
+        println("Connection completed. Processed: ${processedCount.get()}, Computed: ${computeCount.get()}")
     }
 
     /**
      * Worker thread for connecting relations
      */
-    fun connectRelationsWorker(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger) {
+    fun connectRelationsWorker(threadId: Int, processedCount: AtomicInteger, computeCount: AtomicInteger) {
         println("Thread $threadId started")
 
         while (true) {
@@ -307,13 +307,13 @@ object TLearn {
                                 val newItem = RelationPathItem(connectedPath, supp)
                                 relationQueue.offer(newItem)
                             }
-                            addedCount.incrementAndGet()
+                            computeCount.incrementAndGet()
 
                             // Log the successful path addition
                             logWorkerResult(connectedPath, supp)
 
-                            if (addedCount.get() % 100 == 0) {
-                                println("Thread $threadId: Added ${addedCount.get()} new paths")
+                            if (computeCount.get() % 100 == 0) {
+                                println("Thread $threadId: Added ${computeCount.get()} new paths")
                                 println("Thread $threadId: path $connectedPath added with supp $supp (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
                             }
                         }
@@ -431,7 +431,7 @@ object TLearn {
                         // Store h2t mapping only for paths with length < 3
                         if (pathLength < 3) {
                             h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
-//                            t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
+                            t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
                         }
                     }
                 }
@@ -439,26 +439,27 @@ object TLearn {
         }        
         
         if (size >= MIN_SUPP) {
-            // Add to main data structures
-            // r2tripleSet[rp] = resultTriples
-            r2supp[rp] = size
-            r2supp[RelationPath.getInverseRelation(rp)] = size // Inverse relation also has same supp
-            if (pathLength < 3) {
-                // For paths with length < 3, we store the full h2t mapping
-                r2h2tSet[rp] = h2tSet
-                // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-            }
-
-            // Update head entity index for the new relation path
-            r2h2supp[rp] = h2supp
-            r2h2supp[RelationPath.getInverseRelation(rp)] = t2supp
-
             // 原子化：使用预计算的Binary MinHash + 动态计算Unary
-            atomizeBinaryRelationPath(rp, binaryMinHash, inverseBinaryMinHash)
-            // 长度超过1的不进行Unary原子化
+            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, binaryMinHash, inverseBinaryMinHash)
+            
+            // 只有至少一个Binary原子成功添加到LSH桶中，才存储相关数据
+            if (forwardSuccess || pathLength < 3) {
+                // Add to main data structures
+                // r2tripleSet[rp] = resultTriples
+                r2supp[rp] = size
+                r2h2supp[rp] = h2supp
+            }
+            if (inverseSuccess || pathLength < 3) {
+                r2supp[RelationPath.getInverseRelation(rp)] = size // Inverse relation also has same supp
+                r2h2supp[RelationPath.getInverseRelation(rp)] = t2supp
+            } 
+
+            // For paths with length < 3, we store the full h2t mapping & perform Unary atomization
             if (pathLength < 3) {
-                // TODO: 这里t2hSet为空，暂时不使用
-//                atomizeUnaryRelationPath(rp, h2tSet, t2hSet)
+                r2h2tSet[rp] = h2tSet
+                // r2h2tSet[RelationPath.getInverseRelation(rp)] = t2hSet
+
+                atomizeUnaryRelationPath(rp, h2tSet, t2hSet)
             }
         }
 
@@ -502,24 +503,30 @@ object TLearn {
     /**
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
+     * @return Pair<Boolean, Boolean> - (正向原子是否成功, 反向原子是否成功)
      */
-    fun atomizeBinaryRelationPath(rp: Long, binaryMinHash: IntArray, inverseBinaryMinHash: IntArray) {
+    fun atomizeBinaryRelationPath(rp: Long, binaryMinHash: IntArray, inverseBinaryMinHash: IntArray): Pair<Boolean, Boolean> {
         val inverseRp = RelationPath.getInverseRelation(rp)
         val rpLength = RelationPath.getLength(rp)
+        
+        var forwardSuccess = false
+        var inverseSuccess = false
         
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, -1) // -1表示二元原子
         val binarySupp = r2supp[rp] ?: 0
         if (binarySupp >= MIN_SUPP) {
-            addAtomToMinHash(binaryAtom, binarySupp, binaryMinHash, rpLength)
+            forwardSuccess = addAtomToMinHash(binaryAtom, binarySupp, binaryMinHash, rpLength)
         }
         
         // 2. r'(X,Y): Binary Atom with inverse relation path
         val inverseBinaryAtom = MyAtom(inverseRp, -1)
         val inverseBinarySupp = r2supp[inverseRp] ?: 0
         if (inverseBinarySupp >= MIN_SUPP) {
-            addAtomToMinHash(inverseBinaryAtom, inverseBinarySupp, inverseBinaryMinHash, rpLength)
+            inverseSuccess = addAtomToMinHash(inverseBinaryAtom, inverseBinarySupp, inverseBinaryMinHash, rpLength)
         }
+        
+        return Pair(forwardSuccess, inverseSuccess)
     }
     
     /**
@@ -575,19 +582,25 @@ object TLearn {
 
     /** 对于长度超过1的关系路径，只应该将Formula添加到已经存在的LSH桶中，而不应该创建新的桶
      * 为Atom计算MinHash并加入LSH分桶
+     * @return 是否成功添加到LSH桶中
      */
-    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray, rpLength: Int) {
+    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray, rpLength: Int): Boolean {
         // 创建Formula (单原子公式)
         val formula = Formula(atom1 = atom)
 
-        // 存储MinHash签名
-        minHashRegistry[formula] = minHashSignature
-
         // LSH分桶
-        performLSH(formula, minHashSignature, supp, rpLength)
+        val lshSuccess = performLSH(formula, minHashSignature, supp, rpLength)
+        
+        // 只有LSH成功才存储相关数据
+        if (lshSuccess) {
+            // 存储MinHash签名
+            minHashRegistry[formula] = minHashSignature
 
-        // 添加到公式队列
-        formulaQueue.offer(Pair(formula, supp))
+            // 添加到公式队列
+            formulaQueue.offer(Pair(formula, supp))
+        }
+        
+        return lshSuccess
     }
 
     /**
@@ -655,8 +668,11 @@ object TLearn {
     /**
      * LSH分桶 - 双级Map优化版本，直接使用MinHash索引，线程安全
      * 对于长路径（rpLength > 1）只添加到已存在的桶中，不创建新桶
+     * @return 是否成功添加到至少一个桶中
      */
-    fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int) {
+    fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int): Boolean {
+        var addedToAnyBucket = (rpLength <= 1)
+        
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
@@ -668,6 +684,7 @@ object TLearn {
                     val bucket = level1Map[key2]
                     if (bucket != null) {
                         bucket.add(formula)
+                        addedToAnyBucket = true
                     } else if (rpLength <= 1) {
                         // 只有长度<=1的关系路径才能创建新的二级桶
                         level1Map[key2] = mutableListOf(formula)
@@ -680,6 +697,8 @@ object TLearn {
                 // 长度>1的关系路径如果一级桶不存在则不添加
             }
         }
+        
+        return addedToAnyBucket
     }
 
     /**
@@ -726,6 +745,7 @@ object TLearn {
         
         // 显示Binary桶
         println("\nTop 10 largest Binary buckets:")
+        println("\nSize of Binary buckets: ${binaryBuckets.size}")
         binaryBuckets.forEachIndexed { index, (key1, key2, formulas) ->
             println("${index + 1}. Binary Bucket ($key1, $key2): ${formulas.size} formulas")
             formulas.take(10).forEach { formula ->
@@ -743,6 +763,7 @@ object TLearn {
         
         // 显示Unary桶
         println("\nTop 10 largest Unary buckets:")
+        println("\nSize of Unary buckets: ${unaryBuckets.size}")
         unaryBuckets.forEachIndexed { index, (key1, key2, formulas) ->
             println("${index + 1}. Unary Bucket ($key1, $key2): ${formulas.size} formulas")
             formulas.take(10).forEach { formula ->
