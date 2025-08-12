@@ -21,9 +21,9 @@ object TLearn {
     const val MAX_PATH_LENGTH = 3
 
     // MinHash parameters: MH_DIM = BANDS * R
-    const val MH_DIM = 100
-    const val BANDS = 50
+    const val MH_DIM = 128
     const val R = 2  // 每band维度
+    const val BANDS = MH_DIM / R
     
     // 全局随机种子数组，在程序启动时初始化
     private lateinit var globalHashSeeds: IntArray
@@ -54,7 +54,19 @@ object TLearn {
 
 
     // 核心类型定义
-    data class MyAtom(val relationId: Long, val entityId: Int)   // (RelationID, EntityID)，EntityID<0 表示 binary
+    data class MyAtom(val relationId: Long, val entityId: Int) {   // (RelationID, EntityID)，EntityID<0 表示 binary
+        override fun toString(): String {
+            val relationStr = IdManager.getRelationString(relationId)
+            return when {
+                entityId < 0 -> "$relationStr(X,Y)"
+                entityId == 0 -> "$relationStr(X,·)"
+                else -> {
+                    val entityStr = IdManager.getEntityString(entityId)
+                    "$relationStr(X,$entityStr)"
+                }
+            }
+        }
+    }
 
     // Formula作为data class，最多3个Atom，可空位置表示未使用，注意不关心顺序，需重写hash函数
     data class Formula(
@@ -71,6 +83,10 @@ object TLearn {
             if (this === other) return true
             if (other !is Formula) return false
             return this.hashCode() == other.hashCode()
+        }
+
+        override fun toString(): String {
+            return listOfNotNull(atom1, atom2, atom3).joinToString(" & ")
         }
     }
 
@@ -355,7 +371,7 @@ object TLearn {
         // }
         // 为了避免多线程冲突，使用synchronized锁，并且初始化r2supp
         // 否则同一个rp可能被多线程同时计算，导致同一个bucket添加相同的atom
-        synchronized(r2suppLock) {
+        synchronized(r2supp) {
             if (r2supp.containsKey(rp)) {   //  || r2supp.containsKey(inverseRp)
                 return null // Skip existing paths
             }
@@ -639,24 +655,27 @@ object TLearn {
 
     /**
      * 计算Binary Atom的哈希值（模拟k个不同的哈希函数）
-     * 使用上半部分哈希空间 [0, Int.MAX_VALUE/2]
+     * 使用正数空间 [0, Int.MAX_VALUE]
      * 确保(entity1, entity2)和(entity2, entity1)产生不同的哈希值
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seedIndex: Int): Int {
         val seed = globalHashSeeds[seedIndex]
-        // 使用有序组合确保不同顺序产生不同哈希
-        val hash = (entity1.hashCode() * 31 + entity2.hashCode()) xor seed
-        return (hash and Int.MAX_VALUE) ushr 1  // 右移1位，确保结果在 [0, Int.MAX_VALUE/2] 范围内
+        // 使用位移和异或，避免乘法运算
+        val hash1 = (entity1 shl 7) xor (entity1 ushr 9) xor seed
+        val hash2 = (entity2 shl 11) xor (entity2 ushr 5) xor (seed shl 3)
+        val combinedHash = hash1 xor (hash2 shl 13) xor (seedIndex shl 17)
+        return combinedHash and Int.MAX_VALUE // 确保为正数
     }
 
     /**
      * 计算Unary Atom的哈希值（模拟k个不同的哈希函数）
-     * 使用下半部分哈希空间 [Int.MAX_VALUE/2+1, Int.MAX_VALUE]
+     * 使用负数空间 [Int.MIN_VALUE, -1]
      */
     fun computeUnaryHash(entity: Int, seedIndex: Int): Int {
         val seed = globalHashSeeds[seedIndex]
-        val hash = entity.hashCode() xor seed
-        return ((hash and Int.MAX_VALUE) ushr 1) or (1 shl 30)  // 右移1位后设置最高位，确保结果在 [Int.MAX_VALUE/2+1, Int.MAX_VALUE] 范围内
+        // 使用位移和异或，避免乘法运算
+        val hash = (entity shl 5) xor (entity ushr 11) xor (seed shl 7) xor (seedIndex shl 2)
+        return hash or Int.MIN_VALUE // 确保为负数
     }
 
     /**
@@ -664,34 +683,102 @@ object TLearn {
      * 对于长路径（rpLength > 1）只添加到已存在的桶中，不创建新桶
      */
     fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int): Boolean {
-        var addedToAnyBucket = (rpLength <= 1)
+        var hasRelevantL1Formula = (rpLength <= 1)
+        val relevantL1Formulas = mutableSetOf<Formula>()  // 使用Set避免重复
+        val targetBuckets = mutableSetOf<Pair<Int, Int>>()  // 收集目标桶，避免重复添加
 
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
 
-            synchronized(bandToFormulas) {
+            if (rpLength <= 1) {
+                // 收集目标桶，避免在相同桶中重复添加
+                targetBuckets.add(Pair(key1, key2))
+            } else {
+                // 只读访问，无需同步
                 val level1Map = bandToFormulas[key1]
                 if (level1Map != null) {
                     val bucket = level1Map[key2]
                     if (bucket != null) {
-                        bucket.add(formula)
-                        addedToAnyBucket = true
-                    } else if (rpLength <= 1) {
-                        // 只有长度<=1的关系路径才能创建新的二级桶
-                        level1Map[key2] = mutableListOf(formula)
+                        // 收集所有rpLength=1的相关公式
+                        relevantL1Formulas.addAll(bucket)
+                        hasRelevantL1Formula = true
                     }
-                    // 长度>1的关系路径如果桶不存在则不添加
-                } else if (rpLength <= 1) {
-                    // 只有长度<=1的关系路径才能创建新的一级桶
-                    bandToFormulas[key1] = mutableMapOf(key2 to mutableListOf(formula))
                 }
-                // 长度>1的关系路径如果一级桶不存在则不添加
             }
         }
-        return addedToAnyBucket
+
+        // 统一添加到目标桶中，避免重复。
+        // 不去重的话，如果一个公式在多个band中出现，会重复添加
+        if (rpLength <= 1) {
+            synchronized(bandToFormulas) {
+                targetBuckets.forEach { (key1, key2) ->
+                    val level1Map = bandToFormulas.getOrPut(key1) { mutableMapOf() }
+                    val bucket = level1Map.getOrPut(key2) { mutableListOf() }
+                    bucket.add(formula)
+                }
+            }
+        }
+
+        // 对于长路径，进行相似性评估和过滤
+//        if (rpLength > 1 && hasRelevantL1Formula) {
+//            evaluateAndFilterFormulaCombinations(formula, minHashSignature, supp, relevantL1Formulas)
+//        }
+
+        return hasRelevantL1Formula
     }
+    
+    /**
+     * 评估和过滤公式组合 - 封装相似性评估和过滤逻辑
+     */
+    private fun evaluateAndFilterFormulaCombinations(
+        formula: Formula, 
+        minHashSignature: IntArray, 
+        supp: Int, 
+        relevantL1Formulas: Set<Formula>
+    ) {
+        val validCombinations = mutableListOf<Pair<Formula, Double>>()
+        
+        // 估计与过滤阶段：评估候选对并过滤
+        relevantL1Formulas.forEach { l1Formula ->
+            val l1Signature = minHashRegistry[l1Formula]
+            if (l1Signature != null) {
+                // 估计Jaccard相似度
+                val jaccard = estimateJaccardSimilarity(minHashSignature, l1Signature)
+                
+                // 估计交集大小
+                val l1Supp = formulaQueue.find { it.first == l1Formula }?.second ?: 0
+                val intersectionSize = estimateIntersectionSize(jaccard, supp, l1Supp)
+                
+                // 过滤：如果 I_est > MIN_SUPP，则保留该组合
+                if (intersectionSize > MIN_SUPP) {
+                    validCombinations.add(Pair(l1Formula, intersectionSize))
+                }
+            }
+        }
+        
+        // 输出阶段：生成Formula (暂时只打印，后续可以生成实际的组合公式)
+        if (validCombinations.isNotEmpty()) {
+            println("Found ${validCombinations.size} valid combinations for $formula:")
+            
+            validCombinations.forEach { (l1Formula, intersectionSize) ->
+                println("  - ($formula & $l1Formula) estimated intersection: $intersectionSize")
+            }
+        }
+    }
+    
+    /**
+     * 估计Jaccard相似度：J_est = (两个签名中值相等的哈希函数数量) / k
+     */
+    private fun estimateJaccardSimilarity(signature1: IntArray, signature2: IntArray): Double 
+        = signature1.zip(signature2).count { (h1, h2) -> h1 == h2 }.toDouble() / signature1.size
+    
+    /**
+     * 估计交集大小：I_est = J_est * (size_a1 + size_a2) / (1 + J_est)
+     */
+    private fun estimateIntersectionSize(jaccardSimilarity: Double, size1: Int, size2: Int): Double 
+        = jaccardSimilarity * (size1 + size2) / (1 + jaccardSimilarity)
 
     /**
      * 输出LSH分桶结果 - 适配双级Map，防止并发修改异常
@@ -726,51 +813,28 @@ object TLearn {
             }
         }
         
-        // 分离Binary和Unary桶
-        val binaryBuckets = allBucketsWithInfo.filter { (_, _, formulas) ->
-            formulas.isNotEmpty() && formulas.first().atom1?.entityId == -1
-        }.sortedByDescending { it.third.size }.take(10)
+        // 分离Binary和Unary桶，并统一显示
+        val bucketsByType = mapOf(
+            "Binary" to allBucketsWithInfo.filter { (_, _, formulas) ->
+                formulas.isNotEmpty() && formulas.first().atom1?.entityId == -1
+            }.sortedByDescending { it.third.size }.take(10),
+            
+            "Unary" to allBucketsWithInfo.filter { (_, _, formulas) ->
+                formulas.isNotEmpty() && formulas.first().atom1?.entityId != -1
+            }.sortedByDescending { it.third.size }.take(10)
+        )
         
-        val unaryBuckets = allBucketsWithInfo.filter { (_, _, formulas) ->
-            formulas.isNotEmpty() && formulas.first().atom1?.entityId != -1
-        }.sortedByDescending { it.third.size }.take(10)
-        
-        // 显示Binary桶
-        println("\nTop 10 largest Binary buckets:")
-        binaryBuckets.forEachIndexed { index, (key1, key2, formulas) ->
-            println("${index + 1}. Binary Bucket ($key1, $key2): ${formulas.size} formulas")
-            formulas.take(10).forEach { formula ->
-                val atom = formula.atom1
-                if (atom != null) {
-                    val relationStr = IdManager.getRelationString(atom.relationId)
-                    val atomStr = "$relationStr(X,Y)"   // Binary($relationStr) 
-                    println("    $atomStr")
+        // 统一显示各类型桶
+        bucketsByType.forEach { (bucketType, buckets) ->
+            println("\nTop 10 largest $bucketType buckets:")
+            buckets.forEachIndexed { index, (key1, key2, formulas) ->
+                println("${index + 1}. $bucketType Bucket ($key1, $key2): ${formulas.size} formulas")
+                formulas.take(10).forEach { formula ->
+                    println("    $formula")
                 }
-            }
-            if (formulas.size > 10) {
-                println("    ... and ${formulas.size - 10} more")
-            }
-        }
-        
-        // 显示Unary桶
-        println("\nTop 10 largest Unary buckets:")
-        unaryBuckets.forEachIndexed { index, (key1, key2, formulas) ->
-            println("${index + 1}. Unary Bucket ($key1, $key2): ${formulas.size} formulas")
-            formulas.take(10).forEach { formula ->
-                val atom = formula.atom1
-                if (atom != null) {
-                    val relationStr = IdManager.getRelationString(atom.relationId)
-                    val atomStr = if (atom.entityId == 0) {
-                        "$relationStr(X,·)"  // Existence($relationStr)
-                    } else {
-                        val entityStr = IdManager.getEntityString(atom.entityId)
-                        "$relationStr(X,$entityStr)"    // Unary($relationStr, $entityStr)
-                    }
-                    println("    $atomStr")
+                if (formulas.size > 10) {
+                    println("    ... and ${formulas.size - 10} more")
                 }
-            }
-            if (formulas.size > 10) {
-                println("    ... and ${formulas.size - 10} more")
             }
         }
     }
