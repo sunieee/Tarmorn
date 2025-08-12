@@ -17,7 +17,7 @@ import kotlin.collections.iterator
  */
 object TLearn {
 
-    const val MIN_SUPP = 100
+    const val MIN_SUPP = 50
     const val MAX_PATH_LENGTH = 3
 
     // MinHash parameters: MH_DIM = BANDS * R
@@ -29,6 +29,7 @@ object TLearn {
     private lateinit var globalHashSeeds: IntArray
 
     // Core data structures
+    val config = Settings.load()    // 加载配置
     val ts: TripleSet = TripleSet(Settings.PATH_TRAINING, true)
     // lateinit var r2tripleSet: MutableMap<Long, MutableSet<MyTriple>>
     lateinit var r2supp: MutableMap<Long, Int>
@@ -42,6 +43,7 @@ object TLearn {
 //        compareBy { it.supp }
     )
     val queueLock = Object()
+    val r2suppLock = Object() // Lock for r2supp updates
 
     // Backup of L1 relations for connection attempts
     lateinit var relationL1: List<Long>
@@ -212,13 +214,14 @@ object TLearn {
 
         synchronized(queueLock) {
             for ((relation, tripleSet) in ts.r2tripleSet) {
+                r2supp[relation] = tripleSet.size
                 if (tripleSet.size >= MIN_SUPP) {
 //                    val pathId = RelationPath.encode(relation)
                     val item = RelationPathItem(relation, tripleSet.size)
                     relationQueue.offer(item)
                     addedCount++
 
-                    if (!IdManager.isInverseRelation(relation)) {
+                    if (!IdManager.isInverseRelation(relation) && tripleSet.size >= MIN_SUPP) {
                         // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
                         val h2tSet = r2h2tSet[relation]?.toMutableMap() ?: mutableMapOf()
                         val inverseRelation = RelationPath.getInverseRelation(relation)
@@ -236,7 +239,7 @@ object TLearn {
                         val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
                     
                         // 处理Binary原子
-                        atomizeBinaryRelationPath(relation, binaryMinHash, inverseBinaryMinHash)
+                        atomizeBinaryRelationPath(relation, tripleSet.size, binaryMinHash, inverseBinaryMinHash)
                         // 处理Unary原子
                         atomizeUnaryRelationPath(relation, h2tSet, t2hSet)
                     }
@@ -344,13 +347,20 @@ object TLearn {
 
         // Create connected path rp = r1 · ri (reverse order for better performance)
         val rp = RelationPath.connectHead(r1, ri)
+        val inverseRp = RelationPath.getInverseRelation(rp)
 
         // Check if rp or its inverse already exists
         // if (r2tripleSet.containsKey(rp) || r2tripleSet.containsKey(IdManager.getInverseRelation(rp))) {
         //     return null // Skip existing paths
         // }
-        if (r2supp.containsKey(rp)) {
-            return null // Skip existing paths
+        // 为了避免多线程冲突，使用synchronized锁，并且初始化r2supp
+        // 否则同一个rp可能被多线程同时计算，导致同一个bucket添加相同的atom
+        synchronized(r2suppLock) {
+            if (r2supp.containsKey(rp)) {   //  || r2supp.containsKey(inverseRp)
+                return null // Skip existing paths
+            }
+            r2supp[rp] = 0
+            r2supp[inverseRp] = 0
         }
 
         return rp
@@ -431,34 +441,34 @@ object TLearn {
                         // Store h2t mapping only for paths with length < 3
                         if (pathLength < 3) {
                             h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
-//                            t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
+                            t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
                         }
                     }
                 }
             }
-        }        
+        }
+
+        // 因为r2supp占用内存较小，且需要记录，频繁访问，直接存储
+        val inverseRp = RelationPath.getInverseRelation(rp)
+        r2supp[rp] = size
+        r2supp[inverseRp] = size
         
         if (size >= MIN_SUPP) {
             // Add to main data structures
+            // 原子化：使用预计算的Binary MinHash + 动态计算Unary，注意supp一定要传递，不能使用r2supp
+            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, binaryMinHash, inverseBinaryMinHash)
+
+
             // r2tripleSet[rp] = resultTriples
-            r2supp[rp] = size
-            r2supp[RelationPath.getInverseRelation(rp)] = size // Inverse relation also has same supp
+            if (forwardSuccess || pathLength < 3) r2h2supp[rp] = h2supp
+            if (inverseSuccess || pathLength < 3) r2h2supp[inverseRp] = t2supp
+
+            // 长度超过1的不进行Unary原子化
             if (pathLength < 3) {
                 // For paths with length < 3, we store the full h2t mapping
                 r2h2tSet[rp] = h2tSet
                 // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-            }
-
-            // Update head entity index for the new relation path
-            r2h2supp[rp] = h2supp
-            r2h2supp[RelationPath.getInverseRelation(rp)] = t2supp
-
-            // 原子化：使用预计算的Binary MinHash + 动态计算Unary
-            atomizeBinaryRelationPath(rp, binaryMinHash, inverseBinaryMinHash)
-            // 长度超过1的不进行Unary原子化
-            if (pathLength < 3) {
-                // TODO: 这里t2hSet为空，暂时不使用
-//                atomizeUnaryRelationPath(rp, h2tSet, t2hSet)
+                atomizeUnaryRelationPath(rp, h2tSet, t2hSet)
             }
         }
 
@@ -503,23 +513,18 @@ object TLearn {
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
      */
-    fun atomizeBinaryRelationPath(rp: Long, binaryMinHash: IntArray, inverseBinaryMinHash: IntArray) {
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, binaryMinHash: IntArray, inverseBinaryMinHash: IntArray): Pair<Boolean, Boolean> {
         val inverseRp = RelationPath.getInverseRelation(rp)
         val rpLength = RelationPath.getLength(rp)
         
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, -1) // -1表示二元原子
-        val binarySupp = r2supp[rp] ?: 0
-        if (binarySupp >= MIN_SUPP) {
-            addAtomToMinHash(binaryAtom, binarySupp, binaryMinHash, rpLength)
-        }
-        
         // 2. r'(X,Y): Binary Atom with inverse relation path
         val inverseBinaryAtom = MyAtom(inverseRp, -1)
-        val inverseBinarySupp = r2supp[inverseRp] ?: 0
-        if (inverseBinarySupp >= MIN_SUPP) {
-            addAtomToMinHash(inverseBinaryAtom, inverseBinarySupp, inverseBinaryMinHash, rpLength)
-        }
+        return Pair(
+            addAtomToMinHash(binaryAtom, supp, binaryMinHash, rpLength),
+            addAtomToMinHash(inverseBinaryAtom, supp, inverseBinaryMinHash, rpLength)
+        )
     }
     
     /**
@@ -576,18 +581,20 @@ object TLearn {
     /** 对于长度超过1的关系路径，只应该将Formula添加到已经存在的LSH桶中，而不应该创建新的桶
      * 为Atom计算MinHash并加入LSH分桶
      */
-    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray, rpLength: Int) {
+    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray, rpLength: Int): Boolean {
         // 创建Formula (单原子公式)
         val formula = Formula(atom1 = atom)
+        val lshSuccess = performLSH(formula, minHashSignature, supp, rpLength)
 
-        // 存储MinHash签名
-        minHashRegistry[formula] = minHashSignature
+        // 只有LSH成功才存储相关数据
+        if (lshSuccess) {
+            // 存储MinHash签名
+            minHashRegistry[formula] = minHashSignature
 
-        // LSH分桶
-        performLSH(formula, minHashSignature, supp, rpLength)
-
-        // 添加到公式队列
-        formulaQueue.offer(Pair(formula, supp))
+            // 添加到公式队列
+            formulaQueue.offer(Pair(formula, supp))
+        }
+        return lshSuccess
     }
 
     /**
@@ -656,18 +663,21 @@ object TLearn {
      * LSH分桶 - 双级Map优化版本，直接使用MinHash索引，线程安全
      * 对于长路径（rpLength > 1）只添加到已存在的桶中，不创建新桶
      */
-    fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int) {
+    fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int): Boolean {
+        var addedToAnyBucket = (rpLength <= 1)
+
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
-            
+
             synchronized(bandToFormulas) {
                 val level1Map = bandToFormulas[key1]
                 if (level1Map != null) {
                     val bucket = level1Map[key2]
                     if (bucket != null) {
                         bucket.add(formula)
+                        addedToAnyBucket = true
                     } else if (rpLength <= 1) {
                         // 只有长度<=1的关系路径才能创建新的二级桶
                         level1Map[key2] = mutableListOf(formula)
@@ -680,6 +690,7 @@ object TLearn {
                 // 长度>1的关系路径如果一级桶不存在则不添加
             }
         }
+        return addedToAnyBucket
     }
 
     /**
