@@ -246,7 +246,7 @@ object TLearn {
 
             relationL1 = relationQueue.map { it.relationPath }.toList()
         }
-        println("Added $addedCount level 1 relations to queue")
+        println("Computed $computeCount level 1 relations to queue")
         // println("Level 1 relations: ${relationL1.map { IdManager.getRelationString(it) }}")
     }
 
@@ -671,31 +671,51 @@ object TLearn {
      * @return 是否成功添加到至少一个桶中
      */
     fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int): Boolean {
-        var addedToAnyBucket = (rpLength <= 1)
+        var addedToAnyBucket = false
+        var foundExistingBuckets = 0
+        var attemptedBands = 0
+        var foundLevel1Maps = 0
+        
+        // 调试信息：记录rpLength=3的尝试
+        if (rpLength >= 3) {
+            val relationStr = IdManager.getRelationString(formula.atom1?.relationId ?: 0L)
+            println("DEBUG: Attempting LSH for rpLength=$rpLength formula $relationStr")
+        }
         
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
+            attemptedBands++
             
             synchronized(bandToFormulas) {
                 val level1Map = bandToFormulas[key1]
                 if (level1Map != null) {
+                    foundLevel1Maps++
                     val bucket = level1Map[key2]
                     if (bucket != null) {
                         bucket.add(formula)
                         addedToAnyBucket = true
+                        foundExistingBuckets++
                     } else if (rpLength <= 1) {
                         // 只有长度<=1的关系路径才能创建新的二级桶
                         level1Map[key2] = mutableListOf(formula)
+                        addedToAnyBucket = true
                     }
                     // 长度>1的关系路径如果桶不存在则不添加
                 } else if (rpLength <= 1) {
                     // 只有长度<=1的关系路径才能创建新的一级桶
                     bandToFormulas[key1] = mutableMapOf(key2 to mutableListOf(formula))
+                    addedToAnyBucket = true
                 }
                 // 长度>1的关系路径如果一级桶不存在则不添加
             }
+        }
+        
+        // 调试信息：对于长路径，输出详细匹配情况
+        if (rpLength >= 3) {
+            val relationStr = IdManager.getRelationString(formula.atom1?.relationId ?: 0L)
+            println("DEBUG: rpLength=$rpLength formula $relationStr: foundLevel1Maps=$foundLevel1Maps, foundExistingBuckets=$foundExistingBuckets, addedToAnyBucket=$addedToAnyBucket")
         }
         
         return addedToAnyBucket
