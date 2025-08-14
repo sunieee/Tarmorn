@@ -48,7 +48,7 @@ class TripleSet(
         }
     }
 
-    private fun addInverseRelations() {
+    fun addInverseRelations() {
         println("* Adding inverse relations...")
         
         // First, add inverse relation mappings in IdManager
@@ -62,11 +62,6 @@ class TripleSet(
         }
         
         println("* Added ${originalTriples.size} inverse triples for ${IdManager.originalRelationCount} relations")
-    }
-
-    // Public method for external access (e.g., testing)
-    fun generateInverseRelations() {
-        addInverseRelations()
     }
 
     fun addTripleSet(ts: TripleSet) {
@@ -126,7 +121,14 @@ class TripleSet(
     }
 
     private fun addTripleToIndex(triple: MyTriple) {
+        // 注意这个triple既有原始三元组，也有逆三元组
         val (h, r, t) = triple
+
+        if (h==t) {
+            // 注意：我们不把自环事实放入索引中！
+            println("Warning: Triple with head equals tail detected: $triple")
+            return
+        }
         
         // 统一的实体索引：每个实体都索引以它为头的三元组
         h2tripleList.getOrPut(h) { mutableListOf() }.add(triple)
@@ -134,10 +136,6 @@ class TripleSet(
         // 关系索引 - 只存储原始关系
         r2tripleSet.getOrPut(r) { mutableSetOf() }.add(triple)
 
-        if (h==t) {
-//            println("Warning: Triple with head equals tail detected: $triple")
-            return
-        }
         // 核心查询索引：relation -> head  -> tails
         val htMap = r2h2tSet.getOrPut(key=r) { mutableMapOf() }
         htMap.getOrPut(h) { mutableSetOf() }.add(t)
@@ -148,20 +146,6 @@ class TripleSet(
         // 核心查询索引：head -> relation -> tails
         val relationMap = h2r2tSet.getOrPut(h) { mutableMapOf() }
         relationMap.getOrPut(r) { mutableSetOf() }.add(t)
-        
-        // 为逆关系建立索引条目（不创建实际的反向三元组）
-        val inverseRelationId = IdManager.getInverseRelation(r)
-        
-        // 逆关系的r2h2tSet索引：inverse_r -> t -> {h}
-//        val inverseHtMap = r2h2tSet.getOrPut(inverseRelationId) { mutableMapOf() }
-//        inverseHtMap.getOrPut(t) { mutableSetOf() }.add(h)
-        
-        // 逆关系索引：t --inverse_r--> h
-        val inverseRelationMap = h2r2tSet.getOrPut(t) { mutableMapOf() }
-        inverseRelationMap.getOrPut(inverseRelationId) { mutableSetOf() }.add(h)
-        
-        // 为逆关系也建立头实体索引
-        r2hSet.getOrPut(inverseRelationId) { mutableSetOf() }.add(t)
     }
 
 

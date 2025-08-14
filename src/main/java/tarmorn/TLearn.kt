@@ -237,11 +237,11 @@ object TLearn {
                     relationQueue.offer(item)
                     addedCount++
 
-                    if (!IdManager.isInverseRelation(relation) && tripleSet.size >= MIN_SUPP) {
+                    if (!IdManager.isInverseRelation(relation)) {
                         // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
-                        val h2tSet = r2h2tSet[relation]?.toMutableMap() ?: mutableMapOf()
+                        val h2tSet = r2h2tSet[relation]!!.toMutableMap()
                         val inverseRelation = RelationPath.getInverseRelation(relation)
-                        val t2hSet = r2h2tSet[inverseRelation]?.toMutableMap() ?: mutableMapOf()
+                        val t2hSet = r2h2tSet[inverseRelation]!!.toMutableMap()
 
                         // 计算Binary原子的MinHash签名
                         val binaryInstanceSet = h2tSet.flatMap { (head, tails) ->
@@ -472,6 +472,13 @@ object TLearn {
         if (size >= MIN_SUPP) {
             // Add to main data structures
             // 原子化：使用预计算的Binary MinHash + 动态计算Unary，注意supp一定要传递，不能使用r2supp
+            binaryMinHash.forEach {
+                require(it < Int.MAX_VALUE && it > 0)
+            }
+            inverseBinaryMinHash.forEach {
+                require(it < Int.MAX_VALUE && it > 0)
+            }
+
             val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, binaryMinHash, inverseBinaryMinHash)
 
 
@@ -619,6 +626,11 @@ object TLearn {
     fun computeBinaryMinHash(instanceSet: Set<Pair<Int, Int>>): IntArray {
         val signature = IntArray(MH_DIM) { Int.MAX_VALUE }
 
+        // 检查空集合，如果为空则抛出异常或返回特殊值
+        if (instanceSet.isEmpty()) {
+            throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
+        }
+
         // 为每个实例生成哈希值 - 优化版本减少数组访问
         instanceSet.forEach { (entity1, entity2) ->
             for (i in 0 until MH_DIM) {
@@ -639,6 +651,11 @@ object TLearn {
     fun computeUnaryMinHash(instanceSet: Set<Int>): IntArray {
         val signature = IntArray(MH_DIM) { Int.MAX_VALUE }
 
+        // 检查空集合，如果为空则抛出异常
+        if (instanceSet.isEmpty()) {
+            throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
+        }
+
         // 为每个实例生成哈希值 - 优化版本减少数组访问
         instanceSet.forEach { entity ->
             for (i in 0 until MH_DIM) {
@@ -653,6 +670,12 @@ object TLearn {
         return signature
     }
 
+
+    fun pairHash(entity1: Int, entity2: Int): Int {
+        // 直接实现Pair的hashCode原理，避免创建对象
+        return entity1 * 31 + entity2
+    }
+
     /**
      * 计算Binary Atom的哈希值（模拟k个不同的哈希函数）
      * 使用正数空间 [0, Int.MAX_VALUE]
@@ -660,11 +683,13 @@ object TLearn {
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seedIndex: Int): Int {
         val seed = globalHashSeeds[seedIndex]
-        // 使用位移和异或，避免乘法运算
-        val hash1 = (entity1 shl 7) xor (entity1 ushr 9) xor seed
-        val hash2 = (entity2 shl 11) xor (entity2 ushr 5) xor (seed shl 3)
-        val combinedHash = hash1 xor (hash2 shl 13) xor (seedIndex shl 17)
-        return combinedHash and Int.MAX_VALUE // 确保为正数
+        // 使用Triple的hashCode，确保顺序敏感且高效
+        val hash = pairHash(entity1, entity2)
+        // 与seedIndex进行额外的混合，确保不同seedIndex产生不同结果
+        val finalHash = (hash xor seed) and Int.MAX_VALUE
+        require(finalHash < Int.MAX_VALUE && finalHash > 0)
+        // 确保返回正数
+        return finalHash
     }
 
     /**
@@ -673,9 +698,13 @@ object TLearn {
      */
     fun computeUnaryHash(entity: Int, seedIndex: Int): Int {
         val seed = globalHashSeeds[seedIndex]
-        // 使用位移和异或，避免乘法运算
-        val hash = (entity shl 5) xor (entity ushr 11) xor (seed shl 7) xor (seedIndex shl 2)
-        return hash or Int.MIN_VALUE // 确保为负数
+        // 使用Pair的hashCode，简洁高效
+        val hash = pairHash(entity, seed)
+        // 与seedIndex进行额外的混合
+        val finalHash = hash or Int.MIN_VALUE
+        // 确保返回负数
+        require(finalHash < 0)
+        return finalHash 
     }
 
     /**
@@ -693,8 +722,9 @@ object TLearn {
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
 
             if (rpLength <= 1) {
-                // 收集目标桶，避免在相同桶中重复添加
-                targetBuckets.add(Pair(key1, key2))
+                val level1Map = bandToFormulas.getOrPut(key1) { mutableMapOf() }
+                val bucket = level1Map.getOrPut(key2) { mutableListOf() }
+                bucket.add(formula)
             } else {
                 // 只读访问，无需同步
                 val level1Map = bandToFormulas[key1]
@@ -705,18 +735,6 @@ object TLearn {
                         relevantL1Formulas.addAll(bucket)
                         hasRelevantL1Formula = true
                     }
-                }
-            }
-        }
-
-        // 统一添加到目标桶中，避免重复。
-        // 不去重的话，如果一个公式在多个band中出现，会重复添加
-        if (rpLength <= 1) {
-            synchronized(bandToFormulas) {
-                targetBuckets.forEach { (key1, key2) ->
-                    val level1Map = bandToFormulas.getOrPut(key1) { mutableMapOf() }
-                    val bucket = level1Map.getOrPut(key2) { mutableListOf() }
-                    bucket.add(formula)
                 }
             }
         }
