@@ -35,6 +35,8 @@ class TripleSet(
     // 用于大关系的随机访问优化
     var h2r2tList = mutableMapOf<Int, MutableMap<Long, MutableList<Int>>>()
 
+    // 用于自环事实的存储
+    var r2loopSet = mutableMapOf<Long, MutableSet<Int>>()
 
     // 统一的关系采样缓存：relation -> sampled entities (作为head)
     var r2hSample = mutableMapOf<Long, MutableList<Int>>()
@@ -94,6 +96,7 @@ class TripleSet(
         }
         
         println("* set up index for ${r2tripleSet.keys.size} relations, ${h2tripleList.keys.size} entities")
+        println("* self loop distribution: ${r2loopSet.map { "${IdManager.getRelationString(it.key)}: ${it.value.size}" }}")
     }
 
     fun setupListStructure() {
@@ -125,8 +128,9 @@ class TripleSet(
         val (h, r, t) = triple
 
         if (h==t) {
-            // 注意：我们不把自环事实放入索引中！
-            println("Warning: Triple with head equals tail detected: $triple")
+            // 注意：我们不把自环事实放入索引中！而是放入r2selfloop中
+            // println("Warning: Triple with head equals tail detected: $triple")
+            r2loopSet.getOrPut(r) { mutableSetOf() }.add(h)
             return
         }
         

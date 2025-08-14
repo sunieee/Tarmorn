@@ -36,6 +36,7 @@ object TLearn {
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
     lateinit var r2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
     lateinit var r2h2supp: MutableMap<Long, MutableMap<Int, Int>>
+    lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
 
     // Thread-safe relation queue using ConcurrentLinkedQueue for producer-consumer pattern
     val relationQueue = PriorityQueue<RelationPathItem>(
@@ -183,6 +184,7 @@ object TLearn {
 
         // Initialize data structures
         // r2tripleSet = ts.r2tripleSet
+        r2loopSet = ts.r2loopSet
         r2h2tSet = ts.r2h2tSet
         r2supp = ts.r2tripleSet.mapValues { it.value.size }.toMutableMap()
         r2h2supp = r2h2tSet.mapValues { entry ->
@@ -257,7 +259,7 @@ object TLearn {
                         // 处理Binary原子
                         atomizeBinaryRelationPath(relation, tripleSet.size, binaryMinHash, inverseBinaryMinHash)
                         // 处理Unary原子
-                        atomizeUnaryRelationPath(relation, h2tSet, t2hSet)
+                        atomizeUnaryRelationPath(relation, h2tSet, t2hSet, r2loopSet[relation] ?: mutableSetOf())
                     }
                     
                 }
@@ -407,6 +409,7 @@ object TLearn {
         val t2hSet = mutableMapOf<Int, MutableSet<Int>>()
         val h2supp = mutableMapOf<Int, Int>()
         val t2supp = mutableMapOf<Int, Int>()
+        val loopSet = mutableSetOf<Int>()
         var size = 0
 
         // Compute Cartesian product and MinHash signatures
@@ -436,7 +439,9 @@ object TLearn {
             // Create Cartesian product and compute MinHash on-the-fly
             for (r1Head in r1HeadEntities) {
                 for (riTail in riTailEntities) {
-                    if (r1Head != riTail) {
+                    if (r1Head == riTail) {
+                        loopSet.add(r1Head)
+                    } else {
                         // Compute both MinHash signatures in one loop - 优化版本减少数组访问
                         for (i in 0 until MH_DIM) {
                             // For Binary MinHash: (r1Head, riTail) - 保持顺序
@@ -491,7 +496,7 @@ object TLearn {
                 // For paths with length < 3, we store the full h2t mapping
                 r2h2tSet[rp] = h2tSet
                 // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-                atomizeUnaryRelationPath(rp, h2tSet, t2hSet)
+                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
             }
         }
 
@@ -551,10 +556,10 @@ object TLearn {
     }
     
     /**
-     * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X)
+     * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
      * 需要动态计算MinHash签名
      */
-    fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>) {
+    fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
         val inverseRp = RelationPath.getInverseRelation(rp)
         val rpLength = RelationPath.getLength(rp)
         
@@ -598,6 +603,13 @@ object TLearn {
             val inverseExistenceInstanceSet = t2hSet.keys
             val minHashSignature = computeUnaryMinHash(inverseExistenceInstanceSet)
             addAtomToMinHash(inverseExistenceAtom, inverseTailEntityCount, minHashSignature, rpLength)
+        }
+
+        // 7. r(X,X): Unary Atom for loops - r(X,X) exists
+        if (loopSet.size >= MIN_SUPP) {
+            val loopAtom = MyAtom(rp, Int.MAX_VALUE) // -2表示循环原子
+            val minHashSignature = computeUnaryMinHash(loopSet)
+            addAtomToMinHash(loopAtom, loopSet.size, minHashSignature, rpLength)
         }
     }
 
@@ -721,7 +733,7 @@ object TLearn {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
 
-            if (rpLength <= 1) {
+            if (rpLength == 1) {
                 val level1Map = bandToFormulas.getOrPut(key1) { mutableMapOf() }
                 val bucket = level1Map.getOrPut(key2) { mutableListOf() }
                 bucket.add(formula)
@@ -831,21 +843,23 @@ object TLearn {
             }
         }
         
-        // 分离Binary和Unary桶，并统一显示
-        val bucketsByType = mapOf(
-            "Binary" to allBucketsWithInfo.filter { (_, _, formulas) ->
-                formulas.isNotEmpty() && formulas.first().atom1?.entityId == -1
-            }.sortedByDescending { it.third.size }.take(10),
-            
-            "Unary" to allBucketsWithInfo.filter { (_, _, formulas) ->
-                formulas.isNotEmpty() && formulas.first().atom1?.entityId != -1
-            }.sortedByDescending { it.third.size }.take(10)
-        )
+        // 定义过滤函数避免重复代码
+        fun isBinaryBucket(formulas: List<Formula>) = formulas.isNotEmpty() && formulas.first().atom1?.entityId == -1
         
-        // 统一显示各类型桶
-        bucketsByType.forEach { (bucketType, buckets) ->
-            println("\nTop 10 largest $bucketType buckets:")
-            buckets.forEachIndexed { index, (key1, key2, formulas) ->
+        // 分离Binary和Unary桶，并统一显示
+        val bucketTypes = listOf("Binary", "Unary")
+        
+        bucketTypes.forEach { bucketType ->
+            val allBucketsOfType = allBucketsWithInfo.filter { (_, _, formulas) ->
+                if (bucketType == "Binary") isBinaryBucket(formulas) else !isBinaryBucket(formulas)
+            }
+            val level1Keys = allBucketsOfType.map { it.first }.toSet().size
+            val level2Keys = allBucketsOfType.size
+            val top20Buckets = allBucketsOfType.sortedByDescending { it.third.size }.take(20)
+            
+            println("\nTop 20 largest $bucketType buckets:")
+            println("Total $bucketType buckets: $level1Keys level-1 buckets, $level2Keys level-2 buckets")
+            top20Buckets.forEachIndexed { index, (key1, key2, formulas) ->
                 println("${index + 1}. $bucketType Bucket ($key1, $key2): ${formulas.size} formulas")
                 formulas.take(10).forEach { formula ->
                     println("    $formula")
