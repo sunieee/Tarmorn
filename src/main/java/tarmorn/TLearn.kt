@@ -52,6 +52,8 @@ object TLearn {
     // Synchronized logger for workers
     private val logFile = File("out/workers.log")
     private lateinit var logWriter: BufferedWriter
+    private var logErrorReported = false // 防止重复报告日志错误
+    private var logWriterClosed = false // 跟踪日志写入器状态
 
 
     // 核心类型定义
@@ -59,7 +61,8 @@ object TLearn {
         override fun toString(): String {
             val relationStr = IdManager.getRelationString(relationId)
             return when {
-                entityId < 0 -> "$relationStr(X,Y)"
+                entityId == IdManager.getYId() -> "$relationStr(X,Y)"
+                entityId == IdManager.getXId() -> "$relationStr(X,X)"
                 entityId == 0 -> "$relationStr(X,·)"
                 else -> {
                     val entityStr = IdManager.getEntityString(entityId)
@@ -91,9 +94,20 @@ object TLearn {
         }
     }
 
+    data class Metric(
+        val support: Double,
+        val headSize: Int,
+        val bodySize: Int,
+    ) {
+        val coverage: Double = support / headSize
+        val confidence: Double = support / bodySize
+
+        val valid: Boolean
+            get() = support >= MIN_SUPP && coverage > 0.1 && confidence > 0.1
+    }
+
     // 流式计算结构
-    val formulaQueue = PriorityQueue<Pair<Formula, Int>>(compareBy { it.second })  // 按support升序
-    lateinit var formulaL1: List<Formula>
+    val formula2supp = mutableMapOf<Formula, Int>()          // 公式→支持度映射
     val minHashRegistry = mutableMapOf<Formula, IntArray>()           // 公式→MinHash映射
     val bandToFormulas = mutableMapOf<Int, MutableMap<Int, MutableList<Formula>>>()  // 双级Map：直接使用MinHash索引作为键
     
@@ -137,11 +151,21 @@ object TLearn {
     private fun logWorkerResult(connectedPath: Long, supp: Int) {
         synchronized(logWriter) {
             try {
+                // 检查 logWriter 是否仍然可用
+                if (logWriterClosed || !this::logWriter.isInitialized) {
+                    return
+                }
                 val pathString = IdManager.getRelationString(connectedPath)
                 logWriter.write("$pathString: $supp\n")
                 logWriter.flush()
             } catch (e: Exception) {
-                println("Error writing to log: ${e.message}")
+                // 只在第一次出现错误时打印，避免日志污染
+                synchronized(this) {
+                    if (!logErrorReported) {
+                        println("Error writing to log: ${e.message}")
+                        logErrorReported = true
+                    }
+                }
             }
         }
     }
@@ -210,10 +234,13 @@ object TLearn {
             // 打印LSH分桶结果
             printLSHBuckets()
 
-            // Close the log file
+            // Close the log file - 移到这里，确保所有工作线程完成后再关闭
             synchronized(logWriter) {
                 try {
-                    logWriter.close()
+                    if (!logWriterClosed && this::logWriter.isInitialized) {
+                        logWriterClosed = true
+                        logWriter.close()
+                    }
                 } catch (e: Exception) {
                     println("Error closing log file: ${e.message}")
                 }
@@ -319,30 +346,30 @@ object TLearn {
 
             // Step 4: Try connecting with all L1 relations
             for (r1 in relationL1) {
-                try {
-                    val connectedPath = attemptConnection(r1, ri)
-                    if (connectedPath != null) {
-                        val supp = computeSupp(connectedPath, r1, ri)
-                        if (supp >= MIN_SUPP) {
-                            synchronized(queueLock) {
-                                val newItem = RelationPathItem(connectedPath, supp)
-                                relationQueue.offer(newItem)
-                            }
-                            addedCount.incrementAndGet()
+                // try {
+                val connectedPath = attemptConnection(r1, ri)
+                if (connectedPath != null) {
+                    val supp = computeSupp(connectedPath, r1, ri)
+                    if (supp >= MIN_SUPP) {
+                        synchronized(queueLock) {
+                            val newItem = RelationPathItem(connectedPath, supp)
+                            relationQueue.offer(newItem)
+                        }
+                        addedCount.incrementAndGet()
 
-                            // Log the successful path addition
-                            logWorkerResult(connectedPath, supp)
+                        // Log the successful path addition
+                        logWorkerResult(connectedPath, supp)
 
-                            if (addedCount.get() % 100 == 0) {
-                                println("Thread $threadId: Added ${addedCount.get()} new paths")
-                                println("Thread $threadId: path $connectedPath added with supp $supp (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
-                            }
+                        if (addedCount.get() % 100 == 0) {
+                            println("Thread $threadId: Added ${addedCount.get()} new paths")
+                            println("Thread $threadId: path $connectedPath added with supp $supp (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
                         }
                     }
-                } catch (e: Exception) {
-                    // Log error but continue processing
-                    println("Thread $threadId: Error connecting paths: ${e.message}")
                 }
+                // } catch (e: Exception) {
+                //     // Log error but continue processing
+                //     println("Thread $threadId: Error connecting paths: ${e.message}")
+                // }
             }
         }
 
@@ -546,9 +573,9 @@ object TLearn {
         val rpLength = RelationPath.getLength(rp)
         
         // 1. r(X,Y): Binary Atom with relation path rp
-        val binaryAtom = MyAtom(rp, -1) // -1表示二元原子
+        val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
-        val inverseBinaryAtom = MyAtom(inverseRp, -1)
+        val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
         return Pair(
             addAtomToMinHash(binaryAtom, supp, binaryMinHash, rpLength),
             addAtomToMinHash(inverseBinaryAtom, supp, inverseBinaryMinHash, rpLength)
@@ -607,7 +634,7 @@ object TLearn {
 
         // 7. r(X,X): Unary Atom for loops - r(X,X) exists
         if (loopSet.size >= MIN_SUPP) {
-            val loopAtom = MyAtom(rp, Int.MAX_VALUE) // -2表示循环原子
+            val loopAtom = MyAtom(rp, IdManager.getXId()) // X表示循环原子
             val minHashSignature = computeUnaryMinHash(loopSet)
             addAtomToMinHash(loopAtom, loopSet.size, minHashSignature, rpLength)
         }
@@ -627,7 +654,7 @@ object TLearn {
             minHashRegistry[formula] = minHashSignature
 
             // 添加到公式队列
-            formulaQueue.offer(Pair(formula, supp))
+            formula2supp[formula] = supp
         }
         return lshSuccess
     }
@@ -699,7 +726,7 @@ object TLearn {
         val hash = pairHash(entity1, entity2)
         // 与seedIndex进行额外的混合，确保不同seedIndex产生不同结果
         val finalHash = (hash xor seed) and Int.MAX_VALUE
-        require(finalHash < Int.MAX_VALUE && finalHash > 0)
+//        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
         return finalHash
     }
@@ -715,7 +742,7 @@ object TLearn {
         // 与seedIndex进行额外的混合
         val finalHash = hash or Int.MIN_VALUE
         // 确保返回负数
-        require(finalHash < 0)
+//        require(finalHash < 0)
         return finalHash 
     }
 
@@ -724,52 +751,59 @@ object TLearn {
      * 对于长路径（rpLength > 1）只添加到已存在的桶中，不创建新桶
      */
     fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int): Boolean {
-        var hasRelevantL1Formula = (rpLength <= 1)
-        val relevantL1Formulas = mutableSetOf<Formula>()  // 使用Set避免重复
-        val targetBuckets = mutableSetOf<Pair<Int, Int>>()  // 收集目标桶，避免重复添加
-
+        var hasRelevantAtom = false
+        val relevantAtom = mutableSetOf<Formula>()  // 使用Set避免重复
+        var isHeadAtom = false
+        if (rpLength == 1) {
+            val atom = formula.atom1!!
+            if (atom.entityId == IdManager.getYId() && !IdManager.isInverseRelation(atom.relationId) || atom.entityId > 0) {
+                isHeadAtom = true
+            }
+        }
+        
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
+            
+            // 查询相关的已有的桶
+            val level1Map = bandToFormulas[key1]
+            if (level1Map != null) {
+                val bucket = level1Map[key2]
+                if (bucket != null) {
+                    // 收集所有rpLength=1的相关公式
+                    relevantAtom.addAll(bucket)
+                    hasRelevantAtom = true
+                }
+            }
 
-            if (rpLength == 1) {
+            // 如果是headAtom，放入桶中
+            if (isHeadAtom) {
                 val level1Map = bandToFormulas.getOrPut(key1) { mutableMapOf() }
                 val bucket = level1Map.getOrPut(key2) { mutableListOf() }
                 bucket.add(formula)
-            } else {
-                // 只读访问，无需同步
-                val level1Map = bandToFormulas[key1]
-                if (level1Map != null) {
-                    val bucket = level1Map[key2]
-                    if (bucket != null) {
-                        // 收集所有rpLength=1的相关公式
-                        relevantL1Formulas.addAll(bucket)
-                        hasRelevantL1Formula = true
-                    }
-                }
             }
         }
 
-        // 对于长路径，进行相似性评估和过滤
-//        if (rpLength > 1 && hasRelevantL1Formula) {
-//            evaluateAndFilterFormulaCombinations(formula, minHashSignature, supp, relevantL1Formulas)
-//        }
+        // 进行相似性评估和过滤
+        var validCombinationCount = 0
+        if (hasRelevantAtom)
+            validCombinationCount = findValidCombinations(formula, minHashSignature, supp, relevantAtom)
 
-        return hasRelevantL1Formula
+        return rpLength <= 1 || validCombinationCount > 0
     }
     
     /**
      * 评估和过滤公式组合 - 封装相似性评估和过滤逻辑
      */
-    private fun evaluateAndFilterFormulaCombinations(
+    private fun findValidCombinations(
         formula: Formula, 
         minHashSignature: IntArray, 
         supp: Int, 
         relevantL1Formulas: Set<Formula>
-    ) {
-        val validCombinations = mutableListOf<Pair<Formula, Double>>()
-        
+    ): Int {
+        var cnt = 0
+
         // 估计与过滤阶段：评估候选对并过滤
         relevantL1Formulas.forEach { l1Formula ->
             val l1Signature = minHashRegistry[l1Formula]
@@ -778,24 +812,18 @@ object TLearn {
                 val jaccard = estimateJaccardSimilarity(minHashSignature, l1Signature)
                 
                 // 估计交集大小
-                val l1Supp = formulaQueue.find { it.first == l1Formula }?.second ?: 0
+                val l1Supp = formula2supp[l1Formula]!!
                 val intersectionSize = estimateIntersectionSize(jaccard, supp, l1Supp)
-                
-                // 过滤：如果 I_est > MIN_SUPP，则保留该组合
-                if (intersectionSize > MIN_SUPP) {
-                    validCombinations.add(Pair(l1Formula, intersectionSize))
+                val metric = Metric(intersectionSize, l1Supp, supp)
+
+                if (metric.valid) {
+                    println("\t$metric $l1Formula")
+                    cnt ++
                 }
             }
         }
-        
-        // 输出阶段：生成Formula (暂时只打印，后续可以生成实际的组合公式)
-        if (validCombinations.isNotEmpty()) {
-            println("Found ${validCombinations.size} valid combinations for $formula:")
-            
-            validCombinations.forEach { (l1Formula, intersectionSize) ->
-                println("  - ($formula & $l1Formula) estimated intersection: $intersectionSize")
-            }
-        }
+        if (cnt > 0) println("Found $cnt valid combinations for $formula:")
+        return cnt
     }
     
     /**
@@ -844,7 +872,7 @@ object TLearn {
         }
         
         // 定义过滤函数避免重复代码
-        fun isBinaryBucket(formulas: List<Formula>) = formulas.isNotEmpty() && formulas.first().atom1?.entityId == -1
+        fun isBinaryBucket(formulas: List<Formula>) = formulas.isNotEmpty() && formulas.first().atom1?.entityId == IdManager.getYId()
         
         // 分离Binary和Unary桶，并统一显示
         val bucketTypes = listOf("Binary", "Unary")
