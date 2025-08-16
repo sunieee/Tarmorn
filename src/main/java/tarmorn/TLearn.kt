@@ -6,10 +6,13 @@ import tarmorn.data.TripleSet
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
+import java.lang.Thread.sleep
 import java.util.PriorityQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
+import kotlin.math.abs
+import kotlin.math.min
 
 /**
  * TLearn - Top-down relation path learning algorithm
@@ -44,7 +47,7 @@ object TLearn {
 //        compareBy { it.supp }
     )
     val queueLock = Object()
-    val r2suppLock = Object() // Lock for r2supp updates
+    val activeThreadCount = AtomicInteger(0) // 线程安全的活动线程计数
 
     // Backup of L1 relations for connection attempts
     lateinit var relationL1: List<Long>
@@ -70,6 +73,16 @@ object TLearn {
                 }
             }
         }
+
+        val isL1Atom: Boolean
+            get() = relationId < RelationPath.MAX_RELATION_ID
+
+        val isL2Atom: Boolean
+            get() = relationId < RelationPath.MAX_L2RELATION_ID
+
+        val isHeadAtom: Boolean
+            get() = isL1Atom &&
+                    (entityId == IdManager.getYId() && !IdManager.isInverseRelation(relationId) || entityId > 0)
     }
 
     // Formula作为data class，最多3个Atom，可空位置表示未使用，注意不关心顺序，需重写hash函数
@@ -109,13 +122,15 @@ object TLearn {
     // 流式计算结构
     val formula2supp = mutableMapOf<Formula, Int>()          // 公式→支持度映射
     val minHashRegistry = mutableMapOf<Formula, IntArray>()           // 公式→MinHash映射
-    val bandToFormulas = mutableMapOf<Int, MutableMap<Int, MutableList<Formula>>>()  // 双级Map：直接使用MinHash索引作为键
-    
+    val band2headAtom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()  // 双级Map：直接使用MinHash索引作为键
+    val band2L2Atom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()
+
     // 预分配桶空间以减少Map扩容开销
     private fun initializeLSHBuckets() {
         // 预估可能的桶数量，减少Map扩容 - 双级Map只需要更少的预分配
         for (i in 0 until 50) { // 第一级只需要较少的预分配
-            bandToFormulas[i] = mutableMapOf()
+            band2headAtom[i] = mutableMapOf()
+            band2L2Atom[i] = mutableMapOf()
         }
     }
 
@@ -309,6 +324,7 @@ object TLearn {
         val addedCount = AtomicInteger(0)
 
         // Create worker threads
+        activeThreadCount.set(Settings.WORKER_THREADS)
         val futures = (1..Settings.WORKER_THREADS).map { threadId ->
             threadPool.submit {
                 connectRelationsWorker(threadId, processedCount, addedCount)
@@ -328,11 +344,20 @@ object TLearn {
     fun connectRelationsWorker(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger) {
         println("Thread $threadId started")
 
-        while (true) {
+        // 如果只有当前一个线程卡主，则直接结束
+        while (activeThreadCount.get() > 1) {
             // Step 3: Get next relation path from queue
-            val currentItem = synchronized(queueLock) {
-                relationQueue.poll()
-            } ?: break // Queue is empty
+            var currentItem = synchronized(queueLock) {relationQueue.poll()}
+            var attempts = 0
+            while (currentItem == null && attempts < 3) {
+                sleep(1000)
+                currentItem = synchronized(queueLock) {relationQueue.poll()}
+                attempts++
+            }
+            if (currentItem == null) {
+                println("Thread $threadId: No more items in queue, exiting")
+                break
+            }
 
             val ri = currentItem.relationPath
             val riLength = RelationPath.getLength(ri)
@@ -373,7 +398,8 @@ object TLearn {
             }
         }
 
-        println("Thread $threadId completed")
+        val cnt = activeThreadCount.decrementAndGet()
+        println("Thread $threadId completed, $cnt threads remain")
     }
 
     /**
@@ -505,10 +531,10 @@ object TLearn {
             // Add to main data structures
             // 原子化：使用预计算的Binary MinHash + 动态计算Unary，注意supp一定要传递，不能使用r2supp
             binaryMinHash.forEach {
-                require(it < Int.MAX_VALUE && it > 0)
+                require(it <= Int.MAX_VALUE && it >= 0)
             }
             inverseBinaryMinHash.forEach {
-                require(it < Int.MAX_VALUE && it > 0)
+                require(it <= Int.MAX_VALUE && it >= 0)
             }
 
             val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, binaryMinHash, inverseBinaryMinHash)
@@ -570,15 +596,13 @@ object TLearn {
      */
     fun atomizeBinaryRelationPath(rp: Long, supp: Int, binaryMinHash: IntArray, inverseBinaryMinHash: IntArray): Pair<Boolean, Boolean> {
         val inverseRp = RelationPath.getInverseRelation(rp)
-        val rpLength = RelationPath.getLength(rp)
-        
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
         val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
         return Pair(
-            addAtomToMinHash(binaryAtom, supp, binaryMinHash, rpLength),
-            addAtomToMinHash(inverseBinaryAtom, supp, inverseBinaryMinHash, rpLength)
+            addAtomToMinHash(binaryAtom, supp, binaryMinHash),
+            addAtomToMinHash(inverseBinaryAtom, supp, inverseBinaryMinHash)
         )
     }
     
@@ -588,8 +612,7 @@ object TLearn {
      */
     fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
         val inverseRp = RelationPath.getInverseRelation(rp)
-        val rpLength = RelationPath.getLength(rp)
-        
+
         // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
         r2h2supp[inverseRp]?.forEach { (constant, supp) ->
             if (supp >= MIN_SUPP) {
@@ -597,7 +620,7 @@ object TLearn {
                 // 生成Unary实例集合：所有能到达constant的head实体
                 val unaryInstanceSet = t2hSet[constant] ?: emptySet()
                 val minHashSignature = computeUnaryMinHash(unaryInstanceSet)
-                addAtomToMinHash(unaryAtom, supp, minHashSignature, rpLength)
+                addAtomToMinHash(unaryAtom, supp, minHashSignature)
             }
         }
         
@@ -608,7 +631,7 @@ object TLearn {
             // 生成Existence实例集合：所有head实体
             val existenceInstanceSet = h2tSet.keys
             val minHashSignature = computeUnaryMinHash(existenceInstanceSet)
-            addAtomToMinHash(existenceAtom, headEntityCount, minHashSignature, rpLength)
+            addAtomToMinHash(existenceAtom, headEntityCount, minHashSignature)
         }
         
         // 5. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
@@ -618,7 +641,7 @@ object TLearn {
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
                 val inverseUnaryInstanceSet = h2tSet[constant] ?: emptySet()
                 val minHashSignature = computeUnaryMinHash(inverseUnaryInstanceSet)
-                addAtomToMinHash(inverseUnaryAtom, supp, minHashSignature, rpLength)
+                addAtomToMinHash(inverseUnaryAtom, supp, minHashSignature)
             }
         }
         
@@ -629,34 +652,30 @@ object TLearn {
             // 生成逆Existence实例集合：所有tail实体
             val inverseExistenceInstanceSet = t2hSet.keys
             val minHashSignature = computeUnaryMinHash(inverseExistenceInstanceSet)
-            addAtomToMinHash(inverseExistenceAtom, inverseTailEntityCount, minHashSignature, rpLength)
+            addAtomToMinHash(inverseExistenceAtom, inverseTailEntityCount, minHashSignature)
         }
 
         // 7. r(X,X): Unary Atom for loops - r(X,X) exists
         if (loopSet.size >= MIN_SUPP) {
             val loopAtom = MyAtom(rp, IdManager.getXId()) // X表示循环原子
             val minHashSignature = computeUnaryMinHash(loopSet)
-            addAtomToMinHash(loopAtom, loopSet.size, minHashSignature, rpLength)
+            addAtomToMinHash(loopAtom, loopSet.size, minHashSignature)
         }
     }
 
     /** 对于长度超过1的关系路径，只应该将Formula添加到已经存在的LSH桶中，而不应该创建新的桶
      * 为Atom计算MinHash并加入LSH分桶
      */
-    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray, rpLength: Int): Boolean {
+    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray): Boolean {
         // 创建Formula (单原子公式)
-        val formula = Formula(atom1 = atom)
-        val lshSuccess = performLSH(formula, minHashSignature, supp, rpLength)
-
-        // 只有LSH成功才存储相关数据
-        if (lshSuccess) {
-            // 存储MinHash签名
+        if (atom.isL2Atom) {
+            val formula = Formula(atom1 = atom)
             minHashRegistry[formula] = minHashSignature
-
-            // 添加到公式队列
             formula2supp[formula] = supp
         }
-        return lshSuccess
+
+        val validCombinationCount = performLSH(atom, minHashSignature, supp)
+        return atom.isL2Atom || validCombinationCount > 0
     }
 
     /**
@@ -721,14 +740,16 @@ object TLearn {
      * 确保(entity1, entity2)和(entity2, entity1)产生不同的哈希值
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seedIndex: Int): Int {
-        val seed = globalHashSeeds[seedIndex]
+//        val seed = globalHashSeeds[seedIndex]
+        val seed = seedIndex * 37
         // 使用Triple的hashCode，确保顺序敏感且高效
-        val hash = pairHash(entity1, entity2)
+        var hash = pairHash(entity1, entity2)
         // 与seedIndex进行额外的混合，确保不同seedIndex产生不同结果
-        val finalHash = (hash xor seed) and Int.MAX_VALUE
+//        val finalHash = (hash xor seed) and Int.MAX_VALUE
+        hash = pairHash(hash, seed)
 //        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
-        return finalHash
+        return abs(hash)
     }
 
     /**
@@ -736,38 +757,32 @@ object TLearn {
      * 使用负数空间 [Int.MIN_VALUE, -1]
      */
     fun computeUnaryHash(entity: Int, seedIndex: Int): Int {
-        val seed = globalHashSeeds[seedIndex]
+//        val seed = globalHashSeeds[seedIndex]
+        val seed = seedIndex * 37
         // 使用Pair的hashCode，简洁高效
         val hash = pairHash(entity, seed)
         // 与seedIndex进行额外的混合
-        val finalHash = hash or Int.MIN_VALUE
+//        val finalHash = - abs(hash) - 1
         // 确保返回负数
 //        require(finalHash < 0)
-        return finalHash 
+        return hash or Int.MIN_VALUE
     }
 
     /**
      * LSH分桶 - 双级Map优化版本，直接使用MinHash索引，线程安全
      * 对于长路径（rpLength > 1）只添加到已存在的桶中，不创建新桶
      */
-    fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength: Int): Boolean {
+    fun performLSH(atom: MyAtom, minHashSignature: IntArray, supp: Int): Int {
         var hasRelevantAtom = false
-        val relevantAtom = mutableSetOf<Formula>()  // 使用Set避免重复
-        var isHeadAtom = false
-        if (rpLength == 1) {
-            val atom = formula.atom1!!
-            if (atom.entityId == IdManager.getYId() && !IdManager.isInverseRelation(atom.relationId) || atom.entityId > 0) {
-                isHeadAtom = true
-            }
-        }
-        
+        val relevantAtom = mutableSetOf<MyAtom>()  // 使用Set避免重复
+
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
             val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
             val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
             
             // 查询相关的已有的桶
-            val level1Map = bandToFormulas[key1]
+            val level1Map = band2headAtom[key1]
             if (level1Map != null) {
                 val bucket = level1Map[key2]
                 if (bucket != null) {
@@ -778,51 +793,57 @@ object TLearn {
             }
 
             // 如果是headAtom，放入桶中
-            if (isHeadAtom) {
-                val level1Map = bandToFormulas.getOrPut(key1) { mutableMapOf() }
+            if (atom.isHeadAtom) {
+                val level1Map = band2headAtom.getOrPut(key1) { mutableMapOf() }
                 val bucket = level1Map.getOrPut(key2) { mutableListOf() }
-                bucket.add(formula)
+                bucket.add(atom)
+            }
+
+            // 如果是L2Atom，放入桶中
+            if (atom.isL2Atom) {
+                val level1Map = band2L2Atom.getOrPut(key1) { mutableMapOf() }
+                val bucket = level1Map.getOrPut(key2) { mutableListOf() }
+                bucket.add(atom)
             }
         }
 
         // 进行相似性评估和过滤
-        var validCombinationCount = 0
         if (hasRelevantAtom)
-            validCombinationCount = findValidCombinations(formula, minHashSignature, supp, relevantAtom)
+            return findValidCombinations(atom, minHashSignature, supp, relevantAtom)
 
-        return rpLength <= 1 || validCombinationCount > 0
+        return 0
     }
     
     /**
      * 评估和过滤公式组合 - 封装相似性评估和过滤逻辑
      */
     private fun findValidCombinations(
-        formula: Formula, 
+        myAtom: MyAtom,
         minHashSignature: IntArray, 
-        supp: Int, 
-        relevantL1Formulas: Set<Formula>
+        mySupp: Int,
+        relevantAtom: Set<MyAtom>
     ): Int {
         var cnt = 0
 
         // 估计与过滤阶段：评估候选对并过滤
-        relevantL1Formulas.forEach { l1Formula ->
-            val l1Signature = minHashRegistry[l1Formula]
-            if (l1Signature != null) {
+        relevantAtom.forEach { atom ->
+            val signature = minHashRegistry[Formula(atom)]
+            if (signature != null) {
                 // 估计Jaccard相似度
-                val jaccard = estimateJaccardSimilarity(minHashSignature, l1Signature)
+                val jaccard = estimateJaccardSimilarity(minHashSignature, signature)
                 
                 // 估计交集大小
-                val l1Supp = formula2supp[l1Formula]!!
-                val intersectionSize = estimateIntersectionSize(jaccard, supp, l1Supp)
-                val metric = Metric(intersectionSize, l1Supp, supp)
+                val supp = formula2supp[Formula(atom)]!!
+                val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
+                val metric = Metric(intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
-                    println("\t$metric $l1Formula")
+                    println("\t$metric $atom")
                     cnt ++
                 }
             }
         }
-        if (cnt > 0) println("Found $cnt valid combinations for $formula:")
+        if (cnt > 0) println("Found $cnt valid combinations for $myAtom:")
         return cnt
     }
     
@@ -835,8 +856,12 @@ object TLearn {
     /**
      * 估计交集大小：I_est = J_est * (size_a1 + size_a2) / (1 + J_est)
      */
-    private fun estimateIntersectionSize(jaccardSimilarity: Double, size1: Int, size2: Int): Double 
-        = jaccardSimilarity * (size1 + size2) / (1 + jaccardSimilarity)
+    private fun estimateIntersectionSize(jaccardSimilarity: Double, size1: Int, size2: Int): Double {
+        val ret = jaccardSimilarity * (size1 + size2) / (1 + jaccardSimilarity)
+        return min(ret, min(size1, size2).toDouble()) // 交集大小不应超过较小集合的大小
+//        return ret
+    }
+
 
     /**
      * 输出LSH分桶结果 - 适配双级Map，防止并发修改异常
@@ -845,15 +870,15 @@ object TLearn {
         println("LSH Buckets Summary:")
         
         // 创建快照以避免并发修改异常
-        val bandToFormulasSnapshot = synchronized(bandToFormulas) {
-            bandToFormulas.mapValues { (_, level2Map) ->
+        val band2headAtomSnapshot = synchronized(band2headAtom) {
+            band2headAtom.mapValues { (_, level2Map) ->
                 level2Map.mapValues { (_, formulas) ->
                     formulas.toList() // 创建不可变副本
                 }.toMap()
             }.toMap()
         }
         
-        val allBuckets = bandToFormulasSnapshot.values.flatMap { it.values }
+        val allBuckets = band2headAtomSnapshot.values.flatMap { it.values }
         println("Total buckets: ${allBuckets.size}")
         println("Total formulas in registry: ${minHashRegistry.size}")
 
@@ -865,21 +890,21 @@ object TLearn {
         println("  Average: ${bucketSizes.average()}")
 
         // 收集所有桶并按原子类型分类
-        val allBucketsWithInfo = bandToFormulasSnapshot.entries.flatMap { (key1, level2Map) ->
-            level2Map.entries.map { (key2, formulas) ->
-                Triple(key1, key2, formulas)
+        val allBucketsWithInfo = band2headAtomSnapshot.entries.flatMap { (key1, level2Map) ->
+            level2Map.entries.map { (key2, atoms) ->
+                Triple(key1, key2, atoms)
             }
         }
         
         // 定义过滤函数避免重复代码
-        fun isBinaryBucket(formulas: List<Formula>) = formulas.isNotEmpty() && formulas.first().atom1?.entityId == IdManager.getYId()
+        fun isBinaryBucket(atoms: List<MyAtom>) = atoms.first().entityId == IdManager.getYId()
         
         // 分离Binary和Unary桶，并统一显示
         val bucketTypes = listOf("Binary", "Unary")
         
         bucketTypes.forEach { bucketType ->
-            val allBucketsOfType = allBucketsWithInfo.filter { (_, _, formulas) ->
-                if (bucketType == "Binary") isBinaryBucket(formulas) else !isBinaryBucket(formulas)
+            val allBucketsOfType = allBucketsWithInfo.filter { (_, _, atoms) ->
+                if (bucketType == "Binary") isBinaryBucket(atoms) else !isBinaryBucket(atoms)
             }
             val level1Keys = allBucketsOfType.map { it.first }.toSet().size
             val level2Keys = allBucketsOfType.size
@@ -887,13 +912,13 @@ object TLearn {
             
             println("\nTop 20 largest $bucketType buckets:")
             println("Total $bucketType buckets: $level1Keys level-1 buckets, $level2Keys level-2 buckets")
-            top20Buckets.forEachIndexed { index, (key1, key2, formulas) ->
-                println("${index + 1}. $bucketType Bucket ($key1, $key2): ${formulas.size} formulas")
-                formulas.take(10).forEach { formula ->
-                    println("    $formula")
+            top20Buckets.forEachIndexed { index, (key1, key2, atoms) ->
+                println("${index + 1}. $bucketType Bucket ($key1, $key2): ${atoms.size} atoms")
+                atoms.take(10).forEach { atom ->
+                    println("    $atom")
                 }
-                if (formulas.size > 10) {
-                    println("    ... and ${formulas.size - 10} more")
+                if (atoms.size > 10) {
+                    println("    ... and ${atoms.size - 10} more")
                 }
             }
         }
