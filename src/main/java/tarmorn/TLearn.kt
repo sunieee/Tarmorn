@@ -14,6 +14,7 @@ import kotlin.collections.iterator
 import kotlin.math.abs
 import kotlin.math.min
 
+
 /**
  * TLearn - Top-down relation path learning algorithm
  * Implements the connection algorithm: Binary Atom L=1 -connect-> Binary Atom L<=MAX_PATH_LENGTH
@@ -118,6 +119,12 @@ object TLearn {
 
         val valid: Boolean
             get() = support >= MIN_SUPP && coverage > 0.1 && confidence > 0.1
+
+        override fun toString(): String {
+            return "{\"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
+        }
+
+        fun inverse() =  Metric(support, bodySize, headSize)
     }
 
     // 流式计算结构
@@ -125,6 +132,7 @@ object TLearn {
     val minHashRegistry = mutableMapOf<Formula, IntArray>()           // 公式→MinHash映射
     val band2headAtom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()  // 双级Map：直接使用MinHash索引作为键
     val band2L2Atom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()
+    val atom2formula2metric = mutableMapOf<MyAtom, MutableMap<Formula, Metric>>() // 原子→公式→度量映射
 
     // 预分配桶空间以减少Map扩容开销
     private fun initializeLSHBuckets() {
@@ -249,6 +257,9 @@ object TLearn {
 
             // 打印LSH分桶结果
             printLSHBuckets()
+
+            // 保存atom2formula2metric到JSON文件
+            saveAtom2Formula2MetricToJson()
 
             // Close the log file - 移到这里，确保所有工作线程完成后再关闭
             synchronized(logWriter) {
@@ -702,6 +713,7 @@ object TLearn {
             formula2supp[formula] = supp
         }
 
+        // 执行标准LSH处理（与headAtom进行组合）
         val validCombinationCount = performLSH(atom, minHashSignature, supp)
         return atom.isL2Atom || validCombinationCount > 0
     }
@@ -794,11 +806,10 @@ object TLearn {
 
     /**
      * LSH分桶 - 双级Map优化版本，直接使用MinHash索引，线程安全
-     * 对于长路径（rpLength > 1）只添加到已存在的桶中，不创建新桶
+     * 优化：直接统计碰撞次数作为Jaccard相似度估计，避免后续逐个计算
      */
-    fun performLSH(atom: MyAtom, minHashSignature: IntArray, supp: Int): Int {
-        var hasRelevantAtom = false
-        val relevantAtom = mutableSetOf<MyAtom>()  // 使用Set避免重复
+    fun performLSH(myAtom: MyAtom, minHashSignature: IntArray, mySupp: Int): Int {
+        val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
 
         // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
         for (bandIndex in 0 until BANDS) {
@@ -810,72 +821,116 @@ object TLearn {
             if (level1Map != null) {
                 val bucket = level1Map[key2]
                 if (bucket != null) {
-                    // 收集所有rpLength=1的相关公式
-                    relevantAtom.addAll(bucket)
-                    hasRelevantAtom = true
+                    // 为这个桶中的每个原子增加碰撞计数
+                    bucket.forEach { relevantAtom ->
+                        relevantAtom2BucketCount[relevantAtom] = 
+                            relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
+                    }
                 }
             }
 
             // 如果是headAtom，放入桶中
-            if (atom.isHeadAtom) {
+            if (myAtom.isHeadAtom) {
                 val level1Map = band2headAtom.getOrPut(key1) { mutableMapOf() }
                 val bucket = level1Map.getOrPut(key2) { mutableListOf() }
-                bucket.add(atom)
-            }
-
-            // 如果是L2Atom，放入桶中
-            if (atom.isL2Atom) {
-                val level1Map = band2L2Atom.getOrPut(key1) { mutableMapOf() }
-                val bucket = level1Map.getOrPut(key2) { mutableListOf() }
-                bucket.add(atom)
+                bucket.add(myAtom)
             }
         }
 
-        // 进行相似性评估和过滤
-        if (hasRelevantAtom)
-            return findValidCombinations(atom, minHashSignature, supp, relevantAtom)
-
-        return 0
-    }
-    
-    /**
-     * 评估和过滤公式组合 - 封装相似性评估和过滤逻辑
-     */
-    private fun findValidCombinations(
-        myAtom: MyAtom,
-        minHashSignature: IntArray, 
-        mySupp: Int,
-        relevantAtom: Set<MyAtom>
-    ): Int {
+        // 进行相似性评估和过滤 - 使用预计算的碰撞次数
         var cnt = 0
-
-        // 估计与过滤阶段：评估候选对并过滤
-        relevantAtom.forEach { atom ->
-            val signature = minHashRegistry[Formula(atom)]
-            if (signature != null) {
-                // 估计Jaccard相似度
-                val jaccard = estimateJaccardSimilarity(minHashSignature, signature)
+        relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
+            val formula = Formula(atom1 = atom)
+            val supp = formula2supp[formula]
+            if (supp != null) {
+                // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
+                val jaccard = bucketCount.toDouble() / BANDS
                 
                 // 估计交集大小
-                val supp = formula2supp[Formula(atom)]!!
                 val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
                 val metric = Metric(intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
-                    println("\t$metric $atom")
+                    val newFormula = Formula(atom1 = myAtom, atom2 = atom)
+                    // 添加到结果映射
+                    val newSignature = IntArray(MH_DIM) { i ->
+                        min(minHashSignature[i], minHashRegistry[formula]!![i])
+                    }
+                    
+                    val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
+                    formula2metric[newFormula] = metric
+
+                    if (myAtom.isHeadAtom) {
+                        val formula2metric = atom2formula2metric.getOrPut(myAtom) { mutableMapOf() }
+                        formula2metric[newFormula] = metric.inverse()
+                    }
+
+                    // 如果置信度已经高于0.95，没必要再组合了
+                    if (myAtom.isL2Atom && metric.confidence < 0.95)
+                        performLSHforL2Formula(newFormula, newSignature, intersectionSize.toInt())
+
                     cnt ++
                 }
             }
         }
-        if (cnt > 0) println("Found $cnt valid combinations for $myAtom:")
+        if (cnt > 0) println("Found $cnt valid combinations for Atom: $myAtom:")
         return cnt
     }
     
     /**
-     * 估计Jaccard相似度：J_est = (两个签名中值相等的哈希函数数量) / k
+     * LSH分桶 - 专门用于L2Formula，从band2headAtom中查找相关原子进行组合
+     * 优化：直接统计碰撞次数作为Jaccard相似度估计
      */
-    private fun estimateJaccardSimilarity(signature1: IntArray, signature2: IntArray): Double 
-        = signature1.zip(signature2).count { (h1, h2) -> h1 == h2 }.toDouble() / signature1.size
+    fun performLSHforL2Formula(myFormula: Formula, minHashSignature: IntArray, mySupp: Int): Int {
+        val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
+
+        // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
+        for (bandIndex in 0 until BANDS) {
+            val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
+            val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
+            
+            // 查询相关的已有的原子桶
+            val level1Map = band2headAtom[key1]
+            if (level1Map != null) {
+                val bucket = level1Map[key2]
+                if (bucket != null) {
+                    // 为这个桶中的每个原子增加碰撞计数
+                    bucket.forEach { relevantAtom ->
+                        relevantAtom2BucketCount[relevantAtom] = 
+                            relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
+                    }
+                }
+            }
+        }
+
+        var cnt = 0
+        // 估计与过滤阶段：使用预计算的碰撞次数直接估计Jaccard相似度
+        relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
+            if (atom == myFormula.atom1 || atom == myFormula.atom2) return@forEach // 跳过相同原子，避免重复组合
+            val formula = Formula(atom1 = atom)
+            val supp = formula2supp[formula]
+            if (supp != null) {
+                // 直接使用碰撞次数计算Jaccard相似度
+                val jaccard = bucketCount.toDouble() / BANDS
+                
+                // 估计交集大小
+                val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
+                val metric = Metric(intersectionSize, supp, mySupp)
+
+                if (metric.valid) {
+                    // 创建二元公式组合
+                    val newFormula = Formula(atom1 = myFormula.atom1, myFormula.atom2, atom)
+                    val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
+                    formula2metric[newFormula] = metric
+                    
+                    cnt++
+                }
+            }
+        }
+        if (cnt > 0) println("Found $cnt valid combinations for L2Formula $myFormula:")
+        return cnt
+    }
+    
     
     /**
      * 估计交集大小：I_est = J_est * (size_a1 + size_a2) / (1 + J_est)
@@ -946,5 +1001,48 @@ object TLearn {
                 }
             }
         }
+    }
+
+    /**
+     * 保存atom2formula2metric为JSON文件 - 流式输出避免内存溢出
+     */
+    private fun saveAtom2Formula2MetricToJson() {
+        val outDir = File("out")
+        outDir.mkdirs() // 确保out目录存在
+
+        val outputFile = File(outDir, "atom2formula2metric.json")
+        BufferedWriter(FileWriter(outputFile)).use { writer ->
+            writer.write("{\n")
+            val atomEntries = atom2formula2metric.entries.toList()
+
+            atomEntries.forEachIndexed { atomIndex, (atom, formula2Metric) ->
+                // 转义JSON字符串中的特殊字符
+                val atomString = atom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                writer.write("  \"$atomString\": {\n")
+
+                val formulaEntries = formula2Metric.entries.toList()
+                formulaEntries.forEachIndexed { formulaIndex, (formula, metric) ->
+                    val formulaString = formula.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                    writer.write("    \"$formulaString\": $metric")
+                    if (formulaIndex < formulaEntries.size - 1) writer.write(",")
+                    writer.write("\n")
+                }
+
+                writer.write("  }")
+                if (atomIndex < atomEntries.size - 1) writer.write(",")
+                writer.write("\n")
+
+                // 每处理100个atom就flush一次，避免内存积累
+                if (atomIndex % 100 == 0) {
+                    writer.flush()
+                    println("Processed ${atomIndex + 1}/${atomEntries.size} atoms...")
+                }
+            }
+            writer.write("}\n")
+        }
+
+        println("Successfully saved atom2formula2metric to ${outputFile.absolutePath}")
+        println("Total atoms: ${atom2formula2metric.size}")
+        println("Total formulas: ${atom2formula2metric.values.sumOf { it.size }}")
     }
 }
