@@ -48,6 +48,7 @@ object TLearn {
     )
     val queueLock = Object()
     val activeThreadCount = AtomicInteger(0) // 线程安全的活动线程计数
+    val threadMonitorLock = Object() // 用于线程监控的锁
 
     // Backup of L1 relations for connection attempts
     lateinit var relationL1: List<Long>
@@ -331,9 +332,30 @@ object TLearn {
             }
         }
 
-        // Wait for all threads to complete
-        futures.forEach { it.get() }
-        threadPool.shutdown()
+        // Monitor and force shutdown if too many threads stuck
+        try {
+            synchronized(threadMonitorLock) {
+                while (!futures.all { it.isDone }) {
+                    threadMonitorLock.wait() // 等待子线程通知
+                    val activeCount = activeThreadCount.get()
+                    println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
+                    
+                    if (activeCount < Settings.WORKER_THREADS - 5) {
+                        println("FORCING SHUTDOWN: Only $activeCount threads active, likely stuck!")
+                        futures.forEach { it.cancel(true) }
+                        threadPool.shutdownNow()
+                        break
+                    }
+                }
+            }
+            
+            if (!threadPool.isShutdown) {
+                futures.forEach { it.get() }
+                threadPool.shutdown()
+            }
+        } catch (e: Exception) {
+            threadPool.shutdownNow()
+        }
 
         println("Connection completed. Processed: ${processedCount.get()}, Added: ${addedCount.get()}")
     }
@@ -345,7 +367,7 @@ object TLearn {
         println("Thread $threadId started")
 
         // 如果只有当前一个线程卡主，则直接结束
-        while (activeThreadCount.get() > 1) {
+        while (true) {
             // Step 3: Get next relation path from queue
             var currentItem = synchronized(queueLock) {relationQueue.poll()}
             var attempts = 0
@@ -380,13 +402,13 @@ object TLearn {
                             val newItem = RelationPathItem(connectedPath, supp)
                             relationQueue.offer(newItem)
                         }
-                        addedCount.incrementAndGet()
+                        val cnt = addedCount.incrementAndGet()
 
                         // Log the successful path addition
                         logWorkerResult(connectedPath, supp)
 
-                        if (addedCount.get() % 100 == 0) {
-                            println("Thread $threadId: Added ${addedCount.get()} new paths")
+                        if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS) {
+                            println("Thread $threadId: Added $cnt new paths")
                             println("Thread $threadId: path $connectedPath added with supp $supp (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
                         }
                     }
@@ -400,6 +422,11 @@ object TLearn {
 
         val cnt = activeThreadCount.decrementAndGet()
         println("Thread $threadId completed, $cnt threads remain")
+        
+        // 通知主线程检查线程状态
+        synchronized(threadMonitorLock) {
+            threadMonitorLock.notify()
+        }
     }
 
     /**
@@ -497,15 +524,16 @@ object TLearn {
                     } else {
                         // Compute both MinHash signatures in one loop - 优化版本减少数组访问
                         for (i in 0 until MH_DIM) {
+                            val seed = globalHashSeeds[i]
                             // For Binary MinHash: (r1Head, riTail) - 保持顺序
-                            val binaryHashValue = computeBinaryHash(r1Head, riTail, i)
+                            val binaryHashValue = computeBinaryHash(r1Head, riTail, seed)
                             val currentBinaryMin = binaryMinHash[i]
                             if (binaryHashValue < currentBinaryMin) {
                                 binaryMinHash[i] = binaryHashValue
                             }
                             
                             // For Inverse Binary MinHash: (riTail, r1Head) - 保持顺序
-                            val inverseBinaryHashValue = computeBinaryHash(riTail, r1Head, i)
+                            val inverseBinaryHashValue = computeBinaryHash(riTail, r1Head, seed)
                             val currentInverseMin = inverseBinaryMinHash[i]
                             if (inverseBinaryHashValue < currentInverseMin) {
                                 inverseBinaryMinHash[i] = inverseBinaryHashValue
@@ -692,7 +720,7 @@ object TLearn {
         // 为每个实例生成哈希值 - 优化版本减少数组访问
         instanceSet.forEach { (entity1, entity2) ->
             for (i in 0 until MH_DIM) {
-                val hashValue = computeBinaryHash(entity1, entity2, i)
+                val hashValue = computeBinaryHash(entity1, entity2, globalHashSeeds[i])
                 val currentMin = signature[i]
                 if (hashValue < currentMin) {
                     signature[i] = hashValue
@@ -717,7 +745,7 @@ object TLearn {
         // 为每个实例生成哈希值 - 优化版本减少数组访问
         instanceSet.forEach { entity ->
             for (i in 0 until MH_DIM) {
-                val hashValue = computeUnaryHash(entity, i)
+                val hashValue = computeUnaryHash(entity, globalHashSeeds[i])
                 val currentMin = signature[i]
                 if (hashValue < currentMin) {
                     signature[i] = hashValue
@@ -739,9 +767,7 @@ object TLearn {
      * 使用正数空间 [0, Int.MAX_VALUE]
      * 确保(entity1, entity2)和(entity2, entity1)产生不同的哈希值
      */
-    fun computeBinaryHash(entity1: Int, entity2: Int, seedIndex: Int): Int {
-//        val seed = globalHashSeeds[seedIndex]
-        val seed = seedIndex * 37
+    fun computeBinaryHash(entity1: Int, entity2: Int, seed: Int): Int {
         // 使用Triple的hashCode，确保顺序敏感且高效
         var hash = pairHash(entity1, entity2)
         // 与seedIndex进行额外的混合，确保不同seedIndex产生不同结果
@@ -756,9 +782,7 @@ object TLearn {
      * 计算Unary Atom的哈希值（模拟k个不同的哈希函数）
      * 使用负数空间 [Int.MIN_VALUE, -1]
      */
-    fun computeUnaryHash(entity: Int, seedIndex: Int): Int {
-//        val seed = globalHashSeeds[seedIndex]
-        val seed = seedIndex * 37
+    fun computeUnaryHash(entity: Int, seed: Int): Int {
         // 使用Pair的hashCode，简洁高效
         val hash = pairHash(entity, seed)
         // 与seedIndex进行额外的混合
