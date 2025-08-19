@@ -110,6 +110,7 @@ object TLearn {
     }
 
     data class Metric(
+        val jaccard: Double,
         val support: Double,
         val headSize: Int,
         val bodySize: Int,
@@ -121,10 +122,10 @@ object TLearn {
             get() = support >= MIN_SUPP && coverage > 0.1 && confidence > 0.1
 
         override fun toString(): String {
-            return "{\"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
+            return "{\"jaccard\": $jaccard, \"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
         }
 
-        fun inverse() =  Metric(support, bodySize, headSize)
+        fun inverse() =  Metric(jaccard, support, bodySize, headSize)
     }
 
     // 流式计算结构
@@ -133,15 +134,6 @@ object TLearn {
     val band2headAtom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()  // 双级Map：直接使用MinHash索引作为键
     val band2L2Atom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()
     val atom2formula2metric = mutableMapOf<MyAtom, MutableMap<Formula, Metric>>() // 原子→公式→度量映射
-
-    // 预分配桶空间以减少Map扩容开销
-    private fun initializeLSHBuckets() {
-        // 预估可能的桶数量，减少Map扩容 - 双级Map只需要更少的预分配
-        for (i in 0 until 50) { // 第一级只需要较少的预分配
-            band2headAtom[i] = mutableMapOf()
-            band2L2Atom[i] = mutableMapOf()
-        }
-    }
 
     // Initialize logger and clear the log file
     private fun initializeLogger() {
@@ -223,9 +215,6 @@ object TLearn {
     fun learn() {
         // Initialize global hash seeds first
         initializeGlobalHashSeeds()
-        
-        // Initialize LSH buckets to reduce Map expansion overhead
-        initializeLSHBuckets()
         
         // Initialize and clear the log file
         initializeLogger()
@@ -774,6 +763,18 @@ object TLearn {
         return entity1 * 31 + entity2
     }
 
+    fun mix64(z0: Long): Long {
+        var z = z0 + 0x9E3779B97F4A7C15UL.toLong()
+        z = (z xor (z ushr 30)) * 0xBF58476D1CE4E5B9UL.toLong()
+        z = (z xor (z ushr 27)) * 0x94D049BB133111EBUL.toLong()
+        return z xor (z ushr 31)
+    }
+
+    fun mix32(z0: Int): Int {
+        val z = z0.toLong() and 0xFFFF_FFFFL  // 转成无符号 Long
+        return (mix64(z) ushr 32).toInt()
+    }
+
     /**
      * 计算Binary Atom的哈希值（模拟k个不同的哈希函数）
      * 使用正数空间 [0, Int.MAX_VALUE]
@@ -784,7 +785,8 @@ object TLearn {
         var hash = pairHash(entity1, entity2)
         // 与seedIndex进行额外的混合，确保不同seedIndex产生不同结果
 //        val finalHash = (hash xor seed) and Int.MAX_VALUE
-        hash = pairHash(hash, seed)
+//        hash = pairHash(hash, seed)
+        hash = mix32(hash xor seed)
 //        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
         return abs(hash)
@@ -796,7 +798,8 @@ object TLearn {
      */
     fun computeUnaryHash(entity: Int, seed: Int): Int {
         // 使用Pair的hashCode，简洁高效
-        val hash = pairHash(entity, seed)
+//        val hash = pairHash(entity, seed)
+        val hash = mix32(entity xor seed)
         // 与seedIndex进行额外的混合
 //        val finalHash = - abs(hash) - 1
         // 确保返回负数
@@ -848,7 +851,7 @@ object TLearn {
                 
                 // 估计交集大小
                 val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
-                val metric = Metric(intersectionSize, supp, mySupp)
+                val metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
                     val newFormula = Formula(atom1 = myAtom, atom2 = atom)
@@ -915,7 +918,7 @@ object TLearn {
                 
                 // 估计交集大小
                 val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
-                val metric = Metric(intersectionSize, supp, mySupp)
+                val metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
                     // 创建二元公式组合
