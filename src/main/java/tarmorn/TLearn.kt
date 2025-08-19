@@ -252,18 +252,6 @@ object TLearn {
 
             // 保存atom2formula2metric到JSON文件
             saveAtom2Formula2MetricToJson()
-
-            // Close the log file - 移到这里，确保所有工作线程完成后再关闭
-            synchronized(logWriter) {
-                try {
-                    if (!logWriterClosed && this::logWriter.isInitialized) {
-                        logWriterClosed = true
-                        logWriter.close()
-                    }
-                } catch (e: Exception) {
-                    println("Error closing log file: ${e.message}")
-                }
-            }
             // return r2tripleSet.mapValues { it.value.toSet() }
         }
     }
@@ -581,9 +569,11 @@ object TLearn {
             if (supp >= MIN_SUPP) {
                 val unaryAtom = MyAtom(rp, constant)
                 // 生成Unary实例集合：所有能到达constant的head实体
-                val unaryInstanceSet = t2hSet[constant] ?: emptySet()
-                val minHashSignature = computeUnaryMinHash(unaryInstanceSet)
-                addAtomToMinHash(unaryAtom, supp, minHashSignature)
+                val unaryInstanceSet = t2hSet[constant]
+                if (unaryInstanceSet != null) {
+                    val minHashSignature = computeUnaryMinHash(unaryInstanceSet)
+                    addAtomToMinHash(unaryAtom, supp, minHashSignature)
+                }
             }
         }
         
@@ -602,9 +592,12 @@ object TLearn {
             if (supp >= MIN_SUPP) {
                 val inverseUnaryAtom = MyAtom(inverseRp, constant)
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
-                val inverseUnaryInstanceSet = h2tSet[constant] ?: emptySet()
-                val minHashSignature = computeUnaryMinHash(inverseUnaryInstanceSet)
-                addAtomToMinHash(inverseUnaryAtom, supp, minHashSignature)
+                val inverseUnaryInstanceSet = h2tSet[constant]
+                if (inverseUnaryInstanceSet != null) {
+                    // TODO: h2tSet 中可能没有该constant的映射
+                    val minHashSignature = computeUnaryMinHash(inverseUnaryInstanceSet)
+                    addAtomToMinHash(inverseUnaryAtom, supp, minHashSignature)
+                }
             }
         }
         
@@ -774,7 +767,9 @@ object TLearn {
             if (atom == myAtom) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
-            if (supp != null) {
+            val registry = minHashRegistry[formula]
+            // TODO: 为什么registry会出现null？
+            if (supp != null &&  registry != null) {
                 // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
                 val jaccard = bucketCount.toDouble() / BANDS
                 
@@ -786,7 +781,7 @@ object TLearn {
                     val newFormula = Formula(atom1 = myAtom, atom2 = atom)
                     // 添加到结果映射
                     val newSignature = IntArray(MH_DIM) { i ->
-                        min(minHashSignature[i], minHashRegistry[formula]!![i])
+                        min(minHashSignature[i], registry[i])
                     }
                     
                     val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
