@@ -7,8 +7,10 @@ import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
 import java.lang.Thread.sleep
-import java.util.PriorityQueue
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
 import kotlin.math.abs
@@ -26,8 +28,9 @@ object TLearn {
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 128
-    const val R = 2  // 每band维度
+    const val R = 1  // 每band维度
     const val BANDS = MH_DIM / R
+    const val bucketCountThreshold = 3
     
     // 全局随机种子数组，在程序启动时初始化
     private lateinit var globalHashSeeds: IntArray
@@ -36,18 +39,15 @@ object TLearn {
     val config = Settings.load()    // 加载配置
     val ts: TripleSet = TripleSet(Settings.PATH_TRAINING, true)
     // lateinit var r2tripleSet: MutableMap<Long, MutableSet<MyTriple>>
-    lateinit var r2supp: MutableMap<Long, Int>
+    lateinit var r2supp: ConcurrentHashMap<Long, Int>
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
     lateinit var r2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
     lateinit var r2h2supp: MutableMap<Long, MutableMap<Int, Int>>
+    lateinit var r2tSet: Map<Long, IntArray>    // 仅保留relationL1到尾实体，使用快照数组以提升遍历性能
     lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
 
-    // Thread-safe relation queue using ConcurrentLinkedQueue for producer-consumer pattern
-    val relationQueue = PriorityQueue<RelationPathItem>(
-        compareByDescending { it.supp }
-//        compareBy { it.supp }
-    )
-    val queueLock = Object()
+    // Thread-safe relation queue using BlockingQueue (no need to sort by supp)
+    val relationQueue = LinkedBlockingQueue<RelationPathItem>()
     val activeThreadCount = AtomicInteger(0) // 线程安全的活动线程计数
     val threadMonitorLock = Object() // 用于线程监控的锁
 
@@ -60,6 +60,7 @@ object TLearn {
     private var logErrorReported = false // 防止重复报告日志错误
     private var logWriterClosed = false // 跟踪日志写入器状态
 
+    private val POISON = RelationPathItem(Long.MIN_VALUE, 0)
 
     // 核心类型定义
     data class MyAtom(val relationId: Long, val entityId: Int) {   // (RelationID, EntityID)，EntityID<0 表示 binary
@@ -126,13 +127,15 @@ object TLearn {
         }
 
         fun inverse() =  Metric(jaccard, support, bodySize, headSize)
+
+        fun betterThan(other: Metric) =
+            this.jaccard > other.jaccard && this.confidence >= other.confidence
     }
 
     // 流式计算结构
     val formula2supp = mutableMapOf<Formula, Int>()          // 公式→支持度映射
     val minHashRegistry = mutableMapOf<Formula, IntArray>()           // 公式→MinHash映射
-    val band2headAtom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()  // 双级Map：直接使用MinHash索引作为键
-    val band2L2Atom = mutableMapOf<Int, MutableMap<Int, MutableList<MyAtom>>>()
+    val key2headAtom = mutableMapOf<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
     val atom2formula2metric = mutableMapOf<MyAtom, MutableMap<Formula, Metric>>() // 原子→公式→度量映射
 
     // Initialize logger and clear the log file
@@ -223,7 +226,7 @@ object TLearn {
         // r2tripleSet = ts.r2tripleSet
         r2loopSet = ts.r2loopSet
         r2h2tSet = ts.r2h2tSet
-        r2supp = ts.r2tripleSet.mapValues { it.value.size }.toMutableMap()
+    r2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
         r2h2supp = r2h2tSet.mapValues { entry ->
             entry.value.mapValues { it.value.size }.toMutableMap()
         } as MutableMap<Long, MutableMap<Int, Int>>
@@ -273,42 +276,47 @@ object TLearn {
 
         var addedCount = 0
 
-        synchronized(queueLock) {
-            for ((relation, tripleSet) in ts.r2tripleSet) {
-                r2supp[relation] = tripleSet.size
-                if (tripleSet.size >= MIN_SUPP) {
+        for ((relation, tripleSet) in ts.r2tripleSet) {
+            r2supp[relation] = tripleSet.size
+            if (tripleSet.size >= MIN_SUPP) {
 //                    val pathId = RelationPath.encode(relation)
-                    val item = RelationPathItem(relation, tripleSet.size)
-                    relationQueue.offer(item)
-                    addedCount++
+                val item = RelationPathItem(relation, tripleSet.size)
+                relationQueue.offer(item)
+                addedCount++
 
-                    if (!IdManager.isInverseRelation(relation)) {
-                        // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
-                        val h2tSet = r2h2tSet[relation]!!.toMutableMap()
-                        val inverseRelation = RelationPath.getInverseRelation(relation)
-                        val t2hSet = r2h2tSet[inverseRelation]!!.toMutableMap()
+                if (!IdManager.isInverseRelation(relation)) {
+                    // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
+                    val h2tSet = r2h2tSet[relation]!!.toMutableMap()
+                    val inverseRelation = RelationPath.getInverseRelation(relation)
+                    val t2hSet = r2h2tSet[inverseRelation]!!.toMutableMap()
 
-                        // 计算Binary原子的MinHash签名
-                        val binaryInstanceSet = h2tSet.flatMap { (head, tails) ->
-                            tails.map { tail -> Pair(head, tail) }
-                        }.toSet()
-                        val inverseBinaryInstanceSet = t2hSet.flatMap { (tail, heads) ->
-                            heads.map { head -> Pair(tail, head) }
-                        }.toSet()
-                        
-                        val binaryMinHash = computeBinaryMinHash(binaryInstanceSet)
-                        val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
-                    
-                        // 处理Binary原子
-                        atomizeBinaryRelationPath(relation, tripleSet.size, binaryMinHash, inverseBinaryMinHash)
-                        // 处理Unary原子
-                        atomizeUnaryRelationPath(relation, h2tSet, t2hSet, r2loopSet[relation] ?: mutableSetOf())
-                    }
-                    
+                    // 计算Binary原子的MinHash签名
+                    val binaryInstanceSet = h2tSet.flatMap { (head, tails) ->
+                        tails.map { tail -> Pair(head, tail) }
+                    }.toSet()
+                    val inverseBinaryInstanceSet = t2hSet.flatMap { (tail, heads) ->
+                        heads.map { head -> Pair(tail, head) }
+                    }.toSet()
+
+                    val binaryMinHash = computeBinaryMinHash(binaryInstanceSet)
+                    val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
+
+                    // 处理Binary原子
+                    atomizeBinaryRelationPath(relation, tripleSet.size, binaryMinHash, inverseBinaryMinHash)
+                    // 处理Unary原子
+                    atomizeUnaryRelationPath(relation, h2tSet, t2hSet, r2loopSet[relation] ?: mutableSetOf())
                 }
-            }
 
-            relationL1 = relationQueue.map { it.relationPath }.toList()
+            }
+        }
+
+        relationL1 = relationQueue.map { it.relationPath }.toList()
+        // 使用不可变快照，避免并发修改影响，并提升遍历效率
+        r2tSet = relationL1.associateWith { r ->
+            val inv = IdManager.getInverseRelation(r)
+            val keys = r2h2supp[inv]?.keys ?: emptySet()
+            // 拷贝为数组，遍历更快，且是稳定快照
+            keys.toIntArray()
         }
         println("Added $addedCount level 1 relations to queue")
         // println("Level 1 relations: ${relationL1.map { IdManager.getRelationString(it) }}")
@@ -339,7 +347,7 @@ object TLearn {
                     threadMonitorLock.wait() // 等待子线程通知
                     val activeCount = activeThreadCount.get()
                     println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
-                    
+
                     if (activeCount < Settings.WORKER_THREADS - 5) {
                         println("FORCING SHUTDOWN: Only $activeCount threads active, likely stuck!")
                         futures.forEach { it.cancel(true) }
@@ -348,7 +356,7 @@ object TLearn {
                     }
                 }
             }
-            
+
             if (!threadPool.isShutdown) {
                 futures.forEach { it.get() }
                 threadPool.shutdown()
@@ -369,63 +377,55 @@ object TLearn {
         // 如果只有当前一个线程卡主，则直接结束
         while (true) {
             // Step 3: Get next relation path from queue
-            var currentItem = synchronized(queueLock) {relationQueue.poll()}
-            var attempts = 0
-            while (currentItem == null && attempts < 3) {
-                sleep(1000)
-                currentItem = synchronized(queueLock) {relationQueue.poll()}
-                attempts++
+            val item = relationQueue.poll(3, TimeUnit.SECONDS) ?: run {
+                relationQueue.put(POISON)
+                POISON
             }
-            if (currentItem == null) {
-                println("Thread $threadId: No more items in queue, exiting")
-                break
-            }
+            if (item === POISON) break               // 优雅收尾
 
-            val ri = currentItem.relationPath
+            val ri = item.relationPath
             val riLength = RelationPath.getLength(ri)
+            if (riLength >= MAX_PATH_LENGTH) continue
 
-            // Skip if already at max length
-            if (riLength >= MAX_PATH_LENGTH) {
-                continue
+            try {
+                runTask(threadId, processedCount, addedCount, ri)
             }
-
-            processedCount.incrementAndGet()
-
-            // Step 4: Try connecting with all L1 relations
-            for (r1 in relationL1) {
-                // try {
-                val connectedPath = attemptConnection(r1, ri)
-                if (connectedPath != null) {
-                    val supp = computeSupp(connectedPath, r1, ri)
-                    if (supp >= MIN_SUPP) {
-                        synchronized(queueLock) {
-                            val newItem = RelationPathItem(connectedPath, supp)
-                            relationQueue.offer(newItem)
-                        }
-                        val cnt = addedCount.incrementAndGet()
-
-                        // Log the successful path addition
-                        logWorkerResult(connectedPath, supp)
-
-                        if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS) {
-                            println("Thread $threadId: Added $cnt new paths")
-                            println("Thread $threadId: path $connectedPath added with supp $supp (r1: $r1, ri: $ri) TODO: ${relationQueue.size} remaining in queue")
-                        }
-                    }
-                }
-                // } catch (e: Exception) {
-                //     // Log error but continue processing
-                //     println("Thread $threadId: Error connecting paths: ${e.message}")
-                // }
+            catch (e: Exception) {
+                println("Error in thread $threadId processing relation $ri: ${e.message}")
+                e.printStackTrace()
             }
         }
 
         val cnt = activeThreadCount.decrementAndGet()
         println("Thread $threadId completed, $cnt threads remain")
-        
+
         // 通知主线程检查线程状态
         synchronized(threadMonitorLock) {
             threadMonitorLock.notify()
+        }
+    }
+
+    fun runTask(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger, ri: Long) {
+        processedCount.incrementAndGet()
+
+        // Step 4: Try connecting with all L1 relations (immediate enqueue per item)
+        for (r1 in relationL1) {
+            val connectedPath = attemptConnection(r1, ri)
+            if (connectedPath != null) {
+                val supp = computeSupp(connectedPath, r1, ri)
+                if (supp >= MIN_SUPP) {
+                    relationQueue.offer(RelationPathItem(connectedPath, supp))
+                    val cnt = addedCount.incrementAndGet()
+
+                    // Per-item log (keeps queue flowing)
+                    // logWorkerResult(connectedPath, supp)
+
+                    if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS) {
+                        val remaining = relationQueue.size
+                        println("Thread $threadId: Added $cnt new paths; latest supp=$supp; TODO: $remaining remaining in queue")
+                    }
+                }
+            }
         }
     }
 
@@ -451,14 +451,11 @@ object TLearn {
         // if (r2tripleSet.containsKey(rp) || r2tripleSet.containsKey(IdManager.getInverseRelation(rp))) {
         //     return null // Skip existing paths
         // }
-        // 为了避免多线程冲突，使用synchronized锁，并且初始化r2supp
-        // 否则同一个rp可能被多线程同时计算，导致同一个bucket添加相同的atom
-        synchronized(r2supp) {
-            if (r2supp.containsKey(rp)) {   //  || r2supp.containsKey(inverseRp)
-                return null // Skip existing paths
-            }
-            r2supp[rp] = 0
-            r2supp[inverseRp] = 0
+        // 原子插入，避免全局同步：只有当 rp 和 inverseRp 都是首次出现时才继续
+        val prevRp = r2supp.putIfAbsent(rp, 0)
+        val prevInv = r2supp.putIfAbsent(inverseRp, 0)
+        if (prevRp != null || prevInv != null) {
+            return null
         }
 
         return rp
@@ -471,8 +468,7 @@ object TLearn {
     fun computeSupp(rp: Long, r1: Long, ri: Long): Int {
         // Get tail entities of r1 (these become connecting entities)
         val pathLength = RelationPath.getLength(rp)
-        val r1TailEntities = r2h2supp[RelationPath.getInverseRelation(r1)]?.keys ?: emptySet()
-
+        val r1TailEntities = r2tSet[r1]!!
         // Get head entities for ri
         val riHeadEntities = r2h2supp[ri]?.keys ?: emptySet()
 
@@ -582,40 +578,6 @@ object TLearn {
         }
 
         return size
-    }
-
-
-    fun computeSuppSet(rp: Long, r1: Long, ri: Long): MutableMap<Int, MutableSet<Int>> {
-        // Get tail entities of r1 (these become connecting entities)
-        val r1TailEntities = r2h2supp[IdManager.getInverseRelation(r1)]?.keys ?: emptySet()
-
-        // Get head entities for ri
-        val riHeadEntities = r2h2supp[ri]?.keys ?: emptySet()
-
-        // Find intersection of possible connecting entities
-        val connectingEntities = r1TailEntities.intersect(riHeadEntities)
-
-
-        if (connectingEntities.isEmpty()) return mutableMapOf()
-
-        val h2tSet = mutableMapOf<Int, MutableSet<Int>>()
-
-        for (connectingEntity in connectingEntities) {
-            // Get head entities that can reach this connecting entity via r1
-            // This is equivalent to: entities where (entity, r1, connectingEntity) exists
-            val r1HeadEntities = r2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
-
-            // Get tail entities reachable from this connecting entity via ri
-            val riTailEntities = r2h2tSet[ri]?.get(connectingEntity) ?: emptySet()
-
-            // Create Cartesian product
-            for (r1Head in r1HeadEntities) {
-                for (riTail in riTailEntities) {
-                    h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
-                }
-            }
-        }
-        return h2tSet
     }
 
     /**
@@ -782,10 +744,7 @@ object TLearn {
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seed: Int): Int {
         // 使用Triple的hashCode，确保顺序敏感且高效
-        var hash = pairHash(entity1, entity2)
-        // 与seedIndex进行额外的混合，确保不同seedIndex产生不同结果
-//        val finalHash = (hash xor seed) and Int.MAX_VALUE
-//        hash = pairHash(hash, seed)
+        var hash = entity1 * 31 + entity2
         hash = mix32(hash xor seed)
 //        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
@@ -808,34 +767,29 @@ object TLearn {
     }
 
     /**
-     * LSH分桶 - 双级Map优化版本，直接使用MinHash索引，线程安全
-     * 优化：直接统计碰撞次数作为Jaccard相似度估计，避免后续逐个计算
+     * LSH分桶 - 一级桶优化版本，直接使用单个MinHash值作为key
+     * 正确估计Jaccard相似度：bucketCount / BANDS
      */
     fun performLSH(myAtom: MyAtom, minHashSignature: IntArray, mySupp: Int): Int {
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
 
-        // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
+        // 分为BANDS个band，每个band有R=1行，直接使用MinHash值作为键
         for (bandIndex in 0 until BANDS) {
-            val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
-            val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
+            val key = minHashSignature[bandIndex]     // 单个MinHash值作为键
             
             // 查询相关的已有的桶
-            val level1Map = band2headAtom[key1]
-            if (level1Map != null) {
-                val bucket = level1Map[key2]
-                if (bucket != null) {
-                    // 为这个桶中的每个原子增加碰撞计数
-                    bucket.forEach { relevantAtom ->
-                        relevantAtom2BucketCount[relevantAtom] = 
-                            relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
-                    }
+            val bucket = key2headAtom[key]
+            if (bucket != null) {
+                // 为这个桶中的每个原子增加碰撞计数
+                bucket.forEach { relevantAtom ->
+                    relevantAtom2BucketCount[relevantAtom] = 
+                        relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
                 }
             }
 
             // 如果是headAtom，放入桶中
             if (myAtom.isHeadAtom) {
-                val level1Map = band2headAtom.getOrPut(key1) { mutableMapOf() }
-                val bucket = level1Map.getOrPut(key2) { mutableListOf() }
+                val bucket = key2headAtom.getOrPut(key) { mutableListOf() }
                 bucket.add(myAtom)
             }
         }
@@ -843,6 +797,8 @@ object TLearn {
         // 进行相似性评估和过滤 - 使用预计算的碰撞次数
         var cnt = 0
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
+            if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
+            if (atom == myAtom) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
             if (supp != null) {
@@ -868,40 +824,36 @@ object TLearn {
                         formula2metric[newFormula] = metric.inverse()
                     }
 
-                    // 如果置信度已经高于0.95，没必要再组合了
-                    if (myAtom.isL2Atom && metric.confidence < 0.95)
-                        performLSHforL2Formula(newFormula, newSignature, intersectionSize.toInt())
+                    // 80%时间都在组合，似乎没必要  && metric.confidence < 0.9
+                    if (myAtom.isL1Atom)
+                        performLSHforL2Formula(newFormula, newSignature, intersectionSize.toInt(), metric)
 
                     cnt ++
                 }
             }
         }
-        if (cnt > 0) println("Found $cnt valid combinations for Atom: $myAtom:")
+//        if (cnt > 0) println("Found $cnt valid combinations for Atom: $myAtom:")
         return cnt
     }
     
     /**
-     * LSH分桶 - 专门用于L2Formula，从band2headAtom中查找相关原子进行组合
-     * 优化：直接统计碰撞次数作为Jaccard相似度估计
+     * LSH分桶 - 专门用于L2Formula，从key2headAtom中查找相关原子进行组合
+     * 使用一级桶正确估计Jaccard相似度
      */
-    fun performLSHforL2Formula(myFormula: Formula, minHashSignature: IntArray, mySupp: Int): Int {
+    fun performLSHforL2Formula(myFormula: Formula, minHashSignature: IntArray, mySupp: Int, originalMetric: Metric): Int {
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
 
-        // 分为BANDS个band，每个band有R行，直接使用MinHash数组索引作为键
+        // 分为BANDS个band，每个band有R=1行，直接使用MinHash值作为键
         for (bandIndex in 0 until BANDS) {
-            val key1 = minHashSignature[bandIndex * R]     // 第一个MinHash值作为第一级键
-            val key2 = minHashSignature[bandIndex * R + 1] // 第二个MinHash值作为第二级键
+            val key = minHashSignature[bandIndex]     // 单个MinHash值作为键
             
             // 查询相关的已有的原子桶
-            val level1Map = band2headAtom[key1]
-            if (level1Map != null) {
-                val bucket = level1Map[key2]
-                if (bucket != null) {
-                    // 为这个桶中的每个原子增加碰撞计数
-                    bucket.forEach { relevantAtom ->
-                        relevantAtom2BucketCount[relevantAtom] = 
-                            relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
-                    }
+            val bucket = key2headAtom[key]
+            if (bucket != null) {
+                // 为这个桶中的每个原子增加碰撞计数
+                bucket.forEach { relevantAtom ->
+                    relevantAtom2BucketCount[relevantAtom] = 
+                        relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
                 }
             }
         }
@@ -909,6 +861,7 @@ object TLearn {
         var cnt = 0
         // 估计与过滤阶段：使用预计算的碰撞次数直接估计Jaccard相似度
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
+            if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
             if (atom == myFormula.atom1 || atom == myFormula.atom2) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
@@ -920,7 +873,7 @@ object TLearn {
                 val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
                 val metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
-                if (metric.valid) {
+                if (metric.valid && metric.betterThan(originalMetric)) {
                     // 创建二元公式组合
                     val newFormula = Formula(atom1 = myFormula.atom1, myFormula.atom2, atom)
                     val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
@@ -946,21 +899,19 @@ object TLearn {
 
 
     /**
-     * 输出LSH分桶结果 - 适配双级Map，防止并发修改异常
+     * 输出LSH分桶结果 - 适配一级桶，防止并发修改异常
      */
     fun printLSHBuckets() {
         println("LSH Buckets Summary:")
         
         // 创建快照以避免并发修改异常
-        val band2headAtomSnapshot = synchronized(band2headAtom) {
-            band2headAtom.mapValues { (_, level2Map) ->
-                level2Map.mapValues { (_, formulas) ->
-                    formulas.toList() // 创建不可变副本
-                }.toMap()
+        val key2headAtomSnapshot = synchronized(key2headAtom) {
+            key2headAtom.mapValues { (_, atoms) ->
+                atoms.toList() // 创建不可变副本
             }.toMap()
         }
         
-        val allBuckets = band2headAtomSnapshot.values.flatMap { it.values }
+        val allBuckets = key2headAtomSnapshot.values
         println("Total buckets: ${allBuckets.size}")
         println("Total formulas in registry: ${minHashRegistry.size}")
 
@@ -972,10 +923,8 @@ object TLearn {
         println("  Average: ${bucketSizes.average()}")
 
         // 收集所有桶并按原子类型分类
-        val allBucketsWithInfo = band2headAtomSnapshot.entries.flatMap { (key1, level2Map) ->
-            level2Map.entries.map { (key2, atoms) ->
-                Triple(key1, key2, atoms)
-            }
+        val allBucketsWithInfo = key2headAtomSnapshot.entries.map { (key, atoms) ->
+            Pair(key, atoms)
         }
         
         // 定义过滤函数避免重复代码
@@ -985,17 +934,15 @@ object TLearn {
         val bucketTypes = listOf("Binary", "Unary")
         
         bucketTypes.forEach { bucketType ->
-            val allBucketsOfType = allBucketsWithInfo.filter { (_, _, atoms) ->
+            val allBucketsOfType = allBucketsWithInfo.filter { (_, atoms) ->
                 if (bucketType == "Binary") isBinaryBucket(atoms) else !isBinaryBucket(atoms)
             }
-            val level1Keys = allBucketsOfType.map { it.first }.toSet().size
-            val level2Keys = allBucketsOfType.size
-            val top20Buckets = allBucketsOfType.sortedByDescending { it.third.size }.take(20)
+            val top20Buckets = allBucketsOfType.sortedByDescending { it.second.size }.take(20)
             
             println("\nTop 20 largest $bucketType buckets:")
-            println("Total $bucketType buckets: $level1Keys level-1 buckets, $level2Keys level-2 buckets")
-            top20Buckets.forEachIndexed { index, (key1, key2, atoms) ->
-                println("${index + 1}. $bucketType Bucket ($key1, $key2): ${atoms.size} atoms")
+            println("Total $bucketType buckets: ${allBucketsOfType.size}")
+            top20Buckets.forEachIndexed { index, (key, atoms) ->
+                println("${index + 1}. $bucketType Bucket ($key): ${atoms.size} atoms")
                 atoms.take(10).forEach { atom ->
                     println("    $atom")
                 }
