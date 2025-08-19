@@ -226,7 +226,7 @@ object TLearn {
         // r2tripleSet = ts.r2tripleSet
         r2loopSet = ts.r2loopSet
         r2h2tSet = ts.r2h2tSet
-    r2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
+        r2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
         r2h2supp = r2h2tSet.mapValues { entry ->
             entry.value.mapValues { it.value.size }.toMutableMap()
         } as MutableMap<Long, MutableMap<Int, Int>>
@@ -245,7 +245,7 @@ object TLearn {
             e.printStackTrace()
         } finally {
             println("TLearn algorithm completed. Total relation paths: ${r2supp.size}")
-            println(r2supp)
+//            println(r2supp)
 
             // 打印LSH分桶结果
             printLSHBuckets()
@@ -340,30 +340,8 @@ object TLearn {
             }
         }
 
-        // Monitor and force shutdown if too many threads stuck
-        try {
-            synchronized(threadMonitorLock) {
-                while (!futures.all { it.isDone }) {
-                    threadMonitorLock.wait() // 等待子线程通知
-                    val activeCount = activeThreadCount.get()
-                    println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
-
-                    if (activeCount < Settings.WORKER_THREADS - 5) {
-                        println("FORCING SHUTDOWN: Only $activeCount threads active, likely stuck!")
-                        futures.forEach { it.cancel(true) }
-                        threadPool.shutdownNow()
-                        break
-                    }
-                }
-            }
-
-            if (!threadPool.isShutdown) {
-                futures.forEach { it.get() }
-                threadPool.shutdown()
-            }
-        } catch (e: Exception) {
-            threadPool.shutdownNow()
-        }
+        // Wait for all threads
+        futures.forEach { it.get() }
 
         println("Connection completed. Processed: ${processedCount.get()}, Added: ${addedCount.get()}")
     }
@@ -398,11 +376,6 @@ object TLearn {
 
         val cnt = activeThreadCount.decrementAndGet()
         println("Thread $threadId completed, $cnt threads remain")
-
-        // 通知主线程检查线程状态
-        synchronized(threadMonitorLock) {
-            threadMonitorLock.notify()
-        }
     }
 
     fun runTask(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger, ri: Long) {
@@ -418,7 +391,7 @@ object TLearn {
                     val cnt = addedCount.incrementAndGet()
 
                     // Per-item log (keeps queue flowing)
-                    // logWorkerResult(connectedPath, supp)
+                     logWorkerResult(connectedPath, supp)
 
                     if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS) {
                         val remaining = relationQueue.size
@@ -883,7 +856,7 @@ object TLearn {
                 }
             }
         }
-        if (cnt > 0) println("Found $cnt valid combinations for L2Formula $myFormula:")
+//        if (cnt > 0) println("Found $cnt valid combinations for L2Formula $myFormula:")
         return cnt
     }
     
