@@ -27,11 +27,12 @@ object TLearn {
     const val MAX_PATH_LENGTH = 3
 
     // MinHash parameters: MH_DIM = BANDS * R
-    const val MH_DIM = 128
+    const val MH_DIM = 200
     const val R = 1  // 每band维度
     const val BANDS = MH_DIM / R
-    const val bucketCountThreshold = 3
-    
+    const val bucketCountThreshold = 2
+    val bucketCountMap = ConcurrentHashMap<Int, Int>()
+
     // 全局随机种子数组，在程序启动时初始化
     private lateinit var globalHashSeeds: IntArray
 
@@ -43,6 +44,7 @@ object TLearn {
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
     lateinit var r2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
     lateinit var r2h2supp: MutableMap<Long, MutableMap<Int, Int>>
+    lateinit var r2instanceSet: MutableMap<Long, MutableSet<Int>>
     lateinit var r2tSet: Map<Long, IntArray>    // 仅保留relationL1到尾实体，使用快照数组以提升遍历性能
     lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
 
@@ -77,6 +79,9 @@ object TLearn {
             }
         }
 
+        val isBinary: Boolean
+            get() = entityId == IdManager.getYId()
+
         val isL1Atom: Boolean
             get() = relationId < RelationPath.MAX_RELATION_ID
 
@@ -86,6 +91,29 @@ object TLearn {
         val isHeadAtom: Boolean
             get() = isL1Atom &&
                     (entityId == IdManager.getYId() && !IdManager.isInverseRelation(relationId) || entityId > 0)
+
+        // 获取当前原子的实例集合（用于精确验证），仅对L2原子有效
+        fun getInstanceSet(): Set<Int> {
+            require(isL1Atom) { "Instance set only available for L1 atoms" }
+
+            return when {
+                // Binary: r(X,Y)
+                entityId == IdManager.getYId() ->
+                    r2instanceSet[relationId] ?: emptySet()
+                // Unary constant: r(X,c) -> 使用逆关系 r'(c,X) 的 tail 集合
+                entityId > 0 -> {
+                    val inv = IdManager.getInverseRelation(relationId)
+                    r2h2tSet[inv]?.get(entityId) ?: emptySet()
+                }
+                // Existence: r(X,·) -> 所有 head 实体
+                entityId == 0 ->
+                    r2h2tSet[relationId]?.keys ?: emptySet()
+                // Loop: r(X,X) -> 自环实体集合
+                entityId == IdManager.getXId() ->
+                    r2loopSet[relationId] ?: emptySet()
+                else -> emptySet()
+            }
+        }
     }
 
     // Formula作为data class，最多3个Atom，可空位置表示未使用，注意不关心顺序，需重写hash函数
@@ -112,7 +140,7 @@ object TLearn {
 
     data class Metric(
         val jaccard: Double,
-        val support: Double,
+        var support: Double,
         val headSize: Int,
         val bodySize: Int,
     ) {
@@ -121,6 +149,9 @@ object TLearn {
 
         val valid: Boolean
             get() = support >= MIN_SUPP && coverage > 0.1 && confidence > 0.1
+
+        val needValidation: Boolean
+            get() = support < MIN_SUPP * 2 || coverage < 0.2 || confidence < 0.2
 
         override fun toString(): String {
             return "{\"jaccard\": $jaccard, \"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
@@ -202,20 +233,6 @@ object TLearn {
         Settings.load()
         println("TLearn - Top-down relation path learning algorithm")
         println("Loading triple set...")
-
-        try {
-            learn()
-
-        } catch (e: Exception) {
-            println("Error during learning: ${e.message}")
-            e.printStackTrace()
-        }
-    }
-
-    /**
-     * Main entry point for the learning algorithm
-     */
-    fun learn() {
         // Initialize global hash seeds first
         initializeGlobalHashSeeds()
         
@@ -230,6 +247,11 @@ object TLearn {
         r2h2supp = r2h2tSet.mapValues { entry ->
             entry.value.mapValues { it.value.size }.toMutableMap()
         } as MutableMap<Long, MutableMap<Int, Int>>
+        r2instanceSet = r2h2tSet.mapValues { entry ->
+            entry.value.flatMap { (head, tails) ->
+                tails.map { tail -> pairHash(head, tail) }
+            }.toMutableSet()
+        }.toMutableMap()
 
         println("Starting TLearn algorithm...")
         println("MIN_SUPP: $MIN_SUPP, MAX_PATH_LENGTH: $MAX_PATH_LENGTH")
@@ -246,6 +268,7 @@ object TLearn {
         } finally {
             println("TLearn algorithm completed. Total relation paths: ${r2supp.size}")
 //            println(r2supp)
+            println(bucketCountMap)
 
             // 打印LSH分桶结果
             printLSHBuckets()
@@ -277,20 +300,9 @@ object TLearn {
                     val h2tSet = r2h2tSet[relation]!!.toMutableMap()
                     val inverseRelation = RelationPath.getInverseRelation(relation)
                     val t2hSet = r2h2tSet[inverseRelation]!!.toMutableMap()
-
-                    // 计算Binary原子的MinHash签名
-                    val binaryInstanceSet = h2tSet.flatMap { (head, tails) ->
-                        tails.map { tail -> Pair(head, tail) }
-                    }.toSet()
-                    val inverseBinaryInstanceSet = t2hSet.flatMap { (tail, heads) ->
-                        heads.map { head -> Pair(tail, head) }
-                    }.toSet()
-
-                    val binaryMinHash = computeBinaryMinHash(binaryInstanceSet)
-                    val inverseBinaryMinHash = computeBinaryMinHash(inverseBinaryInstanceSet)
-
                     // 处理Binary原子
-                    atomizeBinaryRelationPath(relation, tripleSet.size, binaryMinHash, inverseBinaryMinHash)
+                    atomizeBinaryRelationPath(relation, tripleSet.size,
+                        r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
                     // 处理Unary原子
                     atomizeUnaryRelationPath(relation, h2tSet, t2hSet, r2loopSet[relation] ?: mutableSetOf())
                 }
@@ -447,11 +459,9 @@ object TLearn {
         val h2supp = mutableMapOf<Int, Int>()
         val t2supp = mutableMapOf<Int, Int>()
         val loopSet = mutableSetOf<Int>()
+        val instanceSet = mutableSetOf<Int>()
+        val inverseSet = mutableSetOf<Int>()
         var size = 0
-
-        // Compute Cartesian product and MinHash signatures
-        val binaryMinHash = IntArray(MH_DIM) { Int.MAX_VALUE }
-        val inverseBinaryMinHash = IntArray(MH_DIM) { Int.MAX_VALUE }
         
         for (connectingEntity in connectingEntities) {
             // Get head entities that can reach this connecting entity via r1
@@ -479,24 +489,8 @@ object TLearn {
                     if (r1Head == riTail) {
                         loopSet.add(r1Head)
                     } else {
-                        // Compute both MinHash signatures in one loop - 优化版本减少数组访问
-                        for (i in 0 until MH_DIM) {
-                            val seed = globalHashSeeds[i]
-                            // For Binary MinHash: (r1Head, riTail) - 保持顺序
-                            val binaryHashValue = computeBinaryHash(r1Head, riTail, seed)
-                            val currentBinaryMin = binaryMinHash[i]
-                            if (binaryHashValue < currentBinaryMin) {
-                                binaryMinHash[i] = binaryHashValue
-                            }
-                            
-                            // For Inverse Binary MinHash: (riTail, r1Head) - 保持顺序
-                            val inverseBinaryHashValue = computeBinaryHash(riTail, r1Head, seed)
-                            val currentInverseMin = inverseBinaryMinHash[i]
-                            if (inverseBinaryHashValue < currentInverseMin) {
-                                inverseBinaryMinHash[i] = inverseBinaryHashValue
-                            }
-                        }
-                        
+                        instanceSet.add(pairHash(r1Head, riTail))
+                        inverseSet.add(pairHash(riTail, r1Head))
                         // Store h2t mapping only for paths with length < 3
                         if (pathLength < 3) {
                             h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
@@ -514,23 +508,14 @@ object TLearn {
         
         if (size >= MIN_SUPP) {
             // Add to main data structures
-            // 原子化：使用预计算的Binary MinHash + 动态计算Unary，注意supp一定要传递，不能使用r2supp
-            binaryMinHash.forEach {
-                require(it <= Int.MAX_VALUE && it >= 0)
-            }
-            inverseBinaryMinHash.forEach {
-                require(it <= Int.MAX_VALUE && it >= 0)
-            }
-
-            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, binaryMinHash, inverseBinaryMinHash)
-
-
-            // r2tripleSet[rp] = resultTriples
-            if (forwardSuccess || pathLength < 3) r2h2supp[rp] = h2supp
-            if (inverseSuccess || pathLength < 3) r2h2supp[inverseRp] = t2supp
+//            r2instanceSet[rp] = instanceSet
+//            r2instanceSet[inverseRp] = inverseSet
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
 
             // 长度超过1的不进行Unary原子化
             if (pathLength < 3) {
+                r2h2supp[rp] = h2supp
+                r2h2supp[inverseRp] = t2supp
                 // For paths with length < 3, we store the full h2t mapping
                 r2h2tSet[rp] = h2tSet
                 // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
@@ -545,16 +530,14 @@ object TLearn {
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
      */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int, binaryMinHash: IntArray, inverseBinaryMinHash: IntArray): Pair<Boolean, Boolean> {
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
         val inverseRp = RelationPath.getInverseRelation(rp)
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
         val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
-        return Pair(
-            addAtomToMinHash(binaryAtom, supp, binaryMinHash),
-            addAtomToMinHash(inverseBinaryAtom, supp, inverseBinaryMinHash)
-        )
+        performLSH(binaryAtom, supp, instanceSet)
+        performLSH(inverseBinaryAtom, supp, inverseSet)
     }
     
     /**
@@ -571,8 +554,7 @@ object TLearn {
                 // 生成Unary实例集合：所有能到达constant的head实体
                 val unaryInstanceSet = t2hSet[constant]
                 if (unaryInstanceSet != null) {
-                    val minHashSignature = computeUnaryMinHash(unaryInstanceSet)
-                    addAtomToMinHash(unaryAtom, supp, minHashSignature)
+                    performLSH(unaryAtom, supp, unaryInstanceSet)
                 }
             }
         }
@@ -583,8 +565,7 @@ object TLearn {
             val existenceAtom = MyAtom(rp, 0) // 0表示存在性原子"·"
             // 生成Existence实例集合：所有head实体
             val existenceInstanceSet = h2tSet.keys
-            val minHashSignature = computeUnaryMinHash(existenceInstanceSet)
-            addAtomToMinHash(existenceAtom, headEntityCount, minHashSignature)
+            performLSH(existenceAtom, headEntityCount, existenceInstanceSet)
         }
         
         // 5. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
@@ -595,8 +576,7 @@ object TLearn {
                 val inverseUnaryInstanceSet = h2tSet[constant]
                 if (inverseUnaryInstanceSet != null) {
                     // TODO: h2tSet 中可能没有该constant的映射
-                    val minHashSignature = computeUnaryMinHash(inverseUnaryInstanceSet)
-                    addAtomToMinHash(inverseUnaryAtom, supp, minHashSignature)
+                    performLSH(inverseUnaryAtom, supp, inverseUnaryInstanceSet)
                 }
             }
         }
@@ -607,63 +587,20 @@ object TLearn {
             val inverseExistenceAtom = MyAtom(inverseRp, 0)
             // 生成逆Existence实例集合：所有tail实体
             val inverseExistenceInstanceSet = t2hSet.keys
-            val minHashSignature = computeUnaryMinHash(inverseExistenceInstanceSet)
-            addAtomToMinHash(inverseExistenceAtom, inverseTailEntityCount, minHashSignature)
+            performLSH(inverseExistenceAtom, inverseTailEntityCount, inverseExistenceInstanceSet)
         }
 
         // 7. r(X,X): Unary Atom for loops - r(X,X) exists
         if (loopSet.size >= MIN_SUPP) {
             val loopAtom = MyAtom(rp, IdManager.getXId()) // X表示循环原子
-            val minHashSignature = computeUnaryMinHash(loopSet)
-            addAtomToMinHash(loopAtom, loopSet.size, minHashSignature)
+            performLSH(loopAtom, loopSet.size, loopSet)
         }
-    }
-
-    /** 对于长度超过1的关系路径，只应该将Formula添加到已经存在的LSH桶中，而不应该创建新的桶
-     * 为Atom计算MinHash并加入LSH分桶
-     */
-    fun addAtomToMinHash(atom: MyAtom, supp: Int, minHashSignature: IntArray): Boolean {
-        // 创建Formula (单原子公式)
-        if (atom.isL2Atom) {
-            val formula = Formula(atom1 = atom)
-            minHashRegistry[formula] = minHashSignature
-            formula2supp[formula] = supp
-        }
-
-        // 执行标准LSH处理（与headAtom进行组合）
-        val validCombinationCount = performLSH(atom, minHashSignature, supp)
-        return atom.isL2Atom || validCombinationCount > 0
-    }
-
-    /**
-     * 计算Binary Atom的MinHash签名
-     */
-    fun computeBinaryMinHash(instanceSet: Set<Pair<Int, Int>>): IntArray {
-        val signature = IntArray(MH_DIM) { Int.MAX_VALUE }
-
-        // 检查空集合，如果为空则抛出异常或返回特殊值
-        if (instanceSet.isEmpty()) {
-            throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
-        }
-
-        // 为每个实例生成哈希值 - 优化版本减少数组访问
-        instanceSet.forEach { (entity1, entity2) ->
-            for (i in 0 until MH_DIM) {
-                val hashValue = computeBinaryHash(entity1, entity2, globalHashSeeds[i])
-                val currentMin = signature[i]
-                if (hashValue < currentMin) {
-                    signature[i] = hashValue
-                }
-            }
-        }
-
-        return signature
     }
 
     /**
      * 计算Unary Atom的MinHash签名
      */
-    fun computeUnaryMinHash(instanceSet: Set<Int>): IntArray {
+    fun computeMinHash(instanceSet: Set<Int>, positive: Boolean=false): IntArray {
         val signature = IntArray(MH_DIM) { Int.MAX_VALUE }
 
         // 检查空集合，如果为空则抛出异常
@@ -677,7 +614,7 @@ object TLearn {
                 val hashValue = computeUnaryHash(entity, globalHashSeeds[i])
                 val currentMin = signature[i]
                 if (hashValue < currentMin) {
-                    signature[i] = hashValue
+                    signature[i] = if (positive) -hashValue else hashValue
                 }
             }
         }
@@ -688,7 +625,8 @@ object TLearn {
 
     fun pairHash(entity1: Int, entity2: Int): Int {
         // 直接实现Pair的hashCode原理，避免创建对象
-        return entity1 * 31 + entity2
+        // 33550337 is a prime number, and the 6th perfect number + 1
+        return entity1 * 33550337 + entity2
     }
 
     fun mix64(z0: Long): Long {
@@ -710,7 +648,7 @@ object TLearn {
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seed: Int): Int {
         // 使用Triple的hashCode，确保顺序敏感且高效
-        var hash = entity1 * 31 + entity2
+        var hash = pairHash(entity1, entity2)
         hash = mix32(hash xor seed)
 //        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
@@ -735,8 +673,18 @@ object TLearn {
     /**
      * LSH分桶 - 一级桶优化版本，直接使用单个MinHash值作为key
      * 正确估计Jaccard相似度：bucketCount / BANDS
+     * 对于长度超过1的关系路径，只应该将Formula添加到已经存在的LSH桶中，而不应该创建新的桶
+     * 为Atom计算MinHash并加入LSH分桶
      */
-    fun performLSH(myAtom: MyAtom, minHashSignature: IntArray, mySupp: Int): Int {
+    fun performLSH(myAtom: MyAtom, mySupp: Int, instanceSet: Set<Int>): Boolean {
+        // 创建Formula (单原子公式)
+        val minHashSignature = computeMinHash(instanceSet, myAtom.isBinary)
+        if (myAtom.isL2Atom) {
+            val formula = Formula(atom1 = myAtom)
+            minHashRegistry[formula] = minHashSignature
+            formula2supp[formula] = mySupp
+        }
+
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
 
         // 分为BANDS个band，每个band有R=1行，直接使用MinHash值作为键
@@ -764,6 +712,7 @@ object TLearn {
         var cnt = 0
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
             if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
+            bucketCountMap[bucketCount] = bucketCountMap.getOrDefault(bucketCount, 0) + 1
             if (atom == myAtom) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
@@ -774,10 +723,16 @@ object TLearn {
                 val jaccard = bucketCount.toDouble() / BANDS
                 
                 // 估计交集大小
-                val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
+                var intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
                 val metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
+                    if (metric.needValidation || mySupp < 100 || supp < 100) {
+                        intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
+                        metric.support = intersectionSize
+                        if (intersectionSize < MIN_SUPP) return@forEach
+                    }
+
                     val newFormula = Formula(atom1 = myAtom, atom2 = atom)
                     // 添加到结果映射
                     val newSignature = IntArray(MH_DIM) { i ->
@@ -794,21 +749,21 @@ object TLearn {
 
                     // 80%时间都在组合，似乎没必要  && metric.confidence < 0.9
                     if (myAtom.isL1Atom)
-                        performLSHforL2Formula(newFormula, newSignature, intersectionSize.toInt(), metric)
+                        performLSHforL2Formula(newFormula, intersectionSize.toInt(), newSignature, metric)
 
                     cnt ++
                 }
             }
         }
 //        if (cnt > 0) println("Found $cnt valid combinations for Atom: $myAtom:")
-        return cnt
+        return myAtom.isL2Atom || cnt > 0
     }
     
     /**
      * LSH分桶 - 专门用于L2Formula，从key2headAtom中查找相关原子进行组合
      * 使用一级桶正确估计Jaccard相似度
      */
-    fun performLSHforL2Formula(myFormula: Formula, minHashSignature: IntArray, mySupp: Int, originalMetric: Metric): Int {
+    fun performLSHforL2Formula(myFormula: Formula, mySupp: Int, minHashSignature: IntArray, originalMetric: Metric): Int {
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
 
         // 分为BANDS个band，每个band有R=1行，直接使用MinHash值作为键
@@ -830,6 +785,7 @@ object TLearn {
         // 估计与过滤阶段：使用预计算的碰撞次数直接估计Jaccard相似度
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
             if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
+            bucketCountMap[bucketCount] = bucketCountMap.getOrDefault(bucketCount, 0) + 1
             if (atom == myFormula.atom1 || atom == myFormula.atom2) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
