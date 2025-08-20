@@ -15,6 +15,9 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
 import kotlin.math.abs
 import kotlin.math.min
+import tarmorn.structure.TLearn.MyAtom
+import tarmorn.structure.TLearn.Formula
+import tarmorn.structure.TLearn.Metric
 
 
 /**
@@ -64,104 +67,11 @@ object TLearn {
 
     private val POISON = RelationPathItem(Long.MIN_VALUE, 0)
 
-    // 核心类型定义
-    data class MyAtom(val relationId: Long, val entityId: Int) {   // (RelationID, EntityID)，EntityID<0 表示 binary
-        override fun toString(): String {
-            val relationStr = IdManager.getRelationString(relationId)
-            return when {
-                entityId == IdManager.getYId() -> "$relationStr(X,Y)"
-                entityId == IdManager.getXId() -> "$relationStr(X,X)"
-                entityId == 0 -> "$relationStr(X,·)"
-                else -> {
-                    val entityStr = IdManager.getEntityString(entityId)
-                    "$relationStr(X,$entityStr)"
-                }
-            }
-        }
-
-        val isBinary: Boolean
-            get() = entityId == IdManager.getYId()
-
-        val isL1Atom: Boolean
-            get() = relationId < RelationPath.MAX_RELATION_ID
-
-        val isL2Atom: Boolean
-            get() = relationId < RelationPath.MAX_L2RELATION_ID
-
-        val isHeadAtom: Boolean
-            get() = isL1Atom &&
-                    (entityId == IdManager.getYId() && !IdManager.isInverseRelation(relationId) || entityId > 0)
-
-        // 获取当前原子的实例集合（用于精确验证），仅对L2原子有效
-        fun getInstanceSet(): Set<Int> {
-            require(isL1Atom) { "Instance set only available for L1 atoms" }
-
-            return when {
-                // Binary: r(X,Y)
-                entityId == IdManager.getYId() ->
-                    r2instanceSet[relationId] ?: emptySet()
-                // Unary constant: r(X,c) -> 使用逆关系 r'(c,X) 的 tail 集合
-                entityId > 0 -> {
-                    val inv = IdManager.getInverseRelation(relationId)
-                    r2h2tSet[inv]?.get(entityId) ?: emptySet()
-                }
-                // Existence: r(X,·) -> 所有 head 实体
-                entityId == 0 ->
-                    r2h2tSet[relationId]?.keys ?: emptySet()
-                // Loop: r(X,X) -> 自环实体集合
-                entityId == IdManager.getXId() ->
-                    r2loopSet[relationId] ?: emptySet()
-                else -> emptySet()
-            }
-        }
-    }
-
-    // Formula作为data class，最多3个Atom，可空位置表示未使用，注意不关心顺序，需重写hash函数
-    data class Formula(
-        val atom1: MyAtom? = null,
-        val atom2: MyAtom? = null,
-        val atom3: MyAtom? = null
-    ) {
-        override fun hashCode(): Int {
-            val atoms = listOfNotNull(atom1, atom2, atom3).sortedBy { it.hashCode() }
-            return atoms.fold(0) { acc, atom -> acc xor atom.hashCode() }
-        }
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is Formula) return false
-            return this.hashCode() == other.hashCode()
-        }
-
-        override fun toString(): String {
-            return listOfNotNull(atom1, atom2, atom3).joinToString(" & ")
-        }
-    }
-
-    data class Metric(
-        val jaccard: Double,
-        var support: Double,
-        val headSize: Int,
-        val bodySize: Int,
-    ) {
-        val coverage: Double = support / headSize
-        val confidence: Double = support / bodySize
-
-        val valid: Boolean
-            get() = support >= MIN_SUPP && coverage > 0.1 && confidence > 0.1
-
-        val needValidation: Boolean
-            get() = support < MIN_SUPP * 2 || support > min(headSize, bodySize)
-
-        override fun toString(): String {
-            return "{\"jaccard\": $jaccard, \"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
-        }
-
-        fun inverse() =  Metric(jaccard, support, bodySize, headSize)
-
-        fun betterThan(other: Metric) =
-            this.jaccard > other.jaccard && this.confidence >= other.confidence
-    }
+    // 核心类型定义迁移至 tarmorn.structure.TLearn.*
+    data class RelationPathItem(
+        val relationPath: Long,
+        val supp: Int
+    )
 
     // 流式计算结构
     val formula2supp = mutableMapOf<Formula, Int>()          // 公式→支持度映射
@@ -239,10 +149,7 @@ object TLearn {
         }
     }
 
-    data class RelationPathItem(
-        val relationPath: Long,
-        val supp: Int
-    )
+    // RelationPathItem moved to structure.TLearn
 
     /**
      * Main entry point - can be run directly
@@ -772,14 +679,15 @@ object TLearn {
                 
                 // 估计交集大小
                 var intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
-                val metric = Metric(jaccard, intersectionSize, supp, mySupp)
+                var metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
-                    if (metric.needValidation) {    //  || mySupp < 100 || supp < 100
-                        intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
-                        metric.support = intersectionSize
-                        if (intersectionSize < MIN_SUPP) return@forEach
-                    }
+//                    if (metric.needValidation) {    //  || mySupp < 100 || supp < 100
+                    intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
+//                    metric.support = intersectionSize
+                    metric = Metric(jaccard, intersectionSize, supp, mySupp)
+                    if (intersectionSize < MIN_SUPP) return@forEach
+//                    }
 
                     val newFormula = Formula(atom1 = myAtom, atom2 = atom)
                     // 添加到结果映射
@@ -933,7 +841,10 @@ object TLearn {
         outDir.mkdirs() // 确保out目录存在
 
         val outputFile = File(outDir, "atom2formula2metric.json")
+        val outputRule = File(outDir, "rule.txt")
         BufferedWriter(FileWriter(outputFile)).use { writer ->
+            // Write rules in parallel while streaming JSON
+            BufferedWriter(FileWriter(outputRule)).use { ruleWriter ->
             writer.write("{\n")
             val atomEntries = atom2formula2metric.entries.toList()
 
@@ -948,6 +859,19 @@ object TLearn {
                     writer.write("    \"$formulaString\": $metric")
                     if (formulaIndex < formulaEntries.size - 1) writer.write(",")
                     writer.write("\n")
+
+                    // 输出规则：仅当formula包含恰好两个原子时
+                    val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
+                    if (atomsInFormula.size == 2) {
+                        val other = if (atomsInFormula[0] == atom) atomsInFormula[1]
+                                    else if (atomsInFormula[1] == atom) atomsInFormula[0]
+                                    else null
+                        if (other != null) {
+                            val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${other.getRuleString()}"
+                            ruleWriter.write(ruleLine)
+                            ruleWriter.write("\n")
+                        }
+                    }
                 }
 
                 writer.write("  }")
@@ -957,10 +881,12 @@ object TLearn {
                 // 每处理100个atom就flush一次，避免内存积累
                 if (atomIndex % 100 == 0) {
                     writer.flush()
+                    ruleWriter.flush()
                     println("Processed ${atomIndex + 1}/${atomEntries.size} atoms...")
                 }
             }
             writer.write("}\n")
+            }
         }
 
         println("Successfully saved atom2formula2metric to ${outputFile.absolutePath}")

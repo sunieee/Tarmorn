@@ -132,6 +132,57 @@ object IdManager {
         return "${getRelationString(r)}(X,Y)"
     }
 
+    /**
+     * Convert an atom (relation path + entityId) into a readable string.
+     * Rules:
+     * - If path length == 1: relation(X, entityString)
+     * - If path length  > 1: r1(X,A), r2(A,B), ..., rN(B, entityString)
+     * - If any relation is an inverse, convert to its forward name and swap arguments.
+     */
+    fun getAtomString(relationId: Long, entityId: Int): String {
+        // Prepare terminal string for the rightmost argument
+        fun termString(eid: Int): String = when (eid) {
+            getYId() -> "Y"
+            getXId() -> "X"
+            0 -> "·"
+            else -> getEntityString(eid)
+        }
+
+        // Get path as array of single-relation IDs (first -> last)
+        val relations: LongArray = if (relationId <= RelationPath.MAX_RELATION_ID) {
+            longArrayOf(relationId)
+        } else {
+            RelationPath.decode(relationId)
+        }
+
+        val n = relations.size
+        val rightMost = termString(entityId)
+
+        // Build node sequence: node0=X, node1=A, node2=B, ..., nodeN=rightMost
+        val nodes = Array(n + 1) { "" }
+        nodes[0] = "X"
+        // Fill internal bridge variables A, B, ... up to node n-1
+        for (i in 1 until n) {
+            nodes[i] = (("A".first().code + (i - 1)).toChar()).toString()
+        }
+        if (rightMost != "·") nodes[n - 1] = rightMost
+
+        // Compose each step, adjusting inverse relations to forward with swapped args
+        val parts = mutableListOf<String>()
+        for (i in 0 until n) {
+            val r = relations[i]
+            val forwardR = if (isInverseRelation(r)) getInverseRelation(r) else r
+                val rName = getRelationString(forwardR)
+
+            val argL = nodes[i]
+            val argR = nodes[i + 1]
+            if (isInverseRelation(r)) parts.add("$rName($argR, $argL)")
+            else parts.add("$rName($argL, $argR)")
+        }
+
+        return parts.joinToString(", ")
+    }
+
     // Clear all mappings except KG variables (useful for testing).
     fun clear() {
         // Preserve KG variables A-Z
