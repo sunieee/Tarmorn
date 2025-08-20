@@ -151,7 +151,7 @@ object TLearn {
             get() = support >= MIN_SUPP && coverage > 0.1 && confidence > 0.1
 
         val needValidation: Boolean
-            get() = support < MIN_SUPP * 2 || coverage < 0.2 || confidence < 0.2
+            get() = support < MIN_SUPP * 2 || support > min(headSize, bodySize)
 
         override fun toString(): String {
             return "{\"jaccard\": $jaccard, \"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
@@ -179,6 +179,25 @@ object TLearn {
             } catch (e: Exception) {
                 println("Error initializing log file: ${e.message}")
             }
+        }
+    }
+
+    // Close logger safely to avoid keeping file handles open and potential hangs
+    private fun closeLogger() {
+        try {
+            if (this::logWriter.isInitialized && !logWriterClosed) {
+                logWriterClosed = true
+                synchronized(logWriter) {
+                    try {
+                        logWriter.flush()
+                    } catch (_: Exception) { }
+                    try {
+                        logWriter.close()
+                    } catch (_: Exception) { }
+                }
+            }
+        } catch (e: Exception) {
+            println("Error closing log file: ${e.message}")
         }
     }
 
@@ -275,6 +294,8 @@ object TLearn {
 
             // 保存atom2formula2metric到JSON文件
             saveAtom2Formula2MetricToJson()
+            // 关闭日志
+            closeLogger()
             // return r2tripleSet.mapValues { it.value.toSet() }
         }
     }
@@ -344,6 +365,17 @@ object TLearn {
         futures.forEach { it.get() }
 
         println("Connection completed. Processed: ${processedCount.get()}, Added: ${addedCount.get()}")
+
+        // Ensure executor threads don't keep JVM alive
+        threadPool.shutdown()
+        try {
+            if (!threadPool.awaitTermination(30, TimeUnit.SECONDS)) {
+                threadPool.shutdownNow()
+            }
+        } catch (ie: InterruptedException) {
+            threadPool.shutdownNow()
+            Thread.currentThread().interrupt()
+        }
     }
 
     /**
@@ -355,11 +387,14 @@ object TLearn {
         // 如果只有当前一个线程卡主，则直接结束
         while (true) {
             // Step 3: Get next relation path from queue
-            val item = relationQueue.poll(3, TimeUnit.SECONDS) ?: run {
+            val item = relationQueue.poll(1, TimeUnit.SECONDS) ?: run {
                 relationQueue.put(POISON)
                 POISON
             }
-            if (item === POISON) break               // 优雅收尾
+            if (item === POISON) {
+                relationQueue.put(POISON)
+                break
+            }               // 优雅收尾
 
             val ri = item.relationPath
             val riLength = RelationPath.getLength(ri)
@@ -393,6 +428,7 @@ object TLearn {
                     // Per-item log (keeps queue flowing)
                      logWorkerResult(connectedPath, supp)
 
+                    //  || activeThreadCount.get() < Settings.WORKER_THREADS
                     if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS) {
                         val remaining = relationQueue.size
                         println("Thread $threadId: Added $cnt new paths; latest supp=$supp; TODO: $remaining remaining in queue")
@@ -510,12 +546,13 @@ object TLearn {
             // Add to main data structures
 //            r2instanceSet[rp] = instanceSet
 //            r2instanceSet[inverseRp] = inverseSet
-            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+
+            if (forwardSuccess || pathLength < 3) r2h2supp[rp] = h2supp
+            if (inverseSuccess || pathLength < 3) r2h2supp[inverseRp] = t2supp
 
             // 长度超过1的不进行Unary原子化
             if (pathLength < 3) {
-                r2h2supp[rp] = h2supp
-                r2h2supp[inverseRp] = t2supp
                 // For paths with length < 3, we store the full h2t mapping
                 r2h2tSet[rp] = h2tSet
                 // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
@@ -530,14 +567,19 @@ object TLearn {
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
      */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>): Pair<Boolean, Boolean> {
+//        println("Atomizing binary relation path: ${IdManager.getRelationString(rp)} with supp=$supp")
+//        println(instanceSet)
+
         val inverseRp = RelationPath.getInverseRelation(rp)
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
         val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
-        performLSH(binaryAtom, supp, instanceSet)
-        performLSH(inverseBinaryAtom, supp, inverseSet)
+        return Pair(
+            performLSH(binaryAtom, supp, instanceSet),
+            performLSH(inverseBinaryAtom, supp, inverseSet)
+        )
     }
     
     /**
@@ -600,7 +642,7 @@ object TLearn {
     /**
      * 计算Unary Atom的MinHash签名
      */
-    fun computeMinHash(instanceSet: Set<Int>, positive: Boolean=false): IntArray {
+    fun computeMinHash(instanceSet: Set<Int>, isBinary: Boolean=false): IntArray {
         val signature = IntArray(MH_DIM) { Int.MAX_VALUE }
 
         // 检查空集合，如果为空则抛出异常
@@ -608,14 +650,19 @@ object TLearn {
             throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
         }
 
-        // 为每个实例生成哈希值 - 优化版本减少数组访问
+        // 为每个实例生成哈希值 - 先用正数空间计算最小值，再在最后按需取负
         instanceSet.forEach { entity ->
             for (i in 0 until MH_DIM) {
                 val hashValue = computeUnaryHash(entity, globalHashSeeds[i])
-                val currentMin = signature[i]
-                if (hashValue < currentMin) {
-                    signature[i] = if (positive) -hashValue else hashValue
+                if (hashValue < signature[i]) {
+                    signature[i] = hashValue
                 }
+            }
+        }
+
+        if (isBinary) {
+            for (i in 0 until MH_DIM) {
+                signature[i] = -signature[i]
             }
         }
 
@@ -626,7 +673,8 @@ object TLearn {
     fun pairHash(entity1: Int, entity2: Int): Int {
         // 直接实现Pair的hashCode原理，避免创建对象
         // 33550337 is a prime number, and the 6th perfect number + 1
-        return entity1 * 33550337 + entity2
+//        return entity1 * 33550337 + entity2
+        return entity1 * 307 + entity2
     }
 
     fun mix64(z0: Long): Long {
@@ -643,7 +691,7 @@ object TLearn {
 
     /**
      * 计算Binary Atom的哈希值（模拟k个不同的哈希函数）
-     * 使用正数空间 [0, Int.MAX_VALUE]
+     * 使用正数空间 [-Int.MAX_VALUE, 0]
      * 确保(entity1, entity2)和(entity2, entity1)产生不同的哈希值
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seed: Int): Int {
@@ -652,12 +700,12 @@ object TLearn {
         hash = mix32(hash xor seed)
 //        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
-        return abs(hash)
+        return - abs(hash)
     }
 
     /**
      * 计算Unary Atom的哈希值（模拟k个不同的哈希函数）
-     * 使用负数空间 [Int.MIN_VALUE, -1]
+     * 使用负数空间 [0, Int.MAX_VALUE]
      */
     fun computeUnaryHash(entity: Int, seed: Int): Int {
         // 使用Pair的hashCode，简洁高效
@@ -667,7 +715,7 @@ object TLearn {
 //        val finalHash = - abs(hash) - 1
         // 确保返回负数
 //        require(finalHash < 0)
-        return hash or Int.MIN_VALUE
+        return abs(hash)
     }
 
     /**
@@ -727,7 +775,7 @@ object TLearn {
                 val metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
                 if (metric.valid) {
-                    if (metric.needValidation || mySupp < 100 || supp < 100) {
+                    if (metric.needValidation) {    //  || mySupp < 100 || supp < 100
                         intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
                         metric.support = intersectionSize
                         if (intersectionSize < MIN_SUPP) return@forEach
@@ -748,8 +796,8 @@ object TLearn {
                     }
 
                     // 80%时间都在组合，似乎没必要  && metric.confidence < 0.9
-                    if (myAtom.isL1Atom)
-                        performLSHforL2Formula(newFormula, intersectionSize.toInt(), newSignature, metric)
+//                    if (myAtom.isL2Atom  && metric.confidence < 0.9)
+//                        performLSHforL2Formula(newFormula, intersectionSize.toInt(), newSignature, metric)
 
                     cnt ++
                 }
@@ -817,8 +865,8 @@ object TLearn {
      */
     private fun estimateIntersectionSize(jaccardSimilarity: Double, size1: Int, size2: Int): Double {
         val ret = jaccardSimilarity * (size1 + size2) / (1 + jaccardSimilarity)
-        return min(ret, min(size1, size2).toDouble()) // 交集大小不应超过较小集合的大小
-//        return ret
+//        return min(ret, min(size1, size2).toDouble()) // 交集大小不应超过较小集合的大小
+        return ret
     }
 
 
@@ -861,7 +909,7 @@ object TLearn {
             val allBucketsOfType = allBucketsWithInfo.filter { (_, atoms) ->
                 if (bucketType == "Binary") isBinaryBucket(atoms) else !isBinaryBucket(atoms)
             }
-            val top20Buckets = allBucketsOfType.sortedByDescending { it.second.size }.take(20)
+            val top20Buckets = allBucketsOfType.sortedByDescending { it.second.size }.take(10)
             
             println("\nTop 20 largest $bucketType buckets:")
             println("Total $bucketType buckets: ${allBucketsOfType.size}")
