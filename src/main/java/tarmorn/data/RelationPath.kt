@@ -5,10 +5,10 @@ package tarmorn.data
  * Uses 15 bits per relation, supporting up to 4 relations per path.
  * 
  * Bit layout (63 bits total):
- * - Bits 0-14: Last relation (r % 2^15)
- * - Bits 15-29: Third relation 
- * - Bits 30-44: Second relation
- * - Bits 45-59: First relation
+ * - Bits 0-14: First relation (r1)
+ * - Bits 15-29: Second relation (r2)
+ * - Bits 30-44: Third relation (r3)
+ * - Bits 45-59: Fourth/Last relation (r4)
  * - Bits 60-62: Unused
  */
 object RelationPath {
@@ -32,10 +32,9 @@ object RelationPath {
         
         var encoded = 0L
         
-        // Encode from last to first (reverse order for easier access)
+        // Encode directly from first to last (natural order)
         for (i in relations.indices) {
-            val relation = relations[relations.size - 1 - i]
-            encoded = encoded or (relation shl (i * BITS_PER_RELATION))
+            encoded = encoded or (relations[i] shl (i * BITS_PER_RELATION))
         }
         
         return encoded
@@ -51,8 +50,13 @@ object RelationPath {
             "Relation ID must be between 1 and $MAX_RELATION_ID, got $relation"
         }
 
-        // Shift existing path left and add new relation at the end (becomes first in logical order)
-        return (existingPath shl BITS_PER_RELATION) or (relation and RELATION_MASK)
+        val existingLength = getLength(existingPath)
+        require(existingLength < 4) { 
+            "Maximum 4 relations supported, existing path already has $existingLength relations" 
+        }
+
+        // Shift existing path left by 15 bits and put new relation at lowest bits
+        return (existingPath shl BITS_PER_RELATION) or relation
     }
     
     /**
@@ -65,8 +69,13 @@ object RelationPath {
             "Relation ID must be between 1 and $MAX_RELATION_ID, got $relation"
         }
 
-        // Add relation at the lowest bits (becomes last in logical order)
-        return (existingPath shl BITS_PER_RELATION) or (relation and RELATION_MASK)
+        val existingLength = getLength(existingPath)
+        require(existingLength < 4) { 
+            "Maximum 4 relations supported, existing path already has $existingLength relations" 
+        }
+
+        // Put new relation at the position after existing relations
+        return existingPath or (relation shl (existingLength * BITS_PER_RELATION))
     }
 
     @Deprecated("Use connectHead or connectTail instead", ReplaceWith("connectHead(rp, relation)"))
@@ -94,11 +103,11 @@ object RelationPath {
     fun decode(encoded: Long): LongArray {
         val relations = mutableListOf<Long>()
         
-        // Extract relations from last to first
+        // Extract relations directly from first to last (natural order)
         for (i in 0 until 4) {
             val relation = (encoded shr (i * BITS_PER_RELATION)) and RELATION_MASK
             if (relation != 0L) {
-                relations.add(0, relation) // Add to beginning to maintain order
+                relations.add(relation) // Direct append, no need to insert at beginning
             }
         }
         
@@ -121,15 +130,18 @@ object RelationPath {
      * Get the first relation in the path.
      */
     fun getFirstRelation(encoded: Long): Long {
-        val relations = decode(encoded)
-        return if (relations.isNotEmpty()) relations[0] else 0L
+        return encoded and RELATION_MASK // First relation is now at lowest bits
     }
     
     /**
      * Get the last relation in the path.
      */
     fun getLastRelation(encoded: Long): Long {
-        return encoded and RELATION_MASK
+        val length = getLength(encoded)
+        if (length == 0) return 0L
+        
+        // Last relation is at position (length-1) * BITS_PER_RELATION
+        return (encoded shr ((length - 1) * BITS_PER_RELATION)) and RELATION_MASK
     }
     
     /**

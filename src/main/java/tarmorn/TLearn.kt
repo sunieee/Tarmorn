@@ -358,6 +358,10 @@ object TLearn {
      * Returns the connected path ID if successful, null otherwise
      */
     fun attemptConnection(r1: Long, ri: Long): Long? {
+
+        if (IdManager.getInverseRelation(r1) == ri)
+            println("Warning: attempting to connect $r1 and its inverse $ri")
+
         // Create connected path rp = r1 · ri (reverse order for better performance)
         val rp = RelationPath.connectHead(r1, ri)
         val inverseRp = RelationPath.getInverseRelation(rp)
