@@ -8,23 +8,25 @@ import java.io.PrintWriter
 object Settings {
     // Path to the file that contains the triple set used for learning the rules.
     @JvmField
-    var PATH_TRAINING: String = "data/FB15k/train.txt"
+    var DATASET: String = "FB15k"
+    @JvmField
+    var PATH_TRAINING: String = "data/{DATASET}/train.txt"
     // Path to the file that contains the triple set used for to test the rules.
     @JvmField
-    var PATH_TEST: String = "data/FB15k/test.txt"
+    var PATH_TEST: String = "data/{DATASET}/test.txt"
     // Path to the file that contains the triple set used validation purpose (e.g. learning hyper parameter).
     @JvmField
-    var PATH_VALID: String = "data/FB15k/valid.txt"
+    var PATH_VALID: String = "data/{DATASET}/valid.txt"
     // Path to the file that contains the rules that will be refined or will be sued for prediction.
     @JvmField
-    var PATH_RULES: String = "out/FB15k/rules-100"
+    var PATH_RULES: String = "out/{DATASET}/rules-100"
     // Path to the file that contains the rules that will be used as base,
     // i.e. this rule set will be added to all other rule sets loaded.
     @JvmField
     var PATH_RULES_BASE: String = ""
     // Path to the output file where the rules / predictions  will be stored.
     @JvmField
-    var PATH_OUTPUT: String = "out/FB15k/predictions"
+    var PATH_OUTPUT: String = "out/{DATASET}/predictions"
     // The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
     @JvmField
     var WORKER_THREADS: Int = 20
@@ -322,5 +324,11 @@ object Settings {
                 }
             }
         }
+        PATH_OUTPUT = PATH_OUTPUT.replace("{DATASET}", DATASET)
+        PATH_RULES = PATH_RULES.replace("{DATASET}", DATASET)
+        PATH_TRAINING = PATH_TRAINING.replace("{DATASET}", DATASET)
+        PATH_TEST = PATH_TEST.replace("{DATASET}", DATASET)
+        PATH_VALID = PATH_VALID.replace("{DATASET}", DATASET)
+        PATH_RULES_BASE = PATH_RULES_BASE.replace("{DATASET}", DATASET)
     }
 }

@@ -268,20 +268,32 @@ object TLearn {
             }
         }
 
-        // Wait for all threads
-        futures.forEach { it.get() }
 
-        println("Connection completed. Processed: ${processedCount.get()}, Added: ${addedCount.get()}")
-
-        // Ensure executor threads don't keep JVM alive
-        threadPool.shutdown()
         try {
-            if (!threadPool.awaitTermination(30, TimeUnit.SECONDS)) {
-                threadPool.shutdownNow()
+            var lastActiveCount = Settings.WORKER_THREADS
+            while (true) {
+                val activeCount: Int
+                // Guarded wait: only等待当计数未变化，避免丢失通知
+                synchronized(threadMonitorLock) {
+                    while (activeThreadCount.get() == lastActiveCount) {
+                        threadMonitorLock.wait()
+                    }
+                    activeCount = activeThreadCount.get()
+                    lastActiveCount = activeCount
+                }
+                println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
+
+                if (activeCount < Settings.WORKER_THREADS / 2) {
+                    println("FORCING SHUTDOWN: half threads have finished")
+                    futures.forEach { it.cancel(true) }
+                    threadPool.shutdownNow()
+                    break
+                }
             }
-        } catch (ie: InterruptedException) {
+        } catch (e: Exception) {
+            println("Error in thread monitoring: ${e.message}")
+        } finally {
             threadPool.shutdownNow()
-            Thread.currentThread().interrupt()
         }
     }
 
@@ -317,7 +329,12 @@ object TLearn {
         }
 
         val cnt = activeThreadCount.decrementAndGet()
-        println("Thread $threadId completed, $cnt threads remain")
+        // 发送通知需持有锁
+        synchronized(threadMonitorLock) {
+            println("Thread $threadId completed, $cnt threads remain")
+            // 使用notifyAll防止潜在的单通知丢失或未来扩展多个等待者
+            threadMonitorLock.notifyAll()
+        }
     }
 
     fun runTask(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger, ri: Long) {
@@ -686,14 +703,11 @@ object TLearn {
                     intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
 //                    metric.support = intersectionSize
                     metric = Metric(jaccard, intersectionSize, supp, mySupp)
-                    if (intersectionSize < MIN_SUPP) return@forEach
+                    if (intersectionSize < MIN_SUPP || !metric.valid) return@forEach
 //                    }
 
                     val newFormula = Formula(atom1 = myAtom, atom2 = atom)
                     // 添加到结果映射
-                    val newSignature = IntArray(MH_DIM) { i ->
-                        min(minHashSignature[i], registry[i])
-                    }
                     
                     val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
                     formula2metric[newFormula] = metric
@@ -702,6 +716,10 @@ object TLearn {
                         val formula2metric = atom2formula2metric.getOrPut(myAtom) { mutableMapOf() }
                         formula2metric[newFormula] = metric.inverse()
                     }
+
+//                    val newSignature = IntArray(MH_DIM) { i ->
+//                        min(minHashSignature[i], registry[i])
+//                    }
 
                     // 80%时间都在组合，似乎没必要  && metric.confidence < 0.9
 //                    if (myAtom.isL2Atom  && metric.confidence < 0.9)
@@ -837,7 +855,7 @@ object TLearn {
      * 保存atom2formula2metric为JSON文件 - 流式输出避免内存溢出
      */
     private fun saveAtom2Formula2MetricToJson() {
-        val outDir = File("out")
+        val outDir = File("out/" + Settings.DATASET)
         outDir.mkdirs() // 确保out目录存在
 
         val outputFile = File(outDir, "atom2formula2metric.json")
@@ -890,6 +908,7 @@ object TLearn {
         }
 
         println("Successfully saved atom2formula2metric to ${outputFile.absolutePath}")
+        println("Successfully saved rules to ${outputRule.absolutePath}")
         println("Total atoms: ${atom2formula2metric.size}")
         println("Total formulas: ${atom2formula2metric.values.sumOf { it.size }}")
     }

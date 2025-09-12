@@ -140,7 +140,7 @@ object IdManager {
      * - If any relation is an inverse, convert to its forward name and swap arguments.
      */
     fun getAtomString(relationId: Long, entityId: Int): String {
-        // Prepare terminal string for the rightmost argument
+        // Resolve terminal argument
         fun termString(eid: Int): String = when (eid) {
             getYId() -> "Y"
             getXId() -> "X"
@@ -148,38 +148,29 @@ object IdManager {
             else -> getEntityString(eid)
         }
 
-        // Get path as array of single-relation IDs (first -> last)
-        val relations: LongArray = if (relationId <= RelationPath.MAX_RELATION_ID) {
-            longArrayOf(relationId)
-        } else {
-            RelationPath.decode(relationId)
-        }
-
+        // Decode relation path
+        val relations: LongArray = if (relationId <= RelationPath.MAX_RELATION_ID) longArrayOf(relationId) else RelationPath.decode(relationId)
         val n = relations.size
-        val rightMost = termString(entityId)
+        val tailTerm = termString(entityId)
 
-        // Build node sequence: node0=X, node1=A, node2=B, ..., nodeN=rightMost
+        // Build node list: X, A, B, ..., tailTerm
         val nodes = Array(n + 1) { "" }
         nodes[0] = "X"
-        // Fill internal bridge variables A, B, ... up to node n-1
-        for (i in 1 until n) {
-            nodes[i] = (("A".first().code + (i - 1)).toChar()).toString()
+        for (i in 1 until n+1) {
+            nodes[i] = ('A'.code + (i - 1)).toChar().toString()
         }
-        if (rightMost != "·") nodes[n - 1] = rightMost
-
-        // Compose each step, adjusting inverse relations to forward with swapped args
-        val parts = mutableListOf<String>()
+        if (tailTerm != "·") nodes[n] = tailTerm
+        val parts = ArrayList<String>(n)
         for (i in 0 until n) {
             val r = relations[i]
-            val forwardR = if (isInverseRelation(r)) getInverseRelation(r) else r
-                val rName = getRelationString(forwardR)
-
-            val argL = nodes[i]
-            val argR = nodes[i + 1]
-            if (isInverseRelation(r)) parts.add("$rName($argR, $argL)")
-            else parts.add("$rName($argL, $argR)")
+            val inv = isInverseRelation(r)
+            val forward = if (inv) getInverseRelation(r) else r
+            val name = getRelationString(forward)
+            // swap args for inverse
+            val left = if (inv) nodes[i + 1] else nodes[i]
+            val right = if (inv) nodes[i] else nodes[i + 1]
+            parts.add("$name($left,$right)")
         }
-
         return parts.joinToString(", ")
     }
 

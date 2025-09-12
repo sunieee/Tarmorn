@@ -1,16 +1,8 @@
-# Path to the file that contains the triple set used for learning the rules.
-PATH_TRAINING: data/FB15k-237/train.txt
-# Path to the file that contains the triple set used for to test the rules.
-PATH_TEST: data/FB15k-237/test.txt
-# Path to the file that contains the triple set used validation purpose (e.g. learning hyper parameter).
-PATH_VALID: data/FB15k-237/valid.txt
-# Path to the file that contains the rules that will be refined or will be sued for prediction.
-PATH_RULES: out/FB15k-237/rules-400
-# Path to the output file where the rules / predictions  will be stored.
-PATH_OUTPUT: out/FB15k-237/predictions
+# Path to the dataset folder: data/fb15k-237/ and out/fb15k-237/
+DATASET: FB15k-237
 # The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
 WORKER_THREADS: 30
-THRESHOLD_CORRECT_PREDICTIONS: 20
+THRESHOLD_CORRECT_PREDICTIONS: 30
 
 # If set to true, remove the INVERSE_ prefix from relation names in rule output
 REMOVE_INVERSE_PREFIX_IN_OUTPUT: true
