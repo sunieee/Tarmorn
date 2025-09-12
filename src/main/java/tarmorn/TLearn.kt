@@ -52,7 +52,7 @@ object TLearn {
     lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
 
     // Thread-safe relation queue using BlockingQueue (no need to sort by supp)
-    val relationQueue = LinkedBlockingQueue<RelationPathItem>()
+    val relationQueue = LinkedBlockingQueue<Long>()
     val activeThreadCount = AtomicInteger(0) // 线程安全的活动线程计数
     val threadMonitorLock = Object() // 用于线程监控的锁
 
@@ -65,13 +65,9 @@ object TLearn {
     private var logErrorReported = false // 防止重复报告日志错误
     private var logWriterClosed = false // 跟踪日志写入器状态
 
-    private val POISON = RelationPathItem(Long.MIN_VALUE, 0)
-
-    // 核心类型定义迁移至 tarmorn.structure.TLearn.*
-    data class RelationPathItem(
-        val relationPath: Long,
-        val supp: Int
-    )
+    private val POISON = Long.MIN_VALUE
+    val processedCount = AtomicInteger(0)
+    val addedCount = AtomicInteger(0)
 
     // 流式计算结构
     val formula2supp = mutableMapOf<Formula, Int>()          // 公式→支持度映射
@@ -213,15 +209,12 @@ object TLearn {
     fun initializeLevel1Relations() {
         println("Initializing level 1 relations...")
 
-        var addedCount = 0
-
         for ((relation, tripleSet) in ts.r2tripleSet) {
             r2supp[relation] = tripleSet.size
             if (tripleSet.size >= MIN_SUPP) {
-//                    val pathId = RelationPath.encode(relation)
-                val item = RelationPathItem(relation, tripleSet.size)
-                relationQueue.offer(item)
-                addedCount++
+                relationQueue.offer(relation)
+                addedCount.incrementAndGet()
+                logWorkerResult(relation, tripleSet.size)
 
                 if (!IdManager.isInverseRelation(relation)) {
                     // 为L=1关系进行原子化，直接使用r2h2tSet中的反向索引
@@ -234,11 +227,10 @@ object TLearn {
                     // 处理Unary原子
                     atomizeUnaryRelationPath(relation, h2tSet, t2hSet, r2loopSet[relation] ?: mutableSetOf())
                 }
-
             }
         }
 
-        relationL1 = relationQueue.map { it.relationPath }.toList()
+        relationL1 = relationQueue.map { it }.toList()
         // 使用不可变快照，避免并发修改影响，并提升遍历效率
         r2tSet = relationL1.associateWith { r ->
             val inv = IdManager.getInverseRelation(r)
@@ -246,7 +238,8 @@ object TLearn {
             // 拷贝为数组，遍历更快，且是稳定快照
             keys.toIntArray()
         }
-        println("Added $addedCount level 1 relations to queue")
+        val cnt = addedCount.get()
+        println("Added $cnt level 1 relations to queue")
         // println("Level 1 relations: ${relationL1.map { IdManager.getRelationString(it) }}")
     }
 
@@ -257,14 +250,13 @@ object TLearn {
         println("Starting relation connection with ${Settings.WORKER_THREADS} threads...")
 
         val threadPool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
-        val processedCount = AtomicInteger(0)
-        val addedCount = AtomicInteger(0)
+
 
         // Create worker threads
         activeThreadCount.set(Settings.WORKER_THREADS)
         val futures = (1..Settings.WORKER_THREADS).map { threadId ->
             threadPool.submit {
-                connectRelationsWorker(threadId, processedCount, addedCount)
+                connectRelationsWorker(threadId)
             }
         }
 
@@ -283,8 +275,8 @@ object TLearn {
                 }
                 println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
 
-                if (activeCount < Settings.WORKER_THREADS / 2) {
-                    println("FORCING SHUTDOWN: half threads have finished")
+                if (activeCount < Settings.WORKER_THREADS / 4) {
+                    println("FORCING SHUTDOWN: 75% threads have finished")
                     futures.forEach { it.cancel(true) }
                     threadPool.shutdownNow()
                     break
@@ -300,7 +292,7 @@ object TLearn {
     /**
      * Worker thread for connecting relations
      */
-    fun connectRelationsWorker(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger) {
+    fun connectRelationsWorker(threadId: Int) {
         println("Thread $threadId started")
 
         // 如果只有当前一个线程卡主，则直接结束
@@ -310,20 +302,19 @@ object TLearn {
                 relationQueue.put(POISON)
                 POISON
             }
-            if (item === POISON) {
+            if (item == POISON) {
                 relationQueue.put(POISON)
                 break
             }               // 优雅收尾
 
-            val ri = item.relationPath
-            val riLength = RelationPath.getLength(ri)
-            if (riLength >= MAX_PATH_LENGTH) continue
+            val length = RelationPath.getLength(item)
+            if (length >= MAX_PATH_LENGTH) continue
 
             try {
-                runTask(threadId, processedCount, addedCount, ri)
+                runTask(threadId, item)
             }
             catch (e: Exception) {
-                println("Error in thread $threadId processing relation $ri: ${e.message}")
+                println("Error in thread $threadId processing relation $item: ${e.message}")
                 e.printStackTrace()
             }
         }
@@ -337,7 +328,7 @@ object TLearn {
         }
     }
 
-    fun runTask(threadId: Int, processedCount: AtomicInteger, addedCount: AtomicInteger, ri: Long) {
+    fun runTask(threadId: Int, ri: Long) {
         processedCount.incrementAndGet()
 
         // Step 4: Try connecting with all L1 relations (immediate enqueue per item)
@@ -346,14 +337,14 @@ object TLearn {
             if (connectedPath != null) {
                 val supp = computeSupp(connectedPath, r1, ri)
                 if (supp >= MIN_SUPP) {
-                    relationQueue.offer(RelationPathItem(connectedPath, supp))
+                    relationQueue.offer(connectedPath)
                     val cnt = addedCount.incrementAndGet()
 
                     // Per-item log (keeps queue flowing)
                      logWorkerResult(connectedPath, supp)
 
                     //  || activeThreadCount.get() < Settings.WORKER_THREADS
-                    if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS) {
+                    if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS / 4) {
                         val remaining = relationQueue.size
                         println("Thread $threadId: Added $cnt new paths; latest supp=$supp; TODO: $remaining remaining in queue")
                     }
@@ -367,15 +358,6 @@ object TLearn {
      * Returns the connected path ID if successful, null otherwise
      */
     fun attemptConnection(r1: Long, ri: Long): Long? {
-        // Check if ri's last relation conflicts with inverse of r1
-        val riFirstRelation = RelationPath.getFirstRelation(ri)
-        val inverser1 = IdManager.getInverseRelation(r1)
-
-        // Simple check without accessing RELATION_MASK
-        if (riFirstRelation == inverser1) {
-            return null // Skip conflicting inverse relations
-        }
-
         // Create connected path rp = r1 · ri (reverse order for better performance)
         val rp = RelationPath.connectHead(r1, ri)
         val inverseRp = RelationPath.getInverseRelation(rp)
@@ -465,12 +447,13 @@ object TLearn {
         val inverseRp = RelationPath.getInverseRelation(rp)
         r2supp[rp] = size
         r2supp[inverseRp] = size
-        
+
         if (size >= MIN_SUPP) {
             // Add to main data structures
 //            r2instanceSet[rp] = instanceSet
 //            r2instanceSet[inverseRp] = inverseSet
-            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+//            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+            val (forwardSuccess, inverseSuccess) = Pair(true, true) // 跳过Binary原子化，直接进行Unary原子化
 
             if (forwardSuccess || pathLength < 3) r2h2supp[rp] = h2supp
             if (inverseSuccess || pathLength < 3) r2h2supp[inverseRp] = t2supp
@@ -480,7 +463,7 @@ object TLearn {
                 // For paths with length < 3, we store the full h2t mapping
                 r2h2tSet[rp] = h2tSet
                 // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
+//                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
             }
         }
 
@@ -873,13 +856,17 @@ object TLearn {
 
                 val formulaEntries = formula2Metric.entries.toList()
                 formulaEntries.forEachIndexed { formulaIndex, (formula, metric) ->
-                    val formulaString = formula.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                    // 输出规则：仅当formula包含恰好两个原子时
+                    val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
+                    val otherAtoms = atomsInFormula.filter { it != atom }
+
+                    val formulaString = otherAtoms.joinToString(", ") { it.toString() }
+                        .replace("\"", "\\\"").replace("\n", "\\n")
                     writer.write("    \"$formulaString\": $metric")
                     if (formulaIndex < formulaEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
-                    // 输出规则：仅当formula包含恰好两个原子时
-                    val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
+
                     if (atomsInFormula.size == 2) {
                         val other = if (atomsInFormula[0] == atom) atomsInFormula[1]
                                     else if (atomsInFormula[1] == atom) atomsInFormula[0]

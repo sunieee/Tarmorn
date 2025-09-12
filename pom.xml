@@ -44,7 +44,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>tarmorn.Learn</mainClass>
+                            <mainClass>tarmorn.TLearn</mainClass>
                         </manifest>
                     </archive>
                     <descriptorRefs>
