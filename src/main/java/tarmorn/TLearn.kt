@@ -336,7 +336,13 @@ object TLearn {
             val connectedPath = attemptConnection(r1, ri)
             if (connectedPath != null) {
                 val supp = computeSupp(connectedPath, r1, ri)
+
                 if (supp >= MIN_SUPP) {
+                    // 检查反向关系对的连接结果
+                    if (IdManager.getInverseRelation(r1) == ri) {
+                        println("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp")
+                    }
+                    
                     relationQueue.offer(connectedPath)
                     val cnt = addedCount.incrementAndGet()
 
@@ -358,23 +364,33 @@ object TLearn {
      * Returns the connected path ID if successful, null otherwise
      */
     fun attemptConnection(r1: Long, ri: Long): Long? {
-
-        if (IdManager.getInverseRelation(r1) == ri)
-            println("Warning: attempting to connect $r1 and its inverse $ri")
-
         // Create connected path rp = r1 · ri (reverse order for better performance)
         val rp = RelationPath.connectHead(r1, ri)
         val inverseRp = RelationPath.getInverseRelation(rp)
+
+        // 要求长度为3的路径必须包含 R·INVERSE_R 子串
+       if (ri > RelationPath.MAX_RELATION_ID && !RelationPath.hasInverseRelation(rp)) {
+//           println("[attemptConnection] Skipping L3 path without inverse relation: ${IdManager.getRelationString(rp)}")
+           return null
+       }
 
         // Check if rp or its inverse already exists
         // if (r2tripleSet.containsKey(rp) || r2tripleSet.containsKey(IdManager.getInverseRelation(rp))) {
         //     return null // Skip existing paths
         // }
         // 原子插入，避免全局同步：只有当 rp 和 inverseRp 都是首次出现时才继续
-        val prevRp = r2supp.putIfAbsent(rp, 0)
-        val prevInv = r2supp.putIfAbsent(inverseRp, 0)
-        if (prevRp != null || prevInv != null) {
-            return null
+        // 特殊处理：如果 rp == inverseRp（自反路径），只检查一次
+        if (rp == inverseRp) {
+            val prevRp = r2supp.putIfAbsent(rp, 0)
+            if (prevRp != null) {
+                return null
+            }
+        } else {
+            val prevRp = r2supp.putIfAbsent(rp, 0)
+            val prevInv = r2supp.putIfAbsent(inverseRp, 0)
+            if (prevRp != null || prevInv != null) {
+                return null
+            }
         }
 
         return rp
@@ -450,14 +466,17 @@ object TLearn {
         // 因为r2supp占用内存较小，且需要记录，频繁访问，直接存储
         val inverseRp = RelationPath.getInverseRelation(rp)
         r2supp[rp] = size
-        r2supp[inverseRp] = size
+        // 只有当 rp != inverseRp 时才单独存储反向路径的支持度
+        if (rp != inverseRp) {
+            r2supp[inverseRp] = size
+        }
 
         if (size >= MIN_SUPP) {
             // Add to main data structures
 //            r2instanceSet[rp] = instanceSet
 //            r2instanceSet[inverseRp] = inverseSet
-//            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
-            val (forwardSuccess, inverseSuccess) = Pair(true, true) // 跳过Binary原子化，直接进行Unary原子化
+            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+//            val (forwardSuccess, inverseSuccess) = Pair(true, true) // 跳过Binary原子化，直接进行Unary原子化
 
             if (forwardSuccess || pathLength < 3) r2h2supp[rp] = h2supp
             if (inverseSuccess || pathLength < 3) r2h2supp[inverseRp] = t2supp
@@ -467,7 +486,7 @@ object TLearn {
                 // For paths with length < 3, we store the full h2t mapping
                 r2h2tSet[rp] = h2tSet
                 // r2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-//                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
+                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
             }
         }
 

@@ -1,5 +1,7 @@
 package tarmorn.data
 
+import javax.management.relation.Relation
+
 /**
  * Utility class for encoding and decoding multiple relations into a single Long value.
  * Uses 15 bits per relation, supporting up to 4 relations per path.
@@ -112,6 +114,16 @@ object RelationPath {
         }
         
         return relations.toLongArray()
+    }
+
+    fun hasInverseRelation(encoded: Long): Boolean {
+        val relations = decode(encoded)
+        // 存在相邻关系是逆关系则返回 true
+        for (i in 0 until relations.size - 1) {
+            if (IdManager.getInverseRelation(relations[i]) == relations[i + 1])
+                return true
+        }
+        return false
     }
     
     /**
