@@ -9,6 +9,9 @@ import os
 from typing import Set, List, Tuple, Dict
 from collections import defaultdict
 
+# 导入analysis_rule模块
+from analysis_rule import load_dataset, analyze_rule_from_string
+
 def parse_rule_line(line: str) -> Tuple[str, str, float, str]:
     """
     解析规则行
@@ -87,7 +90,7 @@ def normalize_rule(rule: str) -> str:
         return f"{head.strip()} <= {body.strip()}"
     return rule
 
-def compare_rules(rules1: Dict[str, List], rules2: Dict[str, List], file1_name: str, file2_name: str):
+def compare_rules(rules1: Dict[str, List], rules2: Dict[str, List], file1_name: str, file2_name: str, kg=None):
     """
     比较两个规则集合
     """
@@ -128,29 +131,48 @@ def compare_rules(rules1: Dict[str, List], rules2: Dict[str, List], file1_name: 
     # 显示详细信息
     print(f"\n=== 详细分析 ===")
     
+    topN = 5
     if common_rules:
-        print(f"\n共同规则示例 (前5个):")
-        for i, rule in enumerate(list(common_rules)[:5]):
+        print(f"\n共同规则示例 (前{topN}个):")
+        for i, rule in enumerate(list(common_rules)[:topN]):
             print(f"  {i+1}. {rule}")
             # 显示置信度比较
             conf1 = rules1[rule][0][1] if rules1[rule] else "N/A"
             conf2 = rules2[rule][0][1] if rules2[rule] else "N/A"
             print(f"      {file1_name} 置信度: {conf1}")
             print(f"      {file2_name} 置信度: {conf2}")
+            
+            # 计算真实支持度
+            if kg is not None:
+                real_result = analyze_rule_from_string(rule, kg)
+                print(f"      真实结果: {real_result['join_result']}")
+            print()
     
     if only_in_1:
-        print(f"\n仅在 {file1_name} 中的规则示例 (前5个):")
-        for i, rule in enumerate(list(only_in_1)[:5]):
+        print(f"\n仅在 {file1_name} 中的规则示例 (前{topN}个):")
+        for i, rule in enumerate(list(only_in_1)[:topN]):
             print(f"  {i+1}. {rule}")
             conf1 = rules1[rule][0][1] if rules1[rule] else "N/A"
             print(f"      置信度: {conf1}")
+            
+            # 计算真实支持度
+            if kg is not None:
+                real_result = analyze_rule_from_string(rule, kg)
+                print(f"      真实结果: {real_result['join_result']}")
+            print()
     
     if only_in_2:
-        print(f"\n仅在 {file2_name} 中的规则示例 (前5个):")
-        for i, rule in enumerate(list(only_in_2)[:5]):
+        print(f"\n仅在 {file2_name} 中的规则示例 (前{topN}个):")
+        for i, rule in enumerate(list(only_in_2)[:topN]):
             print(f"  {i+1}. {rule}")
             conf2 = rules2[rule][0][1] if rules2[rule] else "N/A"
             print(f"      置信度: {conf2}")
+            
+            # 计算真实支持度
+            if kg is not None:
+                real_result = analyze_rule_from_string(rule, kg)
+                print(f"      真实结果: {real_result['join_result']}")
+            print()
 
 def main():
     """
@@ -160,6 +182,7 @@ def main():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     file1 = os.path.join(base_dir, "out", "FB15k-237", "rules-10")
     file2 = os.path.join(base_dir, "out", "FB15k-237", "rule.txt")
+    dataset_path = os.path.join(base_dir, "data", "FB15k-237", "train.txt")
     
     # 目标关系
     target_relation = "/award/award_category/winners./award/award_honor/ceremony"
@@ -168,6 +191,7 @@ def main():
     print(f"比较文件:")
     print(f"  File 1: {file1}")
     print(f"  File 2: {file2}")
+    print(f"  数据集: {dataset_path}")
     print(f"目标关系: {target_relation}")
     
     # 检查文件是否存在
@@ -179,13 +203,26 @@ def main():
         print(f"错误: 文件 {file2} 不存在")
         return
     
+    if not os.path.exists(dataset_path):
+        print(f"错误: 数据集文件 {dataset_path} 不存在")
+        return
+    
     # 加载规则
     print(f"\n=== 加载规则 ===")
     rules1 = load_rules_with_target_relation(file1, target_relation)
     rules2 = load_rules_with_target_relation(file2, target_relation)
     
+    # 加载知识图谱
+    print(f"\n=== 加载知识图谱 ===")
+    try:
+        kg = load_dataset(dataset_path)
+        print(f"知识图谱加载成功")
+    except Exception as e:
+        print(f"加载知识图谱失败: {e}")
+        kg = None
+    
     # 比较规则
-    compare_rules(rules1, rules2, "rules-10", "rule.txt")
+    compare_rules(rules1, rules2, "rules-10", "rule.txt", kg)
 
 if __name__ == "__main__":
     main()

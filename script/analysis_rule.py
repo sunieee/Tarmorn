@@ -30,6 +30,13 @@ from collections import defaultdict, Counter
 from typing import Set, Tuple, Dict, List, Optional
 from itertools import product
 
+# DEBUG控制开关
+DEBUG = __name__ == "__main__"
+
+def debug(*args, **kwargs):
+    """只在DEBUG模式下打印调试信息"""
+    if DEBUG:
+        print(*args, **kwargs)
 
 class KnowledgeGraph:
     """知识图谱类，用于存储和查询三元组，基于r2h2t索引"""
@@ -112,7 +119,7 @@ class KnowledgeGraph:
     
     def save_r2h2t_to_json(self, filepath: str):
         """将r2h2t索引保存到JSON文件"""
-        print(f"正在保存r2h2t索引到文件: {filepath}")
+        debug(f"正在保存r2h2t索引到文件: {filepath}")
         
         # 转换r2h2t为可序列化的格式
         serializable_r2h2t = {}
@@ -125,7 +132,7 @@ class KnowledgeGraph:
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(serializable_r2h2t, f, ensure_ascii=False, indent=2)
         
-        print(f"r2h2t索引已保存，包含 {len(serializable_r2h2t)} 个关系")
+        debug(f"r2h2t索引已保存，包含 {len(serializable_r2h2t)} 个关系")
 
 
 class RuleParser:
@@ -294,7 +301,7 @@ class RuleParser:
             # 其他情况，直接使用自由变量的数量
             variable_count = len(free_vars)
         
-        print(f"  [DEBUG] Head variables: {head_variables}, Free vars: {free_vars}, Has constant: {has_constant_in_head}, Variable count: {variable_count}")
+        debug(f"  [DEBUG] Head variables: {head_variables}, Free vars: {free_vars}, Has constant: {has_constant_in_head}, Variable count: {variable_count}")
         
         # 存储详细的原子信息
         parsed_body_atoms = []
@@ -354,8 +361,8 @@ class RuleParser:
         
         X, Y = head_variables[0], head_variables[1]
         
-        print(f"[DEBUG] Building connection path for X={X}, Y={Y}")
-        print(f"[DEBUG] Body atoms: {[(atom['relation'], atom['args']) for atom in body_atoms]}")
+        debug(f"[DEBUG] Building connection path for X={X}, Y={Y}")
+        debug(f"[DEBUG] Body atoms: {[(atom['relation'], atom['args']) for atom in body_atoms]}")
         
         # 简化实现：假设是链式连接
         # 找到包含X的原子作为起点
@@ -389,16 +396,16 @@ class RuleParser:
                         # 使用反向关系：current_var <- next_var (即 next_var -> current_var)
                         path_relations.append(f"INVERSE_{relation}")
                     
-                    print(f"[DEBUG] {current_var} -> {next_var} via {path_relations[-1]}")
+                    debug(f"[DEBUG] {current_var} -> {next_var} via {path_relations[-1]}")
                     current_var = next_var
                     found_next = True
                     break
             
             if not found_next:
-                print(f"[DEBUG] Cannot find connection from {current_var}")
+                debug(f"[DEBUG] Cannot find connection from {current_var}")
                 break
         
-        print(f"[DEBUG] Final connection path: {path_relations}")
+        debug(f"[DEBUG] Final connection path: {path_relations}")
         return path_relations
     
     @staticmethod
@@ -509,24 +516,24 @@ class RuleSupportCalculator:
         Returns:
             (X, Y) 对的集合
         """
-        print(f"    [DEBUG] get_binary_instances_join: relation_path={relation_path}")
+        debug(f"    [DEBUG] get_binary_instances_join: relation_path={relation_path}")
         
         if not relation_path:
             return set()
         
         if len(relation_path) == 1:
             result = self.kg.get_relation_pairs(relation_path[0])
-            print(f"    [DEBUG] Single relation {relation_path[0]} has {len(result)} instances")
+            debug(f"    [DEBUG] Single relation {relation_path[0]} has {len(result)} instances")
             return result
         
         # 逐级连接关系
         current_relation = relation_path[-1]
         for i in range(len(relation_path) - 2, -1, -1):
-            print(f"    [DEBUG] Joining {relation_path[i]} with {current_relation}")
+            debug(f"    [DEBUG] Joining {relation_path[i]} with {current_relation}")
             current_relation = self.join_relations(relation_path[i], current_relation)
         
         result = self.kg.get_relation_pairs(current_relation)
-        print(f"    [DEBUG] Final joined relation {current_relation} has {len(result)} instances")
+        debug(f"    [DEBUG] Final joined relation {current_relation} has {len(result)} instances")
         return result
     
     def join_relations(self, r1: str, r2: str) -> str:
@@ -538,17 +545,17 @@ class RuleSupportCalculator:
         
         # 如果已经计算过，直接返回
         if new_relation_name in self.kg.r2h2t:
-            print(f"      [DEBUG] Using cached join result: {new_relation_name}")
+            debug(f"      [DEBUG] Using cached join result: {new_relation_name}")
             return new_relation_name
         
-        print(f"      [DEBUG] Computing join: {r1} · {r2}")
+        debug(f"      [DEBUG] Computing join: {r1} · {r2}")
         
         # 获取r1和r2的r2h2t映射
         r1_h2t = self.kg.r2h2t.get(r1, {})
         r2_h2t = self.kg.r2h2t.get(r2, {})
         
-        print(f"      [DEBUG] r1 ({r1}) has {sum(len(tails) for tails in r1_h2t.values())} instances")
-        print(f"      [DEBUG] r2 ({r2}) has {sum(len(tails) for tails in r2_h2t.values())} instances")
+        debug(f"      [DEBUG] r1 ({r1}) has {sum(len(tails) for tails in r1_h2t.values())} instances")
+        debug(f"      [DEBUG] r2 ({r2}) has {sum(len(tails) for tails in r2_h2t.values())} instances")
         
         # 高效获取连接节点：r1的所有tail ∩ r2的所有head
         inverse_r1 = self.kg.get_inverse_relation(r1)
@@ -556,7 +563,7 @@ class RuleSupportCalculator:
         r2_heads = set(r2_h2t.keys())
         connection_nodes = r1_tails.intersection(r2_heads)
         
-        print(f"      [DEBUG] r1 tails: {len(r1_tails)}, r2 heads: {len(r2_heads)}, connection nodes: {len(connection_nodes)}")
+        debug(f"      [DEBUG] r1 tails: {len(r1_tails)}, r2 heads: {len(r2_heads)}, connection nodes: {len(connection_nodes)}")
         
         # 对每个连接节点计算笛卡尔积
         result_h2t = defaultdict(set)  # r1·r2 的正向索引
@@ -574,7 +581,7 @@ class RuleSupportCalculator:
                         result_t2h[t2].add(h1)  # 逆向：t2 -> h1
                         total_results += 1
         
-        print(f"      [DEBUG] Join result: {total_results} instances")
+        debug(f"      [DEBUG] Join result: {total_results} instances")
         
         # 将结果存储到kg的r2h2t中
         self.kg.r2h2t[new_relation_name] = result_h2t
@@ -588,7 +595,7 @@ class RuleSupportCalculator:
         self.kg.r2h2t[inverse_relation_name] = result_t2h
         self.kg.relations.add(inverse_relation_name)
         
-        print(f"      [DEBUG] Also computed inverse relation: {inverse_relation_name}")
+        debug(f"      [DEBUG] Also computed inverse relation: {inverse_relation_name}")
         
         return new_relation_name
     
@@ -704,8 +711,8 @@ class RuleSupportCalculator:
         Returns:
             包含 headSize, bodySize, support, confidence 的字典
         """
-        print(f"[DEBUG] rule_info keys: {list(rule_info.keys())}")
-        print(f"[DEBUG] variable_count: {rule_info.get('variable_count', 'NOT_SET')}")
+        debug(f"[DEBUG] rule_info keys: {list(rule_info.keys())}")
+        debug(f"[DEBUG] variable_count: {rule_info.get('variable_count', 'NOT_SET')}")
         
         variable_count = rule_info.get('variable_count', 0)
         
@@ -716,22 +723,22 @@ class RuleSupportCalculator:
         head_size = len(head_instances)
         body_size = len(body_instances)
         
-        print(f"  [DEBUG] Head instances: {head_size}")
+        debug(f"  [DEBUG] Head instances: {head_size}")
         if head_instances:
             head_sample = list(head_instances)[:5]
-            print(f"  [DEBUG] Head sample: {head_sample}")
+            debug(f"  [DEBUG] Head sample: {head_sample}")
             
-        print(f"  [DEBUG] Body instances: {body_size}")
+        debug(f"  [DEBUG] Body instances: {body_size}")
         if body_instances:
             body_sample = list(body_instances)[:5]
-            print(f"  [DEBUG] Body sample: {body_sample}")
+            debug(f"  [DEBUG] Body sample: {body_sample}")
         
         # 计算支持度
         support_instances = head_instances.intersection(body_instances)
         support = len(support_instances)
         confidence = support / body_size if body_size > 0 else 0
         
-        print(f"  [DEBUG] Support: {support}, Confidence: {confidence}")
+        debug(f"  [DEBUG] Support: {support}, Confidence: {confidence}")
         
         return {
             'headSize': head_size,
@@ -752,7 +759,7 @@ class RuleSupportCalculator:
             head_args = head_atom['args']
             variable = rule_info['free_variables'][0]
             
-            print(f"  [DEBUG] Head relation: {head_relation}, args: {head_args}, variable: {variable}")
+            debug(f"  [DEBUG] Head relation: {head_relation}, args: {head_args}, variable: {variable}")
             
             # 确定常量和变量位置
             if head_args[0] == variable:
@@ -760,13 +767,13 @@ class RuleSupportCalculator:
                 variable_position = 0  # 变量在第一个位置
                 # 形如 relation(X, constant)，需要查找逆关系
                 inverse_relation = self.kg.get_inverse_relation(head_relation)
-                print(f"  [DEBUG] Looking for {inverse_relation}[{constant}]")
+                debug(f"  [DEBUG] Looking for {inverse_relation}[{constant}]")
                 if inverse_relation in self.kg.r2h2t and constant in self.kg.r2h2t[inverse_relation]:
                     result = set(self.kg.r2h2t[inverse_relation][constant])
-                    print(f"  [DEBUG] Found {len(result)} head instances")
+                    debug(f"  [DEBUG] Found {len(result)} head instances")
                     return result
                 else:
-                    print(f"  [DEBUG] No instances found for {inverse_relation}[{constant}]")
+                    debug(f"  [DEBUG] No instances found for {inverse_relation}[{constant}]")
             else:
                 constant = head_args[0]
                 variable_position = 1  # 变量在第二个位置
@@ -774,22 +781,22 @@ class RuleSupportCalculator:
                 if head_relation.startswith('INVERSE_'):
                     # 对于INVERSE_rel(constant, X)，实际查找原关系rel[constant]
                     original_relation = head_relation[8:]  # 去掉INVERSE_前缀
-                    print(f"  [DEBUG] Looking for original relation {original_relation}[{constant}]")
+                    debug(f"  [DEBUG] Looking for original relation {original_relation}[{constant}]")
                     if original_relation in self.kg.r2h2t and constant in self.kg.r2h2t[original_relation]:
                         result = set(self.kg.r2h2t[original_relation][constant])
-                        print(f"  [DEBUG] Found {len(result)} head instances")
+                        debug(f"  [DEBUG] Found {len(result)} head instances")
                         return result
                     else:
-                        print(f"  [DEBUG] No instances found for {original_relation}[{constant}]")
+                        debug(f"  [DEBUG] No instances found for {original_relation}[{constant}]")
                 else:
                     # 普通关系，直接查找
-                    print(f"  [DEBUG] Looking for {head_relation}[{constant}]")
+                    debug(f"  [DEBUG] Looking for {head_relation}[{constant}]")
                     if head_relation in self.kg.r2h2t and constant in self.kg.r2h2t[head_relation]:
                         result = set(self.kg.r2h2t[head_relation][constant])
-                        print(f"  [DEBUG] Found {len(result)} head instances")
+                        debug(f"  [DEBUG] Found {len(result)} head instances")
                         return result
                     else:
-                        print(f"  [DEBUG] No instances found for {head_relation}[{constant}]")
+                        debug(f"  [DEBUG] No instances found for {head_relation}[{constant}]")
             
             return set()
         else:
@@ -802,19 +809,17 @@ class RuleSupportCalculator:
         body_relations = rule_info.get('body_relations', [])
         
         if not body_relations:
-            print(f"  [ERROR] No body relations found!")
+            debug(f"  [ERROR] No body relations found!")
             return set()
         
         if variable_count == 1:
             # 一元规则
             
-            # 先连接所有body关系
+            # 先连接所有body关系，需要考虑变量连接方式
             if len(body_relations) == 1:
                 connected_relation = body_relations[0]
             else:
-                connected_relation = body_relations[0]
-                for i in range(1, len(body_relations)):
-                    connected_relation = self.join_relations(connected_relation, body_relations[i])
+                connected_relation = self._build_unary_connection_path(rule_info)
             
             # 提取body中的常量和变量位置
             if rule_info.get('is_simplified', False):
@@ -823,8 +828,8 @@ class RuleSupportCalculator:
             else:
                 body_constant, body_variable_position = self._extract_unary_body_info(rule_info)
             
-            print(f"  [DEBUG] Body constant: {body_constant}, var_pos: {body_variable_position}")
-            print(f"  [DEBUG] Connected relation: {connected_relation}")
+            debug(f"  [DEBUG] Body constant: {body_constant}, var_pos: {body_variable_position}")
+            debug(f"  [DEBUG] Connected relation: {connected_relation}")
             
             # 对于连接后的关系，直接查询r2h2t
             if body_constant is not None:
@@ -833,22 +838,22 @@ class RuleSupportCalculator:
                     inverse_relation = self.kg.get_inverse_relation(connected_relation)
                     if inverse_relation in self.kg.r2h2t and body_constant in self.kg.r2h2t[inverse_relation]:
                         result = set(self.kg.r2h2t[inverse_relation][body_constant])
-                        print(f"  [DEBUG] Body instances from {inverse_relation}[{body_constant}]: {len(result)}")
+                        debug(f"  [DEBUG] Body instances from {inverse_relation}[{body_constant}]: {len(result)}")
                         return result
                     else:
-                        print(f"  [DEBUG] No instances found for {inverse_relation}[{body_constant}]")
+                        debug(f"  [DEBUG] No instances found for {inverse_relation}[{body_constant}]")
                         return set()
                 else:
                     # 形如 connected_relation(body_constant, X)
                     if connected_relation in self.kg.r2h2t and body_constant in self.kg.r2h2t[connected_relation]:
                         result = set(self.kg.r2h2t[connected_relation][body_constant])
-                        print(f"  [DEBUG] Body instances from {connected_relation}[{body_constant}]: {len(result)}")
+                        debug(f"  [DEBUG] Body instances from {connected_relation}[{body_constant}]: {len(result)}")
                         return result
                     else:
-                        print(f"  [DEBUG] No instances found for {connected_relation}[{body_constant}]")
+                        debug(f"  [DEBUG] No instances found for {connected_relation}[{body_constant}]")
                         return set()
             else:
-                print(f"  [DEBUG] No body constant found, cannot query specific instances")
+                debug(f"  [DEBUG] No body constant found, cannot query specific instances")
                 return set()
         else:
             # 二元规则
@@ -869,7 +874,7 @@ class RuleSupportCalculator:
         if not body_atoms:
             return None, 0
         
-        print(f"  [DEBUG] Extracting from body_atoms: {[(atom.get('relation'), atom.get('args')) for atom in body_atoms]}")
+        debug(f"  [DEBUG] Extracting from body_atoms: {[(atom.get('relation'), atom.get('args')) for atom in body_atoms]}")
         
         # 查找包含常量的原子
         for atom in body_atoms:
@@ -884,12 +889,108 @@ class RuleSupportCalculator:
                 if len(arg) > 1:  # 找到常量
                     # 确定变量位置：常量的对面就是变量位置
                     variable_position = 1 - i  # 如果常量在位置i，变量在位置1-i
-                    print(f"  [DEBUG] Found constant {arg} at position {i}, variable at position {variable_position}")
+                    debug(f"  [DEBUG] Found constant {arg} at position {i}, variable at position {variable_position}")
                     return arg, variable_position
         
         # 如果没有找到常量，返回默认值
-        print(f"  [DEBUG] No constant found in body atoms")
+        debug(f"  [DEBUG] No constant found in body atoms")
         return None, 0
+
+    def _build_unary_connection_path(self, rule_info: Dict) -> str:
+        """
+        为一元规则构建正确的连接路径
+        
+        分析body原子中变量的连接模式，确定需要使用正向还是逆向关系
+        
+        Args:
+            rule_info: 规则信息字典
+            
+        Returns:
+            连接后的关系名称
+        """
+        body_atoms = rule_info.get('body_atoms', [])
+        body_relations = rule_info.get('body_relations', [])
+        
+        if len(body_relations) <= 1:
+            return body_relations[0] if body_relations else ""
+        
+        debug(f"  [DEBUG] Building unary connection path for {len(body_atoms)} atoms")
+        
+        # 检查是否为简写格式
+        is_simplified = rule_info.get('is_simplified', False)
+        
+        if is_simplified:
+            # 简写格式：body_atoms是字符串列表，直接连接body_relations
+            # 对于简写格式，通常已经正确处理了逆关系
+            result = body_relations[0]
+            for i in range(1, len(body_relations)):
+                result = self.join_relations(result, body_relations[i])
+            return result
+        
+        # 完整格式：需要分析变量连接模式
+        if not body_atoms or not isinstance(body_atoms[0], dict):
+            # 如果body_atoms不是字典列表，回退到简单连接
+            result = body_relations[0]
+            for i in range(1, len(body_relations)):
+                result = self.join_relations(result, body_relations[i])
+            return result
+        
+        # 分析变量连接模式
+        # 对于规则如：rel(X,A), rel(/m/const,A)
+        # 需要确定A在两个原子中的位置
+        
+        # 找到共同变量（在多个原子中都出现的变量）
+        var_counts = {}
+        for atom in body_atoms:
+            args = atom.get('args', [])
+            for arg in args:
+                if len(arg) == 1:  # 变量（单字符）
+                    var_counts[arg] = var_counts.get(arg, 0) + 1
+        
+        # 找到真正的连接变量（出现次数 >= 2）
+        connecting_vars = [var for var, count in var_counts.items() if count >= 2]
+        
+        if not connecting_vars:
+            # 没有连接变量，直接连接
+            result = body_atoms[0]['relation']
+            for i in range(1, len(body_atoms)):
+                result = self.join_relations(result, body_atoms[i]['relation'])
+            return result
+        
+        # 使用第一个连接变量
+        connecting_var = connecting_vars[0]
+        debug(f"  [DEBUG] Connecting variable: {connecting_var}")
+        
+        # 找到这个变量在每个原子中的位置
+        var_positions = []
+        for atom in body_atoms:
+            args = atom.get('args', [])
+            position = -1
+            for i, arg in enumerate(args):
+                if arg == connecting_var:
+                    position = i
+                    break
+            var_positions.append(position)
+        
+        debug(f"  [DEBUG] Variable {connecting_var} positions: {var_positions}")
+        
+        # 开始连接
+        result_relation = body_atoms[0]['relation']
+        
+        for i in range(1, len(body_atoms)):
+            next_relation = body_atoms[i]['relation']
+            
+            # 判断是否需要使用逆关系
+            if i-1 < len(var_positions) and i < len(var_positions):
+                # 如果两个原子中连接变量的位置都是1（tail位置），需要将第二个关系取逆
+                if var_positions[i-1] == 1 and var_positions[i] == 1:
+                    next_relation = f"INVERSE_{next_relation}"
+                    debug(f"  [DEBUG] Using inverse relation for atom {i}: {next_relation}")
+            
+            result_relation = self.join_relations(result_relation, next_relation)
+            debug(f"  [DEBUG] Connected: {result_relation}")
+        
+        return result_relation
     
     def calculate_rule_support_bruteforce(self, rule_info: Dict) -> Dict:
         """
@@ -993,7 +1094,7 @@ class RuleSupportCalculator:
         if len(relation_path) == 1:
             return self.kg.get_relation_instances_count(relation_path[0])
         
-        print(f"计算路径实例: {' · '.join(relation_path)}")
+        debug(f"计算路径实例: {' · '.join(relation_path)}")
         
         # 从右到左逐级连接
         current_relation = relation_path[-1]  # 最右边的关系
@@ -1146,7 +1247,7 @@ class RuleSupportCalculator:
                 'instances': self.kg.get_relation_pairs(relation)
             }
         
-        print(f"  身体原子数量: {len(atom_instances)}")
+        debug(f"  身体原子数量: {len(atom_instances)}")
         
         # 生成所有可能的变量绑定组合
         result_instances = set()
@@ -1366,7 +1467,7 @@ def load_dataset(filepath: str) -> KnowledgeGraph:
     """加载数据集到知识图谱"""
     kg = KnowledgeGraph()
     
-    print(f"正在加载数据集: {filepath}")
+    debug(f"正在加载数据集: {filepath}")
     
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"数据集文件不存在: {filepath}")
@@ -1379,20 +1480,20 @@ def load_dataset(filepath: str) -> KnowledgeGraph:
             
             parts = line.split('\t')
             if len(parts) != 3:
-                print(f"警告：第{line_num}行格式错误: {line}")
+                debug(f"警告：第{line_num}行格式错误: {line}")
                 continue
             
             head, relation, tail = parts
             kg.add_triple(head, relation, tail)
             
             if line_num % 50000 == 0:
-                print(f"已加载 {line_num:,} 个三元组...")
+                debug(f"已加载 {line_num:,} 个三元组...")
     
-    print(f"数据集加载完成:")
-    print(f"  三元组数量: {len(kg.triples):,}")
-    print(f"  实体数量: {len(kg.entities):,}")
-    print(f"  原始关系数量: {len([r for r in kg.relations if not r.startswith('INVERSE_')]):,}")
-    print(f"  总关系数量（含逆关系）: {len(kg.relations):,}")
+    debug(f"数据集加载完成:")
+    debug(f"  三元组数量: {len(kg.triples):,}")
+    debug(f"  实体数量: {len(kg.entities):,}")
+    debug(f"  原始关系数量: {len([r for r in kg.relations if not r.startswith('INVERSE_')]):,}")
+    debug(f"  总关系数量（含逆关系）: {len(kg.relations):,}")
     
     return kg
 
@@ -1412,10 +1513,10 @@ def analyze_rule_from_string(rule_str: str, kg: KnowledgeGraph) -> Dict:
         # 解析规则
         head_relation, body_relations, variable_count, rule_info = RuleParser.parse_rule(rule_str)
         
-        print(f"\n分析规则: {rule_str}")
-        print(f"规则类型: {'一元' if variable_count == 1 else '二元'}")
-        print(f"头部关系: {head_relation}")
-        print(f"身体关系: {body_relations}")
+        debug(f"\n分析规则: {rule_str}")
+        debug(f"规则类型: {'一元' if variable_count == 1 else '二元'}")
+        debug(f"头部关系: {head_relation}")
+        debug(f"身体关系: {body_relations}")
         
         # 创建计算器
         calculator = RuleSupportCalculator(kg)
@@ -1426,15 +1527,15 @@ def analyze_rule_from_string(rule_str: str, kg: KnowledgeGraph) -> Dict:
         
         try:
             # 调用连接算法
-            print("=== 连接算法 ===")
+            debug("=== 连接算法 ===")
             join_result = calculator.calculate_rule_support_join(rule_info)
             
             # 调用暴力算法
-            # print("=== 暴力算法 ===")
+            # debug("=== 暴力算法 ===")
             # bruteforce_result = calculator.calculate_rule_support_bruteforce(rule_info)
             
         except Exception as e:
-            print(f"计算失败: {e}")
+            debug(f"计算失败: {e}")
             import traceback
             traceback.print_exc()
             
@@ -1453,7 +1554,7 @@ def analyze_rule_from_string(rule_str: str, kg: KnowledgeGraph) -> Dict:
         }
         
     except Exception as e:
-        print(f"规则分析失败: {e}")
+        debug(f"规则分析失败: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -1465,6 +1566,7 @@ if __name__ == "__main__":
     
     # 要分析的规则示例
     test_rules = [
+        "/award/award_category/winners./award/award_honor/ceremony(X,/m/01xqqp) <= /award/award_category/winners./award/award_honor/ceremony(X,A), /award/award_category/winners./award/award_honor/ceremony(/m/0257w4,A)",
         # 一元规则示例（只有一个自由变量）
         "/award/award_category/winners./award/award_honor/ceremony(X,/m/02cg41) <= /award/award_category/winners./award/award_honor/ceremony(X,/m/05pd94v)",
         
@@ -1496,23 +1598,23 @@ if __name__ == "__main__":
                 results.append(result)
         
         # 输出综合结果
-        print(f"\n{'='*100}")
-        print("综合分析结果")
-        print(f"{'='*100}")
+        debug(f"\n{'='*100}")
+        debug("综合分析结果")
+        debug(f"{'='*100}")
         
         for i, result in enumerate(results, 1):
-            print(f"\n规则 {i}: {result['rule']}")
+            debug(f"\n规则 {i}: {result['rule']}")
             
             if result['join_result']:
-                print(f"  连接算法: {result['join_result']}")
+                debug(f"  连接算法: {result['join_result']}")
             
             if result['bruteforce_result']:
-                print(f"  暴力算法: {result['bruteforce_result']}")
+                debug(f"  暴力算法: {result['bruteforce_result']}")
         
-        print(f"\n{'='*100}")
+        debug(f"\n{'='*100}")
         
     except Exception as e:
-        print(f"错误: {e}")
+        debug(f"错误: {e}")
         import traceback
         traceback.print_exc()
 
