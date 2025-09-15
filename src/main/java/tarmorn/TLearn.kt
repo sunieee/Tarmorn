@@ -875,6 +875,16 @@ object TLearn {
                 writer.write("  \"$atomString\": {\n")
 
                 val formulaEntries = formula2Metric.entries.toList()
+                    .sortedByDescending { it.value.confidence }  // 按confidence降序排序
+                    .let { sorted ->
+                        // 保留confidence >= 0.6的formula，或者前20个（取较多者）
+                        val highConfidenceFormulas = sorted.filter { it.value.confidence >= 0.6 }
+                        if (highConfidenceFormulas.size >= 20) {
+                            highConfidenceFormulas
+                        } else {
+                            sorted.take(20)
+                        }
+                    }
                 formulaEntries.forEachIndexed { formulaIndex, (formula, metric) ->
                     // 输出规则：仅当formula包含恰好两个原子时
                     val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
