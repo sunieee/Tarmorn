@@ -369,10 +369,10 @@ object TLearn {
         val inverseRp = RelationPath.getInverseRelation(rp)
 
         // 要求长度为3的路径必须包含 R·INVERSE_R 子串
-       if (ri > RelationPath.MAX_RELATION_ID && !RelationPath.hasInverseRelation(rp)) {
+//       if (ri > RelationPath.MAX_RELATION_ID && !RelationPath.hasInverseRelation(rp)) {
 //           println("[attemptConnection] Skipping L3 path without inverse relation: ${IdManager.getRelationString(rp)}")
-           return null
-       }
+//           return null
+//       }
 
         // Check if rp or its inverse already exists
         // if (r2tripleSet.containsKey(rp) || r2tripleSet.containsKey(IdManager.getInverseRelation(rp))) {
@@ -398,7 +398,7 @@ object TLearn {
 
     /**
      * Step 4 & 5: Compute supp for a connected relation path
-     * Uses the Cartesian product approach described in the algorithm
+     * Uses the correct connection algorithm matching Python implementation
      */
     fun computeSupp(rp: Long, r1: Long, ri: Long): Int {
         // Get tail entities of r1 (these become connecting entities)
@@ -407,13 +407,9 @@ object TLearn {
         // Get head entities for ri
         val riHeadEntities = r2h2supp[ri]?.keys ?: emptySet()
 
-        // Find intersection of possible connecting entities
-        // val connectingEntities = r1TailEntities.intersect(riHeadEntities)
-        // if (connectingEntities.isEmpty()) return 0
-
+        // Find intersection of possible connecting entities (connection nodes)
         val connectingEntities = r1TailEntities.asSequence()
             .filter { it in riHeadEntities }
-        // if (!connectingEntities.any()) return 0
 
         // Initialize data structures
         val h2tSet = mutableMapOf<Int, MutableSet<Int>>()
@@ -423,7 +419,6 @@ object TLearn {
         val loopSet = mutableSetOf<Int>()
         val instanceSet = mutableSetOf<Int>()
         val inverseSet = mutableSetOf<Int>()
-        var size = 0
         
         for (connectingEntity in connectingEntities) {
             // Get head entities that can reach this connecting entity via r1
@@ -432,36 +427,38 @@ object TLearn {
 
             // Get tail entities reachable from this connecting entity via ri
             val riTailEntities = r2h2tSet[ri]?.get(connectingEntity) ?: emptySet()
-            val sameEntities = r1HeadEntities.intersect(riTailEntities)
 
-            // Object Entity Constraint: Skip if same entities in both head and tail
-            size += r1HeadEntities.size * riTailEntities.size - sameEntities.size
-            // resultHSet.addAll(r1HeadEntities)
-            // resultTSet.addAll(riTailEntities)
-
-            // Update head and tail supp counts
-            for (r1Head in r1HeadEntities)
-                h2supp[r1Head] = h2supp.getOrDefault(r1Head, 0) + riTailEntities.size
-            for (riTail in riTailEntities)
-                t2supp[riTail] = t2supp.getOrDefault(riTail, 0) + r1HeadEntities.size
-
-            // Create Cartesian product and compute MinHash on-the-fly
+            // Create Cartesian product, avoiding duplicates
             for (r1Head in r1HeadEntities) {
                 for (riTail in riTailEntities) {
-                    if (r1Head == riTail) {
-                        loopSet.add(r1Head)
-                    } else {
-                        instanceSet.add(pairHash(r1Head, riTail))
-                        inverseSet.add(pairHash(riTail, r1Head))
-                        // Store h2t mapping only for paths with length < 3
-                        if (pathLength < 3) {
-                            h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
-                            t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
+                    if (r1Head != riTail) { // Object Entity Constraint: avoid self-loops
+                        val pairHashValue = pairHash(r1Head, riTail)
+                        // instanceSet.add() returns true if element was added (not already present)
+                        if (instanceSet.add(pairHashValue)) {
+                            inverseSet.add(pairHash(riTail, r1Head))
+                            
+                            // Store h2t mapping only for paths with length < 3
+                            if (pathLength < 3) {
+                                h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
+                                t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
+                            }
                         }
+                    } else {
+                        loopSet.add(r1Head)
                     }
                 }
             }
         }
+        
+        // Calculate support counts for heads and tails
+        for ((head, tails) in h2tSet) {
+            h2supp[head] = tails.size
+        }
+        for ((tail, heads) in t2hSet) {
+            t2supp[tail] = heads.size
+        }
+        
+        val size = instanceSet.size
 
         // 因为r2supp占用内存较小，且需要记录，频繁访问，直接存储
         val inverseRp = RelationPath.getInverseRelation(rp)
