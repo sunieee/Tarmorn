@@ -39,6 +39,9 @@ data class MyAtom(val relationId: Long, val entityId: Int) {
                 ((entityId == IdManager.getYId() || entityId == IdManager.getXId()) && !IdManager.isInverseRelation(relationId)
                         || entityId > 0)
 
+    val firstRelation: Long
+        get() = if (isL1Atom) relationId else RelationPath.getFirstRelation(relationId)
+
     // 获取当前原子的实例集合（用于精确验证），仅对L2原子有效
     fun getInstanceSet(): Set<Int> {
         require(isL1Atom) { "Instance set only available for L1 atoms" }
@@ -50,11 +53,11 @@ data class MyAtom(val relationId: Long, val entityId: Int) {
             // Unary constant: r(X,c) -> 使用逆关系 r'(c,X) 的 tail 集合
             entityId > 0 -> {
                 val inv = IdManager.getInverseRelation(relationId)
-                TLearn.r2h2tSet[inv]?.get(entityId) ?: emptySet()
+                TLearn.R2h2tSet[inv]?.get(entityId) ?: emptySet()
             }
             // Existence: r(X,·) -> 所有 head 实体
             entityId == 0 ->
-                TLearn.r2h2tSet[relationId]?.keys ?: emptySet()
+                TLearn.R2h2tSet[relationId]?.keys ?: emptySet()
             // Loop: r(X,X) -> 自环实体集合
             entityId == IdManager.getXId() ->
                 TLearn.r2loopSet[relationId] ?: emptySet()

@@ -141,16 +141,11 @@ class RuleParser:
     @staticmethod
     def parse_rule(rule_str: str) -> Tuple[str, List[str], int, Dict]:
         """
-        解析规则字符串，正确识别一元和二元规则
+        解析规则字符串，将所有规则转换为简写模式进行统一处理
         
-        一元规则：规则头和体均只包含一个自由变量
-        - 完整格式：/rel(X,/m/123) <= /rel1(X,A), /rel2(A,/m/456)
-        - 简写格式：/rel(/m/123) <= /rel1·/rel2(/m/456)
-        - 逆关系简写：INVERSE_/rel(/m/123) <= INVERSE_/rel1·/rel2(/m/456)
-        
-        二元规则：规则头和体都包含两个自由变量（X和Y）
-        - 完整格式：/rel(X,Y) <= /rel1(X,A), /rel2(Y,A)
-        - 简写格式：/rel <= /rel1·INVERSE_/rel2
+        统一规则格式为简写模式：
+        - 一元规则：/rel(/m/const) <= /rel1·/rel2(/m/const2)
+        - 二元规则：/rel <= /rel1·INVERSE_/rel2
         
         Args:
             rule_str: 规则字符串
@@ -165,38 +160,411 @@ class RuleParser:
         head_part = head_part.strip()
         body_part = body_part.strip()
         
+        # 首先检测规则类型和转换为简写模式
+        normalized_rule = RuleParser._normalize_to_simplified(head_part, body_part)
+        
         rule_info = {
-            'head_atom_str': head_part,
-            'body_atoms': [],
-            'is_simplified': False,
-            'is_unary': False,
-            'fixed_entity': None,
-            'variable_position': None  # 'head' or 'tail' for unary rules
+            'original_rule': rule_str,
+            'normalized_rule': normalized_rule,
+            'is_simplified': True  # 统一为简写模式
         }
         
-        # 检查是否是简写格式
-        # 简写格式：
-        # 1. 头部没有括号（二元规则）: /rel <= /rel1·/rel2
-        # 2. 头部有括号但只有一个参数（一元规则）: /rel(/m/entity) <= /rel1·/rel2(/m/entity2)
-        is_simplified = True
-        if '(' in head_part and ')' in head_part:
-            # 检查括号中是否有逗号，如果有逗号说明是完整格式
-            paren_content = head_part.split('(')[1].split(')')[0]
-            if ',' in paren_content:
-                is_simplified = False
+        # 解析规范化后的简写规则
+        norm_head, norm_body = normalized_rule.split('<=', 1)
+        norm_head = norm_head.strip()
+        norm_body = norm_body.strip()
         
-        rule_info['is_simplified'] = is_simplified
-        
-        if is_simplified:
-            # 简写格式处理
-            return RuleParser._parse_simplified_rule(head_part, body_part, rule_info)
-        else:
-            # 完整格式处理
-            return RuleParser._parse_full_rule(head_part, body_part, rule_info)
+        return RuleParser._parse_simplified_rule(norm_head, norm_body, rule_info)
     
     @staticmethod
+    def _normalize_to_simplified(head_part: str, body_part: str) -> str:
+        """
+        将完整格式的规则转换为简写格式
+        
+        转换规则：
+        1. 一元规则：rel(X,/m/const) <= body1(X,A), body2(A,/m/const2)
+           -> rel(/m/const) <= body_path(/m/const2) 或 INVERSE_rel(/m/const) <= body_path(/m/const2)
+        
+        2. 二元规则：rel(X,Y) <= body1(X,A), body2(Y,A)  
+           -> rel <= body_path
+        
+        Args:
+            head_part: 头部字符串
+            body_part: 身体字符串
+            
+        Returns:
+            规范化后的简写规则字符串
+        """
+        # 检查是否已经是简写格式
+        if '(' not in head_part or ')' not in head_part:
+            # 二元规则简写格式
+            return f"{head_part} <= {body_part}"
+        
+        # 检查头部是否有逗号
+        paren_content = head_part.split('(')[1].split(')')[0]
+        if ',' not in paren_content:
+            # 一元规则简写格式
+            return f"{head_part} <= {body_part}"
+        
+        # 完整格式，需要转换
+        debug(f"[DEBUG] Converting to simplified format: {head_part} <= {body_part}")
+        
+        # 解析头部
+        head_relation = head_part.split('(')[0].strip()
+        head_args = [arg.strip() for arg in paren_content.split(',')]
+        
+        # 解析身体原子
+        body_atoms = RuleParser._parse_body_atoms(body_part)
+        
+        # 分析变量
+        all_vars = set()
+        constants = set()
+        for arg in head_args:
+            if len(arg) == 1:  # 变量
+                all_vars.add(arg)
+            else:  # 常量
+                constants.add(arg)
+        
+        for atom in body_atoms:
+            if '(' in atom and ')' in atom:
+                atom_args = RuleParser._extract_variables(atom)
+                for arg in atom_args:
+                    if len(arg) == 1:  # 变量
+                        all_vars.add(arg)
+                    else:  # 常量
+                        constants.add(arg)
+        
+        # 确定规则类型
+        free_vars = {var for var in all_vars if var in head_args}
+        
+        if len(free_vars) == 1:
+            # 一元规则
+            return RuleParser._convert_unary_to_simplified(head_relation, head_args, body_atoms, free_vars)
+        else:
+            # 二元规则
+            return RuleParser._convert_binary_to_simplified(head_relation, head_args, body_atoms, free_vars)
+    
+    @staticmethod
+    def _convert_unary_to_simplified(head_relation: str, head_args: List[str], 
+                                   body_atoms: List[str], free_vars: Set[str]) -> str:
+        """
+        将一元规则转换为简写格式
+        
+        例如：rel(X,/m/const) <= body1(X,A), body2(A,/m/const2)
+        转换为：rel(/m/const) <= body_path(/m/const2) 或 INVERSE_rel(/m/const) <= body_path(/m/const2)
+        """
+        free_var = list(free_vars)[0]
+        
+        # 找到头部的常量
+        head_constant = None
+        free_var_pos_in_head = -1
+        for i, arg in enumerate(head_args):
+            if arg == free_var:
+                free_var_pos_in_head = i
+            elif len(arg) > 1:  # 常量
+                head_constant = arg
+        
+        debug(f"[DEBUG] Unary conversion: free_var={free_var}, pos={free_var_pos_in_head}, constant={head_constant}")
+        
+        # 构建body路径
+        body_path, body_constant = RuleParser._build_unary_body_path(body_atoms, free_var)
+        
+        # 确定头部的简写形式
+        if free_var_pos_in_head == 0:
+            # rel(X, /m/const) -> rel(/m/const)
+            simplified_head = f"{head_relation}({head_constant})"
+        else:
+            # rel(/m/const, X) -> INVERSE_rel(/m/const)
+            simplified_head = f"INVERSE_{head_relation}({head_constant})"
+        
+        # 构建完整的简写规则
+        if body_constant:
+            simplified_body = f"{body_path}({body_constant})"
+        else:
+            simplified_body = body_path
+        
+        result = f"{simplified_head} <= {simplified_body}"
+        debug(f"[DEBUG] Unary simplified result: {result}")
+        return result
+    
+    @staticmethod
+    def _build_unary_body_path(body_atoms: List[str], free_var: str) -> Tuple[str, Optional[str]]:
+        """
+        构建一元规则的body路径
+        
+        分析body原子中的连接方式，确定正确的关系路径和常量
+        
+        例如：body1(X,A), body2(A,/m/const) 
+        -> X通过A连接到/m/const，路径为 body1·body2，常量为/m/const
+        
+        Args:
+            body_atoms: body原子列表
+            free_var: 自由变量
+            
+        Returns:
+            (body_path, body_constant)
+        """
+        if not body_atoms:
+            return "", None
+        
+        # 解析每个原子
+        parsed_atoms = []
+        body_constant = None
+        
+        for atom in body_atoms:
+            relation = RuleParser._extract_relation_from_atom(atom)
+            args = RuleParser._extract_variables(atom)
+            parsed_atoms.append({'relation': relation, 'args': args})
+            
+            # 查找常量
+            for arg in args:
+                if len(arg) > 1:  # 常量
+                    body_constant = arg
+        
+        debug(f"[DEBUG] Building unary body path: atoms={[(a['relation'], a['args']) for a in parsed_atoms]}")
+        debug(f"[DEBUG] Free var: {free_var}, Body constant: {body_constant}")
+        
+        if len(parsed_atoms) == 1:
+            # 单个原子
+            atom = parsed_atoms[0]
+            args = atom['args']
+            
+            # 确定自由变量的位置
+            free_var_pos = -1
+            for i, arg in enumerate(args):
+                if arg == free_var:
+                    free_var_pos = i
+                    break
+            
+            if free_var_pos == 0:
+                # 自由变量在head位置，直接使用关系
+                return atom['relation'], body_constant
+            else:
+                # 自由变量在tail位置，使用逆关系
+                return f"INVERSE_{atom['relation']}", body_constant
+        
+        # 多个原子，需要分析连接
+        return RuleParser._analyze_unary_connection(parsed_atoms, free_var, body_constant)
+    
+    @staticmethod
+    def _analyze_unary_connection(parsed_atoms: List[Dict], free_var: str, body_constant: str) -> Tuple[str, str]:
+        """
+        分析一元规则中多个原子的连接方式
+        
+        目标：构建从自由变量到常量的路径
+        
+        例如：body1(X,A), body2(A,/m/const)
+        - X在body1的位置0，A在位置1
+        - A在body2的位置0，常量在位置1  
+        - 连接：X -> A -> /m/const
+        - 路径：body1 ∘ body2
+        
+        Args:
+            parsed_atoms: 解析后的原子列表
+            free_var: 自由变量
+            body_constant: body中的常量
+            
+        Returns:
+            (relation_path, constant)
+        """
+        if len(parsed_atoms) <= 1:
+            atom = parsed_atoms[0]
+            return atom['relation'], body_constant
+        
+        # 找到包含自由变量的原子（起始原子）
+        start_atom_idx = -1
+        for i, atom in enumerate(parsed_atoms):
+            if free_var in atom['args']:
+                start_atom_idx = i
+                break
+        
+        if start_atom_idx == -1:
+            # 没找到包含自由变量的原子，使用第一个
+            start_atom_idx = 0
+        
+        # 从起始原子开始构建路径
+        path_relations = []
+        current_atom = parsed_atoms[start_atom_idx]
+        used_atoms = {start_atom_idx}
+        
+        # 确定自由变量在起始原子中的位置
+        free_var_pos = -1
+        for i, arg in enumerate(current_atom['args']):
+            if arg == free_var:
+                free_var_pos = i
+                break
+        
+        # 根据自由变量位置决定是否需要逆关系
+        if free_var_pos == 0:
+            # 自由变量在head位置，直接使用关系
+            path_relations.append(current_atom['relation'])
+            current_var = current_atom['args'][1]  # 连接变量
+        else:
+            # 自由变量在tail位置，使用逆关系
+            path_relations.append(f"INVERSE_{current_atom['relation']}")
+            current_var = current_atom['args'][0]  # 连接变量
+        
+        debug(f"[DEBUG] Starting path with {path_relations[0]}, current_var={current_var}")
+        
+        # 继续连接剩余原子
+        while len(used_atoms) < len(parsed_atoms):
+            found_next = False
+            
+            for i, atom in enumerate(parsed_atoms):
+                if i in used_atoms:
+                    continue
+                
+                if current_var in atom['args']:
+                    used_atoms.add(i)
+                    
+                    # 确定连接变量在当前原子中的位置
+                    var_pos = atom['args'].index(current_var)
+                    
+                    if var_pos == 0:
+                        # 连接变量在head位置，直接使用关系
+                        path_relations.append(atom['relation'])
+                        # 下一个变量是tail位置的变量
+                        next_var = atom['args'][1] if len(atom['args']) > 1 else None
+                    else:
+                        # 连接变量在tail位置，使用逆关系
+                        path_relations.append(f"INVERSE_{atom['relation']}")
+                        # 下一个变量是head位置的变量
+                        next_var = atom['args'][0]
+                    
+                    debug(f"[DEBUG] Added {path_relations[-1]}, next_var={next_var}")
+                    current_var = next_var
+                    found_next = True
+                    break
+            
+            if not found_next:
+                break
+        
+        # 构建最终路径
+        final_path = '·'.join(path_relations)
+        debug(f"[DEBUG] Final unary path: {final_path}")
+        
+        return final_path, body_constant
+    
+    @staticmethod
+    def _convert_binary_to_simplified(head_relation: str, head_args: List[str], 
+                                    body_atoms: List[str], free_vars: Set[str]) -> str:
+        """
+        将二元规则转换为简写格式
+        
+        例如：rel(X,Y) <= body1(X,A), body2(Y,A)
+        转换为：rel <= body1·INVERSE_body2
+        """
+        if len(free_vars) != 2:
+            # 如果不是严格的二元规则，返回原始格式
+            return f"{head_relation}({','.join(head_args)}) <= {', '.join(body_atoms)}"
+        
+        # 构建body路径
+        body_path = RuleParser._build_binary_body_path(body_atoms, list(free_vars))
+        
+        result = f"{head_relation} <= {body_path}"
+        debug(f"[DEBUG] Binary simplified result: {result}")
+        return result
+    
+    @staticmethod
+    def _build_binary_body_path(body_atoms: List[str], free_vars: List[str]) -> str:
+        """
+        构建二元规则的body路径
+        
+        分析连接模式，构建正确的关系路径
+        例如：
+        - body1(X,A), body2(Y,A) -> body1·INVERSE_body2 (X->A<-Y)
+        - body1(X,A), body2(A,B), body3(Y,B) -> body1·body2·INVERSE_body3 (X->A->B<-Y)
+        """
+        if len(body_atoms) <= 1:
+            return body_atoms[0] if body_atoms else ""
+        
+        # 解析原子
+        parsed_atoms = []
+        for atom in body_atoms:
+            relation = RuleParser._extract_relation_from_atom(atom)
+            args = RuleParser._extract_variables(atom)
+            parsed_atoms.append({'relation': relation, 'args': args})
+        
+        debug(f"[DEBUG] Building binary body path: atoms={[(a['relation'], a['args']) for a in parsed_atoms]}")
+        debug(f"[DEBUG] Free vars: {free_vars}")
+        
+        if len(free_vars) != 2:
+            # 简化处理：直接连接所有关系
+            return '·'.join([atom['relation'] for atom in parsed_atoms])
+        
+        # 分析连接模式：从X开始，找到到Y的路径
+        X, Y = free_vars[0], free_vars[1]
+        
+        # 找到包含X的原子作为起点
+        start_atom_idx = -1
+        for i, atom in enumerate(parsed_atoms):
+            if X in atom['args']:
+                start_atom_idx = i
+                break
+        
+        if start_atom_idx == -1:
+            # 没找到包含X的原子，使用简化处理
+            return '·'.join([atom['relation'] for atom in parsed_atoms])
+        
+        # 构建从X到Y的连接路径
+        path_relations = []
+        current_atom = parsed_atoms[start_atom_idx]
+        used_atoms = {start_atom_idx}
+        
+        # 确定X在起始原子中的位置
+        x_pos = current_atom['args'].index(X)
+        
+        if x_pos == 0:
+            # X在head位置，直接使用关系
+            path_relations.append(current_atom['relation'])
+            current_var = current_atom['args'][1]  # 连接变量
+        else:
+            # X在tail位置，使用逆关系
+            path_relations.append(f"INVERSE_{current_atom['relation']}")
+            current_var = current_atom['args'][0]  # 连接变量
+        
+        debug(f"[DEBUG] Starting from {X} with {path_relations[0]}, current_var={current_var}")
+        
+        # 继续连接直到找到Y
+        while current_var != Y and len(used_atoms) < len(parsed_atoms):
+            found_next = False
+            
+            for i, atom in enumerate(parsed_atoms):
+                if i in used_atoms:
+                    continue
+                
+                if current_var in atom['args']:
+                    used_atoms.add(i)
+                    
+                    # 确定连接变量在当前原子中的位置
+                    var_pos = atom['args'].index(current_var)
+                    
+                    if var_pos == 0:
+                        # 连接变量在head位置，直接使用关系
+                        path_relations.append(atom['relation'])
+                        next_var = atom['args'][1]
+                    else:
+                        # 连接变量在tail位置，使用逆关系
+                        path_relations.append(f"INVERSE_{atom['relation']}")
+                        next_var = atom['args'][0]
+                    
+                    debug(f"[DEBUG] {current_var} -> {next_var} via {path_relations[-1]}")
+                    current_var = next_var
+                    found_next = True
+                    break
+            
+            if not found_next:
+                debug(f"[DEBUG] Cannot find connection from {current_var}")
+                break
+        
+        final_path = '·'.join(path_relations)
+        debug(f"[DEBUG] Final binary path: {final_path}")
+        
+        return final_path
+
+    @staticmethod
     def _parse_simplified_rule(head_part: str, body_part: str, rule_info: Dict) -> Tuple[str, List[str], int, Dict]:
-        """解析简写格式规则"""
+        """解析简写格式规则，使用统一的数据结构"""
         # 提取头部关系和可能的固定实体
         head_relation, fixed_entity, var_pos = RuleParser._parse_simplified_head(head_part)
         
@@ -207,36 +575,41 @@ class RuleParser:
         if fixed_entity or body_constant:
             # 一元规则：有固定实体
             variable_count = 1
-            rule_info['is_unary'] = True
-            rule_info['fixed_entity'] = fixed_entity
-            rule_info['variable_position'] = var_pos
-            rule_info['body_constant'] = body_constant
-            rule_info['body_variable_position'] = 0  # 简写格式中默认变量在第一个位置
+            rule_info.update({
+                'is_unary': True,
+                'variable_count': 1,
+                'head_relation': head_relation,
+                'head_constant': fixed_entity,
+                'body_relations': body_relations,
+                'body_constant': body_constant,
+                'free_variable': 'X'  # 统一使用X作为自由变量名
+            })
             
-            # 构建一元规则的head_atom结构
-            if var_pos == 'tail':
-                rule_info['head_atom'] = {
-                    'relation': head_relation,
-                    'args': ['X', fixed_entity]  # X是自由变量，固定实体在tail位置
-                }
-            else:
-                rule_info['head_atom'] = {
-                    'relation': head_relation,
-                    'args': [fixed_entity, 'X']  # 固定实体在head位置，X是自由变量
-                }
+            # 构建标准的head_atom结构
+            rule_info['head_atom'] = {
+                'relation': head_relation,
+                'args': ['X', fixed_entity] if not head_relation.startswith('INVERSE_') else [fixed_entity, 'X']
+            }
+            rule_info['head_variables'] = ['X', fixed_entity] if not head_relation.startswith('INVERSE_') else [fixed_entity, 'X']
             rule_info['free_variables'] = ['X']
         else:
             # 二元规则：没有固定实体
             variable_count = 2
+            rule_info.update({
+                'is_unary': False,
+                'variable_count': 2,
+                'head_relation': head_relation,
+                'head_constant': None,
+                'body_relations': body_relations,
+                'body_constant': None,
+                'free_variables': ['X', 'Y']
+            })
+            
             rule_info['head_atom'] = {
                 'relation': head_relation,
                 'args': ['X', 'Y']
             }
-            rule_info['free_variables'] = ['X', 'Y']
-        
-        rule_info['body_atoms'] = body_relations
-        rule_info['body_relations'] = body_relations
-        rule_info['variable_count'] = variable_count
+            rule_info['head_variables'] = ['X', 'Y']
         
         return head_relation, body_relations, variable_count, rule_info
     
@@ -748,55 +1121,38 @@ class RuleSupportCalculator:
         }
     
     def _get_head_instances(self, rule_info: Dict) -> Set:
-        """获取头部实例集合"""
-        head_atom = rule_info['head_atom']
-        head_relation = head_atom['relation']
-        
+        """获取头部实例集合 - 使用统一的简写格式处理"""
+        head_relation = rule_info.get('head_relation')
         variable_count = rule_info.get('variable_count', 0)
         
         if variable_count == 1:
             # 一元规则：返回变量的所有可能值
-            head_args = head_atom['args']
-            variable = rule_info['free_variables'][0]
+            head_constant = rule_info.get('head_constant')
             
-            debug(f"  [DEBUG] Head relation: {head_relation}, args: {head_args}, variable: {variable}")
+            debug(f"  [DEBUG] Head relation: {head_relation}, constant: {head_constant}")
             
-            # 确定常量和变量位置
-            if head_args[0] == variable:
-                constant = head_args[1]
-                variable_position = 0  # 变量在第一个位置
-                # 形如 relation(X, constant)，需要查找逆关系
-                inverse_relation = self.kg.get_inverse_relation(head_relation)
-                debug(f"  [DEBUG] Looking for {inverse_relation}[{constant}]")
-                if inverse_relation in self.kg.r2h2t and constant in self.kg.r2h2t[inverse_relation]:
-                    result = set(self.kg.r2h2t[inverse_relation][constant])
+            if head_relation.startswith('INVERSE_'):
+                # INVERSE_relation(constant) 表示 relation(constant, X)
+                # 要获取X的值，查找 relation[constant]
+                original_relation = head_relation[8:]  # 去掉INVERSE_前缀
+                debug(f"  [DEBUG] Looking for {original_relation}[{head_constant}]")
+                if original_relation in self.kg.r2h2t and head_constant in self.kg.r2h2t[original_relation]:
+                    result = set(self.kg.r2h2t[original_relation][head_constant])
                     debug(f"  [DEBUG] Found {len(result)} head instances")
                     return result
                 else:
-                    debug(f"  [DEBUG] No instances found for {inverse_relation}[{constant}]")
+                    debug(f"  [DEBUG] No instances found for {original_relation}[{head_constant}]")
             else:
-                constant = head_args[0]
-                variable_position = 1  # 变量在第二个位置
-                # 形如 relation(constant, X)
-                if head_relation.startswith('INVERSE_'):
-                    # 对于INVERSE_rel(constant, X)，实际查找原关系rel[constant]
-                    original_relation = head_relation[8:]  # 去掉INVERSE_前缀
-                    debug(f"  [DEBUG] Looking for original relation {original_relation}[{constant}]")
-                    if original_relation in self.kg.r2h2t and constant in self.kg.r2h2t[original_relation]:
-                        result = set(self.kg.r2h2t[original_relation][constant])
-                        debug(f"  [DEBUG] Found {len(result)} head instances")
-                        return result
-                    else:
-                        debug(f"  [DEBUG] No instances found for {original_relation}[{constant}]")
+                # relation(constant) 表示 relation(X, constant)
+                # 要获取X的值，查找 INVERSE_relation[constant]
+                inverse_relation = self.kg.get_inverse_relation(head_relation)
+                debug(f"  [DEBUG] Looking for {inverse_relation}[{head_constant}]")
+                if inverse_relation in self.kg.r2h2t and head_constant in self.kg.r2h2t[inverse_relation]:
+                    result = set(self.kg.r2h2t[inverse_relation][head_constant])
+                    debug(f"  [DEBUG] Found {len(result)} head instances")
+                    return result
                 else:
-                    # 普通关系，直接查找
-                    debug(f"  [DEBUG] Looking for {head_relation}[{constant}]")
-                    if head_relation in self.kg.r2h2t and constant in self.kg.r2h2t[head_relation]:
-                        result = set(self.kg.r2h2t[head_relation][constant])
-                        debug(f"  [DEBUG] Found {len(result)} head instances")
-                        return result
-                    else:
-                        debug(f"  [DEBUG] No instances found for {head_relation}[{constant}]")
+                    debug(f"  [DEBUG] No instances found for {inverse_relation}[{head_constant}]")
             
             return set()
         else:
@@ -804,59 +1160,56 @@ class RuleSupportCalculator:
             return self.kg.get_relation_pairs(head_relation)
     
     def _get_body_instances(self, rule_info: Dict) -> Set:
-        """获取身体实例集合"""
+        """获取身体实例集合 - 使用统一的简写格式处理"""
         variable_count = rule_info.get('variable_count', 0)
-        body_relations = rule_info.get('body_relations', [])
-        
-        if not body_relations:
-            debug(f"  [ERROR] No body relations found!")
-            return set()
         
         if variable_count == 1:
             # 一元规则
+            body_relations = rule_info.get('body_relations', [])
+            body_constant = rule_info.get('body_constant')
             
-            # 先连接所有body关系，需要考虑变量连接方式
+            if not body_relations:
+                debug(f"  [ERROR] No body relations found!")
+                return set()
+            
+            # 连接所有body关系
             if len(body_relations) == 1:
                 connected_relation = body_relations[0]
             else:
-                connected_relation = self._build_unary_connection_path(rule_info)
+                connected_relation = body_relations[0]
+                for i in range(1, len(body_relations)):
+                    connected_relation = self.join_relations(connected_relation, body_relations[i])
             
-            # 提取body中的常量和变量位置
-            if rule_info.get('is_simplified', False):
-                body_constant = rule_info.get('body_constant')
-                body_variable_position = rule_info.get('body_variable_position')
-            else:
-                body_constant, body_variable_position = self._extract_unary_body_info(rule_info)
-            
-            debug(f"  [DEBUG] Body constant: {body_constant}, var_pos: {body_variable_position}")
             debug(f"  [DEBUG] Connected relation: {connected_relation}")
+            debug(f"  [DEBUG] Body constant: {body_constant}")
             
-            # 对于连接后的关系，直接查询r2h2t
+            # 获取实例
             if body_constant is not None:
-                if body_variable_position == 0:
-                    # 形如 connected_relation(X, body_constant)，需要逆关系
-                    inverse_relation = self.kg.get_inverse_relation(connected_relation)
-                    if inverse_relation in self.kg.r2h2t and body_constant in self.kg.r2h2t[inverse_relation]:
-                        result = set(self.kg.r2h2t[inverse_relation][body_constant])
-                        debug(f"  [DEBUG] Body instances from {inverse_relation}[{body_constant}]: {len(result)}")
-                        return result
-                    else:
-                        debug(f"  [DEBUG] No instances found for {inverse_relation}[{body_constant}]")
-                        return set()
+                # 有常量的情况：查询特定的实例
+                # 对于简写格式，body_constant通常在tail位置
+                # 所以需要使用逆关系来查询：INVERSE_connected_relation[body_constant]
+                inverse_connected_relation = self.kg.get_inverse_relation(connected_relation)
+                debug(f"  [DEBUG] Using inverse relation: {inverse_connected_relation}")
+                
+                if inverse_connected_relation in self.kg.r2h2t and body_constant in self.kg.r2h2t[inverse_connected_relation]:
+                    result = set(self.kg.r2h2t[inverse_connected_relation][body_constant])
+                    debug(f"  [DEBUG] Body instances from {inverse_connected_relation}[{body_constant}]: {len(result)}")
+                    return result
                 else:
-                    # 形如 connected_relation(body_constant, X)
-                    if connected_relation in self.kg.r2h2t and body_constant in self.kg.r2h2t[connected_relation]:
-                        result = set(self.kg.r2h2t[connected_relation][body_constant])
-                        debug(f"  [DEBUG] Body instances from {connected_relation}[{body_constant}]: {len(result)}")
-                        return result
-                    else:
-                        debug(f"  [DEBUG] No instances found for {connected_relation}[{body_constant}]")
-                        return set()
+                    debug(f"  [DEBUG] No instances found for {inverse_connected_relation}[{body_constant}]")
+                    return set()
             else:
-                debug(f"  [DEBUG] No body constant found, cannot query specific instances")
-                return set()
+                # 没有常量的情况：获取整个关系的所有head实体
+                if connected_relation in self.kg.r2h2t:
+                    result = set(self.kg.r2h2t[connected_relation].keys())
+                    debug(f"  [DEBUG] Body instances from {connected_relation} (all heads): {len(result)}")
+                    return result
+                else:
+                    debug(f"  [DEBUG] No instances found for relation {connected_relation}")
+                    return set()
         else:
             # 二元规则
+            body_relations = rule_info.get('body_relations', [])
             return self.get_binary_instances_join(body_relations)
     
     def _extract_unary_body_info(self, rule_info: Dict) -> Tuple[str, int]:
@@ -896,102 +1249,6 @@ class RuleSupportCalculator:
         debug(f"  [DEBUG] No constant found in body atoms")
         return None, 0
 
-    def _build_unary_connection_path(self, rule_info: Dict) -> str:
-        """
-        为一元规则构建正确的连接路径
-        
-        分析body原子中变量的连接模式，确定需要使用正向还是逆向关系
-        
-        Args:
-            rule_info: 规则信息字典
-            
-        Returns:
-            连接后的关系名称
-        """
-        body_atoms = rule_info.get('body_atoms', [])
-        body_relations = rule_info.get('body_relations', [])
-        
-        if len(body_relations) <= 1:
-            return body_relations[0] if body_relations else ""
-        
-        debug(f"  [DEBUG] Building unary connection path for {len(body_atoms)} atoms")
-        
-        # 检查是否为简写格式
-        is_simplified = rule_info.get('is_simplified', False)
-        
-        if is_simplified:
-            # 简写格式：body_atoms是字符串列表，直接连接body_relations
-            # 对于简写格式，通常已经正确处理了逆关系
-            result = body_relations[0]
-            for i in range(1, len(body_relations)):
-                result = self.join_relations(result, body_relations[i])
-            return result
-        
-        # 完整格式：需要分析变量连接模式
-        if not body_atoms or not isinstance(body_atoms[0], dict):
-            # 如果body_atoms不是字典列表，回退到简单连接
-            result = body_relations[0]
-            for i in range(1, len(body_relations)):
-                result = self.join_relations(result, body_relations[i])
-            return result
-        
-        # 分析变量连接模式
-        # 对于规则如：rel(X,A), rel(/m/const,A)
-        # 需要确定A在两个原子中的位置
-        
-        # 找到共同变量（在多个原子中都出现的变量）
-        var_counts = {}
-        for atom in body_atoms:
-            args = atom.get('args', [])
-            for arg in args:
-                if len(arg) == 1:  # 变量（单字符）
-                    var_counts[arg] = var_counts.get(arg, 0) + 1
-        
-        # 找到真正的连接变量（出现次数 >= 2）
-        connecting_vars = [var for var, count in var_counts.items() if count >= 2]
-        
-        if not connecting_vars:
-            # 没有连接变量，直接连接
-            result = body_atoms[0]['relation']
-            for i in range(1, len(body_atoms)):
-                result = self.join_relations(result, body_atoms[i]['relation'])
-            return result
-        
-        # 使用第一个连接变量
-        connecting_var = connecting_vars[0]
-        debug(f"  [DEBUG] Connecting variable: {connecting_var}")
-        
-        # 找到这个变量在每个原子中的位置
-        var_positions = []
-        for atom in body_atoms:
-            args = atom.get('args', [])
-            position = -1
-            for i, arg in enumerate(args):
-                if arg == connecting_var:
-                    position = i
-                    break
-            var_positions.append(position)
-        
-        debug(f"  [DEBUG] Variable {connecting_var} positions: {var_positions}")
-        
-        # 开始连接
-        result_relation = body_atoms[0]['relation']
-        
-        for i in range(1, len(body_atoms)):
-            next_relation = body_atoms[i]['relation']
-            
-            # 判断是否需要使用逆关系
-            if i-1 < len(var_positions) and i < len(var_positions):
-                # 如果两个原子中连接变量的位置都是1（tail位置），需要将第二个关系取逆
-                if var_positions[i-1] == 1 and var_positions[i] == 1:
-                    next_relation = f"INVERSE_{next_relation}"
-                    debug(f"  [DEBUG] Using inverse relation for atom {i}: {next_relation}")
-            
-            result_relation = self.join_relations(result_relation, next_relation)
-            debug(f"  [DEBUG] Connected: {result_relation}")
-        
-        return result_relation
-    
     def calculate_rule_support_bruteforce(self, rule_info: Dict) -> Dict:
         """
         使用暴力算法计算规则支持度
@@ -1514,6 +1771,7 @@ def analyze_rule_from_string(rule_str: str, kg: KnowledgeGraph) -> Dict:
         head_relation, body_relations, variable_count, rule_info = RuleParser.parse_rule(rule_str)
         
         debug(f"\n分析规则: {rule_str}")
+        debug(f"规范化规则: {rule_info.get('normalized_rule', rule_str)}")
         debug(f"规则类型: {'一元' if variable_count == 1 else '二元'}")
         debug(f"头部关系: {head_relation}")
         debug(f"身体关系: {body_relations}")
@@ -1583,7 +1841,12 @@ if __name__ == "__main__":
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/ceremony(X,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(A,B), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)",
         
         # 简写格式的二元规则（传统格式）
-        "/award/award_category/winners./award/award_honor/ceremony <= /award/award_category/winners./award/award_honor/ceremony·/award/award_ceremony/awards_presented./award/award_honor/award_winner·INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner"
+        "/award/award_category/winners./award/award_honor/ceremony <= /award/award_category/winners./award/award_honor/ceremony·/award/award_ceremony/awards_presented./award/award_honor/award_winner·INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner",
+
+        "/award/award_category/winners./award/award_honor/ceremony(/m/0gs96,X) <= /award/award_category/winners./award/award_honor/ceremony(A,X), /award/award_category/nominees./award/award_nomination/nominated_for(A,/m/02r79_h)",
+        "/award/award_category/winners./award/award_honor/ceremony(/m/0f4x7,X) <= /award/award_category/winners./award/award_honor/ceremony(A,X), /award/award_nominee/award_nominations./award/award_nomination/award(/m/02_fj,A)",
+        "/award/award_category/winners./award/award_honor/ceremony(/m/01ck6v,Y) <= /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,A)",
+        "/award/award_category/winners./award/award_honor/ceremony(X,/m/07z31v) <= /award/award_nominee/award_nominations./award/award_nomination/award(A,X)"
     ]
 
     try:

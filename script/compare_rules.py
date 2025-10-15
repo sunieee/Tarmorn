@@ -12,38 +12,38 @@ from collections import defaultdict
 # 导入analysis_rule模块
 from analysis_rule import load_dataset, analyze_rule_from_string
 
-def parse_rule_line(line: str) -> Tuple[str, str, float, str]:
+def parse_rule_line(line: str) -> Tuple[str, Dict, str]:
     """
     解析规则行
-    返回: (头部关系, 完整规则, 置信度, 原始行)
+    返回: (完整规则, 指标字典, 原始行)
     """
     parts = line.strip().split('\t')
     if len(parts) < 4:
-        return None, None, 0.0, line
+        return None, None, line
     
     try:
-        count1 = int(parts[0])
-        count2 = int(parts[1])
+        count1 = int(parts[0])  # bodySize
+        count2 = int(parts[1])  # support
         confidence = float(parts[2])
         rule = parts[3]
         
-        # 提取规则头部（<=左边的部分）
-        if '<=' in rule:
-            head_part = rule.split('<=')[0].strip()
-            # 提取关系名（去掉变量和实体）
-            match = re.match(r'([^(]+)', head_part)
-            if match:
-                relation = match.group(1).strip()
-                return relation, rule, confidence, line
+        # 构建指标字典
+        metrics = {
+            'bodySize': count1,
+            'support': count2,
+            'confidence': confidence
+        }
+        
+        return rule, metrics, line
     except (ValueError, IndexError):
         pass
     
-    return None, None, 0.0, line
+    return None, None, line
 
-def load_rules_with_target_relation(file_path: str, target_relation: str) -> Dict[str, List[Tuple[str, float, str]]]:
+def load_rules_with_target_relation(file_path: str, target_relation: str) -> Dict[str, List[Tuple[str, Dict, str]]]:
     """
     加载文件中包含目标关系作为头部的所有规则
-    返回: {标准化规则: [(原始规则, 置信度, 原始行)]}
+    返回: {标准化规则: [(原始规则, 指标字典, 原始行)]}
     """
     rules_dict = defaultdict(list)
     
@@ -59,13 +59,14 @@ def load_rules_with_target_relation(file_path: str, target_relation: str) -> Dic
                 if line_count % 100000 == 0:
                     print(f"  Processed {line_count} lines, found {target_rule_count} target rules")
                 
-                relation, rule, confidence, original_line = parse_rule_line(line)
+                rule, metrics, original_line = parse_rule_line(line)
                 
-                if relation and relation == target_relation:
+                # 使用 rule.startswith(target_relation) 来判断
+                if rule and rule.startswith(target_relation):
                     target_rule_count += 1
                     # 标准化规则（移除置信度差异，便于比较）
                     normalized_rule = normalize_rule(rule)
-                    rules_dict[normalized_rule].append((rule, confidence, original_line.strip()))
+                    rules_dict[normalized_rule].append((rule, metrics, original_line.strip()))
             
             print(f"  Total lines: {line_count}")
             print(f"  Found {target_rule_count} rules with target relation")
@@ -136,54 +137,57 @@ def compare_rules(rules1: Dict[str, List], rules2: Dict[str, List], file1_name: 
         print(f"\n共同规则示例 (前{topN}个):")
         for i, rule in enumerate(list(common_rules)[:topN]):
             print(f"  {i+1}. {rule}")
-            # 显示置信度比较
-            conf1 = rules1[rule][0][1] if rules1[rule] else "N/A"
-            conf2 = rules2[rule][0][1] if rules2[rule] else "N/A"
-            print(f"      {file1_name} 置信度: {conf1}")
-            print(f"      {file2_name} 置信度: {conf2}")
+            # 显示指标比较
+            metrics1 = rules1[rule][0][1] if rules1[rule] else {}
+            metrics2 = rules2[rule][0][1] if rules2[rule] else {}
+            print(f"      {file1_name} 指标: {metrics1}")
+            print(f"      {file2_name} 指标: {metrics2}")
             
             # 计算真实支持度
             if kg is not None:
                 real_result = analyze_rule_from_string(rule, kg)
-                print(f"      真实结果: {real_result['join_result']}")
+                if real_result:
+                    print(f"      真实结果: {real_result['join_result']}")
             print()
     
     if only_in_1:
         print(f"\n仅在 {file1_name} 中的规则示例 (前{topN}个):")
         for i, rule in enumerate(list(only_in_1)[:topN]):
             print(f"  {i+1}. {rule}")
-            conf1 = rules1[rule][0][1] if rules1[rule] else "N/A"
-            print(f"      置信度: {conf1}")
+            metrics1 = rules1[rule][0][1] if rules1[rule] else {}
+            print(f"      指标: {metrics1}")
             
             # 计算真实支持度
             if kg is not None:
                 real_result = analyze_rule_from_string(rule, kg)
-                print(f"      真实结果: {real_result['join_result']}")
+                if real_result:
+                    print(f"      真实结果: {real_result['join_result']}")
             print()
     
     if only_in_2:
         print(f"\n仅在 {file2_name} 中的规则示例 (前{topN}个):")
         for i, rule in enumerate(list(only_in_2)[:topN]):
             print(f"  {i+1}. {rule}")
-            conf2 = rules2[rule][0][1] if rules2[rule] else "N/A"
-            print(f"      置信度: {conf2}")
+            metrics2 = rules2[rule][0][1] if rules2[rule] else {}
+            print(f"      指标: {metrics2}")
             
             # 计算真实支持度
             if kg is not None:
                 real_result = analyze_rule_from_string(rule, kg)
-                print(f"      真实结果: {real_result['join_result']}")
+                if real_result:
+                    print(f"      真实结果: {real_result['join_result']}")
             print()
 
-def main():
+def main(dataset="FB15k-237", file1_name="rules-100-filtered", file2_name="rule.txt"):
     """
     主函数
     """
     # 文件路径
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    file1 = os.path.join(base_dir, "out", "FB15k-237", "rules-10")
-    file2 = os.path.join(base_dir, "out", "FB15k-237", "rule.txt")
-    dataset_path = os.path.join(base_dir, "data", "FB15k-237", "train.txt")
-    
+    file1 = os.path.join(base_dir, "out", dataset, file1_name)
+    file2 = os.path.join(base_dir, "out", dataset, file2_name)
+    dataset_path = os.path.join(base_dir, "data", dataset, "train.txt")
+
     # 目标关系
     target_relation = "/award/award_category/winners./award/award_honor/ceremony"
     
@@ -222,7 +226,7 @@ def main():
         kg = None
     
     # 比较规则
-    compare_rules(rules1, rules2, "rules-10", "rule.txt", kg)
+    compare_rules(rules1, rules2, file1_name, file2_name, kg)
 
 if __name__ == "__main__":
     main()

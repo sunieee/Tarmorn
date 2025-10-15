@@ -18,3 +18,5 @@ python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100 --ranking_fil
 python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-10 --ranking_file out/FB15k-237/eval-10.txt > out/FB15k-237/eval-10.log
 python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-20 --ranking_file out/FB15k-237/eval-20.txt > out/FB15k-237/eval-20.log
 python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-40 --ranking_file out/FB15k-237/eval-40.txt > out/FB15k-237/eval-40.log
+python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-50 --ranking_file out/FB15k-237/eval-50.txt > out/FB15k-237/eval-50.log
+python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-filtered --ranking_file out/FB15k-237/eval-filtered.txt > out/FB15k-237/eval-filtered.log
