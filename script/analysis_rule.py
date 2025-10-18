@@ -50,6 +50,8 @@ class KnowledgeGraph:
         self.entities = set()
         # 所有关系（包括原始关系和inverse关系）
         self.relations = set()
+        # 原始关系集合（用于区分基础关系和缓存的复合关系）
+        self.base_relations = set()
     
     def add_triple(self, head: str, relation: str, tail: str):
         """添加三元组到知识图谱"""
@@ -57,6 +59,7 @@ class KnowledgeGraph:
         self.entities.add(head)
         self.entities.add(tail)
         self.relations.add(relation)
+        self.base_relations.add(relation)  # 标记为基础关系
         
         # 建立r2h2t索引
         self.r2h2t[relation][head].add(tail)
@@ -64,7 +67,19 @@ class KnowledgeGraph:
         # 建立inverse关系索引
         inverse_relation = f"INVERSE_{relation}"
         self.relations.add(inverse_relation)
+        self.base_relations.add(inverse_relation)  # 逆关系也是基础关系
         self.r2h2t[inverse_relation][tail].add(head)
+    
+    def clear_cached_relations(self):
+        """清除缓存的复合关系，保留基础关系"""
+        # 找出所有非基础关系（即缓存的复合关系）
+        cached_relations = [r for r in self.relations if r not in self.base_relations]
+        
+        # 从r2h2t中删除
+        for relation in cached_relations:
+            if relation in self.r2h2t:
+                del self.r2h2t[relation]
+            self.relations.discard(relation)
     
     def get_relation_pairs(self, relation: str) -> Set[Tuple[str, str]]:
         """获取某个关系的所有(head, tail)对"""
@@ -235,33 +250,37 @@ class RuleParser:
                         constants.add(arg)
         
         # 确定规则类型
-        free_vars = {var for var in all_vars if var in head_args}
+        # 自由变量就是头部参数中的单字母变量
+        free_vars_count = sum(1 for arg in head_args if len(arg) == 1)
         
-        if len(free_vars) == 1:
-            # 一元规则
-            return RuleParser._convert_unary_to_simplified(head_relation, head_args, body_atoms, free_vars)
+        if free_vars_count == 1:
+            # 一元规则：头部有一个变量和一个常量
+            return RuleParser._convert_unary_to_simplified(head_relation, head_args, body_atoms)
         else:
-            # 二元规则
-            return RuleParser._convert_binary_to_simplified(head_relation, head_args, body_atoms, free_vars)
+            # 二元规则：头部有两个变量
+            return RuleParser._convert_binary_to_simplified(head_relation, head_args, body_atoms)
     
     @staticmethod
     def _convert_unary_to_simplified(head_relation: str, head_args: List[str], 
-                                   body_atoms: List[str], free_vars: Set[str]) -> str:
+                                   body_atoms: List[str]) -> str:
         """
         将一元规则转换为简写格式
         
         例如：rel(X,/m/const) <= body1(X,A), body2(A,/m/const2)
         转换为：rel(/m/const) <= body_path(/m/const2) 或 INVERSE_rel(/m/const) <= body_path(/m/const2)
-        """
-        free_var = list(free_vars)[0]
         
-        # 找到头部的常量
+        一元规则的自由变量固定是X（头部中唯一的单字母变量）
+        """
+        # 找到自由变量和常量
+        free_var = None
         head_constant = None
         free_var_pos_in_head = -1
+        
         for i, arg in enumerate(head_args):
-            if arg == free_var:
+            if len(arg) == 1:  # 变量
+                free_var = arg
                 free_var_pos_in_head = i
-            elif len(arg) > 1:  # 常量
+            else:  # 常量
                 head_constant = arg
         
         debug(f"[DEBUG] Unary conversion: free_var={free_var}, pos={free_var_pos_in_head}, constant={head_constant}")
@@ -447,19 +466,24 @@ class RuleParser:
     
     @staticmethod
     def _convert_binary_to_simplified(head_relation: str, head_args: List[str], 
-                                    body_atoms: List[str], free_vars: Set[str]) -> str:
+                                    body_atoms: List[str]) -> str:
         """
         将二元规则转换为简写格式
         
         例如：rel(X,Y) <= body1(X,A), body2(Y,A)
         转换为：rel <= body1·INVERSE_body2
+        
+        二元规则的自由变量固定是 head_args（即 X, Y，顺序确定）
         """
+        # 提取自由变量（头部中的单字母变量）
+        free_vars = [arg for arg in head_args if len(arg) == 1]
+        
         if len(free_vars) != 2:
             # 如果不是严格的二元规则，返回原始格式
             return f"{head_relation}({','.join(head_args)}) <= {', '.join(body_atoms)}"
         
-        # 构建body路径
-        body_path = RuleParser._build_binary_body_path(body_atoms, list(free_vars))
+        # 构建body路径，传入有序的自由变量列表
+        body_path = RuleParser._build_binary_body_path(body_atoms, free_vars)
         
         result = f"{head_relation} <= {body_path}"
         debug(f"[DEBUG] Binary simplified result: {result}")
@@ -696,8 +720,9 @@ class RuleParser:
         
         rule_info['body_atoms'] = parsed_body_atoms
         rule_info['head_variables'] = head_variables
-        rule_info['free_variables'] = list(free_vars)
-        rule_info['constraint_variables'] = list(constraint_vars)
+        # 保持自由变量的顺序与头部变量一致（按照head_variables中的出现顺序）
+        rule_info['free_variables'] = [v for v in head_variables if v in free_vars]
+        rule_info['constraint_variables'] = sorted(list(constraint_vars))  # 约束变量按字母顺序排序
         rule_info['variable_count'] = variable_count
         
         # 对于二元规则，构建连接路径
@@ -949,7 +974,7 @@ class RuleSupportCalculator:
             
             for h1 in r1_heads_to_node:
                 for t2 in r2_tails_from_node:
-                    if h1 != t2:
+                    if h1 != t2:  # 规则语义：不允许 X == Y
                         result_h2t[h1].add(t2)  # 正向：h1 -> t2
                         result_t2h[t2].add(h1)  # 逆向：t2 -> h1
                         total_results += 1
@@ -1847,6 +1872,11 @@ if __name__ == "__main__":
         "/award/award_category/winners./award/award_honor/ceremony(/m/0f4x7,X) <= /award/award_category/winners./award/award_honor/ceremony(A,X), /award/award_nominee/award_nominations./award/award_nomination/award(/m/02_fj,A)",
         "/award/award_category/winners./award/award_honor/ceremony(/m/01ck6v,Y) <= /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,A)",
         "/award/award_category/winners./award/award_honor/ceremony(X,/m/07z31v) <= /award/award_nominee/award_nominations./award/award_nomination/award(A,X)"
+    ]
+
+    test_rules = [
+        "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/category_of(X,A), /time/event/instance_of_recurring_event(Y,A)",
+        "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_winner/awards_won./award/award_honor/award_winner(B,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)"
     ]
 
     try:

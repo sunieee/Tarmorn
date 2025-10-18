@@ -6,7 +6,6 @@ import tarmorn.data.TripleSet
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
-import java.lang.Thread.sleep
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
@@ -14,7 +13,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
 import kotlin.math.abs
-import kotlin.math.min
 import tarmorn.structure.TLearn.MyAtom
 import tarmorn.structure.TLearn.Formula
 import tarmorn.structure.TLearn.Metric
@@ -27,13 +25,13 @@ import tarmorn.structure.TLearn.Metric
 object TLearn {
 
     const val MIN_SUPP = 50
-    const val MAX_PATH_LENGTH = 3
+    const val MAX_PATH_LENGTH = 2
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 200
     const val R = 1  // 每band维度
     const val BANDS = MH_DIM / R
-    const val bucketCountThreshold = 2
+    // const val bucketCountThreshold = 2  // 弃用，过滤太多不应该过滤的
     val bucketCountMap = ConcurrentHashMap<Int, Int>()
 
     // 全局随机种子数组，在程序启动时初始化
@@ -184,7 +182,7 @@ object TLearn {
         println("MIN_SUPP: $MIN_SUPP, MAX_PATH_LENGTH: $MAX_PATH_LENGTH")
 
         // Step 1: Initialize with L=1 relations
-        initializeLevel1Relations()
+        initializeL1Relations()
 
         // Step 2: Connect relations using multiple threads
         try {
@@ -211,7 +209,7 @@ object TLearn {
     /**
      * Step 1: Initialize level 1 relations (single relations with sufficient supp)
      */
-    fun initializeLevel1Relations() {
+    fun initializeL1Relations() {
         println("Initializing level 1 relations...")
 
         for ((relation, tripleSet) in ts.r2tripleSet) {
@@ -349,9 +347,9 @@ object TLearn {
 
                 if (supp >= MIN_SUPP) {
                     // 检查反向关系对的连接结果
-                    if (IdManager.getInverseRelation(r1) == ri) {
-                        println("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp")
-                    }
+//                    if (IdManager.getInverseRelation(r1) == ri) {
+//                        println("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp")
+//                    }
                     
                     relationQueue.offer(connectedPath)
                     val cnt = addedCount.incrementAndGet()
@@ -696,72 +694,31 @@ object TLearn {
         // 进行相似性评估和过滤 - 使用预计算的碰撞次数
         var cnt = 0
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
-            if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
+            // if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
             bucketCountMap[bucketCount] = bucketCountMap.getOrDefault(bucketCount, 0) + 1
             if (atom == myAtom) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
             val registry = minHashRegistry[formula]
             // TODO: 为什么registry会出现null？
-            if (supp != null &&  registry != null) {
-                // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
-                val jaccard = bucketCount.toDouble() / BANDS
-                
-                // 估计交集大小
-                var intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
-                var metric = Metric(jaccard, intersectionSize, supp, mySupp)
-
-                if (metric.valid) {
-//                    if (metric.needValidation) {    //  || mySupp < 100 || supp < 100
-                    // 自证式一元规则（entity-anchored unary rules）问题
-                    if (myAtom.isL2Atom && !myAtom.isBinary) {
-                        val constant = atom.entityId
-                        val inverseRelation = IdManager.getInverseRelation(myAtom.firstRelation)
-                        val t2hSet = ts.r2h2tSet[inverseRelation]
-                        if (t2hSet == null) {
-                            val inverseRelationStr = IdManager.getRelationString(inverseRelation)
-                            println("Warning: Missing t2hSet for relation $inverseRelationStr")
-                        }
-                        // 关系稀疏时，可能不存在t2hSet
-                        val newInstanceSet = if (t2hSet != null && t2hSet[constant] != null) {
-                            instanceSet.filter {!t2hSet[constant]!!.contains(it)}
-                        } else {
-                            instanceSet // 如果逆关系不存在，使用原始实例集合
-                        }
-
-                        intersectionSize = newInstanceSet.intersect(atom.getInstanceSet()).size.toDouble()
-                        metric = Metric(jaccard, intersectionSize, supp, newInstanceSet.size)
-                    } else {
-                        intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
-    //                    metric.support = intersectionSize
-                        metric = Metric(jaccard, intersectionSize, supp, mySupp)
-                    }
-                    
-                    if (intersectionSize < MIN_SUPP || !metric.valid) return@forEach
-//                    }
-
-                    val newFormula = Formula(atom1 = myAtom, atom2 = atom)
-                    // 添加到结果映射
-                    
-                    val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
-                    formula2metric[newFormula] = metric
-
-                    if (myAtom.isHeadAtom) {
-                        val formula2metric = atom2formula2metric.getOrPut(myAtom) { mutableMapOf() }
-                        formula2metric[newFormula] = metric.inverse()
-                    }
-
-//                    val newSignature = IntArray(MH_DIM) { i ->
-//                        min(minHashSignature[i], registry[i])
-//                    }
-
-                    // 80%时间都在组合，似乎没必要  && metric.confidence < 0.9
-//                    if (myAtom.isL2Atom  && metric.confidence < 0.9)
-//                        performLSHforL2Formula(newFormula, intersectionSize.toInt(), newSignature, metric)
-
-                    cnt ++
-                }
+            if (supp == null || registry == null) {
+                println("Warning: Missing supp and registry for formula $formula")
+                return@forEach
             }
+            // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
+            val jaccard = bucketCount.toDouble() / BANDS
+
+            // 估计交集大小
+            var intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
+            var metric = Metric(jaccard, intersectionSize, supp, mySupp)
+
+            if (metric.valid) {
+                if (validateAndCreateFormula(myAtom, atom, instanceSet, jaccard, supp, mySupp) != null) cnt++
+            }
+            if (metric.inverse().valid && myAtom.isHeadAtom) {
+                if (validateAndCreateFormula(atom, myAtom, instanceSet, jaccard, mySupp, supp) != null) cnt++
+            }
+
         }
 //        if (cnt > 0) println("Found $cnt valid combinations for Atom: $myAtom:")
         return myAtom.isL2Atom || cnt > 0
@@ -792,7 +749,7 @@ object TLearn {
         var cnt = 0
         // 估计与过滤阶段：使用预计算的碰撞次数直接估计Jaccard相似度
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
-            if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
+            // if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
             bucketCountMap[bucketCount] = bucketCountMap.getOrDefault(bucketCount, 0) + 1
             if (atom == myFormula.atom1 || atom == myFormula.atom2) return@forEach // 跳过相同原子，避免重复组合
             val formula = Formula(atom1 = atom)
@@ -827,6 +784,60 @@ object TLearn {
         val ret = jaccardSimilarity * (size1 + size2) / (1 + jaccardSimilarity)
 //        return min(ret, min(size1, size2).toDouble()) // 交集大小不应超过较小集合的大小
         return ret
+    }
+
+    /**
+     * 验证并创建公式 - 处理自证式一元规则问题和度量计算
+     * @param myAtom 当前原子
+     * @param atom 目标原子
+     * @param instanceSet 实例集合
+     * @param jaccard Jaccard相似度
+     * @param supp 支持度
+     * @param mySupp 当前原子的支持度
+     * @return 如果创建成功返回公式，否则返回null
+     */
+    private fun validateAndCreateFormula(
+        myAtom: MyAtom, 
+        atom: MyAtom, 
+        instanceSet: Set<Int>, 
+        jaccard: Double, 
+        supp: Int, 
+        mySupp: Int
+    ): Formula? {
+        var intersectionSize: Double
+        var metric: Metric
+        
+        // 自证式一元规则（entity-anchored unary rules）问题
+        if (myAtom.isL2Atom && !myAtom.isBinary) {
+            val constant = atom.entityId
+            val inverseRelation = IdManager.getInverseRelation(myAtom.firstRelation)
+            val t2hSet = ts.r2h2tSet[inverseRelation]
+            if (t2hSet == null) {
+                val inverseRelationStr = IdManager.getRelationString(inverseRelation)
+                println("Warning: Missing t2hSet for relation $inverseRelationStr")
+            }
+            // 关系稀疏时，可能不存在t2hSet
+            val newInstanceSet = if (t2hSet != null && t2hSet[constant] != null) {
+                instanceSet.filter { !t2hSet[constant]!!.contains(it) }
+            } else {
+                instanceSet // 如果逆关系不存在，使用原始实例集合
+            }
+
+            intersectionSize = newInstanceSet.intersect(atom.getInstanceSet()).size.toDouble()
+            metric = Metric(jaccard, intersectionSize, supp, newInstanceSet.size)
+        } else {
+            intersectionSize = instanceSet.intersect(atom.getInstanceSet()).size.toDouble()
+            metric = Metric(jaccard, intersectionSize, supp, mySupp)
+        }
+
+        if (!metric.valid) return null
+
+        val newFormula = Formula(atom1 = myAtom, atom2 = atom)
+        
+        // 添加到结果映射
+        val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
+        formula2metric[newFormula] = metric
+        return newFormula
     }
 
 
@@ -921,7 +932,7 @@ object TLearn {
                     val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
                     val otherAtoms = atomsInFormula.filter { it != atom }
 
-                    val formulaString = otherAtoms.joinToString(", ") { it.toString() }
+                    val formulaString = otherAtoms.joinToString(",") { it.toString() }
                         .replace("\"", "\\\"").replace("\n", "\\n")
                     writer.write("    \"$formulaString\": $metric")
                     if (formulaIndex < formulaEntries.size - 1) writer.write(",")
