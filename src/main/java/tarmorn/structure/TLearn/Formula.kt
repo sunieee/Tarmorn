@@ -16,7 +16,10 @@ data class Formula(
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is Formula) return false
-        return this.hashCode() == other.hashCode()
+        // 正确的equals：比较排序后的原子列表
+        val thisAtoms = listOfNotNull(atom1, atom2, atom3).sortedBy { it.hashCode() }
+        val otherAtoms = listOfNotNull(other.atom1, other.atom2, other.atom3).sortedBy { it.hashCode() }
+        return thisAtoms == otherAtoms
     }
 
     override fun toString(): String {

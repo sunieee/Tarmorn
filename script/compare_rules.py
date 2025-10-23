@@ -277,10 +277,18 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
         # ========== 共同规则示例 ==========
         topN = 20
         if common_rules:
-            writer.writerow([f'共同规则示例 (共{len(common_rules)}条，展示前{topN}条)'])
+            # 分离Binary和Unary规则
+            binary_rules = [rule for rule in common_rules if is_binary_rule(rule)]
+            unary_rules = [rule for rule in common_rules if not is_binary_rule(rule)]
+            
+            # 计算每种类型应该取多少条
+            half_n = topN // 2
+            selected_rules = binary_rules[:half_n] + unary_rules[:half_n]
+            
+            writer.writerow([f'共同规则示例 (共{len(common_rules)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
                 writer.writerow(['规则', f'{file1_name}指标', f'{file2_name}指标', '真实结果'])
-                for rule in list(common_rules)[:topN]:
+                for rule in selected_rules:
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
@@ -288,7 +296,7 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
                     writer.writerow([rule, str(metrics1), str(metrics2), real_result_str])
             else:
                 writer.writerow(['规则', f'{file1_name}指标', f'{file2_name}指标'])
-                for rule in list(common_rules)[:topN]:
+                for rule in selected_rules:
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     writer.writerow([rule, str(metrics1), str(metrics2)])
@@ -296,34 +304,50 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
         
         # ========== 仅在file1中的规则 ==========
         if only_in_1:
-            writer.writerow([f'仅在{file1_name}中的规则 (共{len(only_in_1)}条，展示前{topN}条)'])
+            # 分离Binary和Unary规则
+            binary_rules = [rule for rule in only_in_1 if is_binary_rule(rule)]
+            unary_rules = [rule for rule in only_in_1 if not is_binary_rule(rule)]
+            
+            # 计算每种类型应该取多少条
+            half_n = topN // 2
+            selected_rules = binary_rules[:half_n] + unary_rules[:half_n]
+            
+            writer.writerow([f'仅在{file1_name}中的规则 (共{len(only_in_1)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
                 writer.writerow(['规则', '指标', '真实结果'])
-                for rule in list(only_in_1)[:topN]:
+                for rule in selected_rules:
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
                     real_result_str = str(real_result['join_result']) if real_result else 'N/A'
                     writer.writerow([rule, str(metrics1), real_result_str])
             else:
                 writer.writerow(['规则', '指标'])
-                for rule in list(only_in_1)[:topN]:
+                for rule in selected_rules:
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     writer.writerow([rule, str(metrics1)])
             writer.writerow([])
         
         # ========== 仅在file2中的规则 ==========
         if only_in_2:
-            writer.writerow([f'仅在{file2_name}中的规则 (共{len(only_in_2)}条，展示前{topN}条)'])
+            # 分离Binary和Unary规则
+            binary_rules = [rule for rule in only_in_2 if is_binary_rule(rule)]
+            unary_rules = [rule for rule in only_in_2 if not is_binary_rule(rule)]
+            
+            # 计算每种类型应该取多少条
+            half_n = topN // 2
+            selected_rules = binary_rules[:half_n] + unary_rules[:half_n]
+            
+            writer.writerow([f'仅在{file2_name}中的规则 (共{len(only_in_2)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
                 writer.writerow(['规则', '指标', '真实结果'])
-                for rule in list(only_in_2)[:topN]:
+                for rule in selected_rules:
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
                     real_result_str = str(real_result['join_result']) if real_result else 'N/A'
                     writer.writerow([rule, str(metrics2), real_result_str])
             else:
                 writer.writerow(['规则', '指标'])
-                for rule in list(only_in_2)[:topN]:
+                for rule in selected_rules:
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     writer.writerow([rule, str(metrics2)])
     

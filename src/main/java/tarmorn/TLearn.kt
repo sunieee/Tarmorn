@@ -69,11 +69,11 @@ object TLearn {
     val processedCount = AtomicInteger(0)
     val addedCount = AtomicInteger(0)
 
-    // 流式计算结构
-    val formula2supp = mutableMapOf<Formula, Int>()          // 公式→支持度映射
-    val minHashRegistry = mutableMapOf<Formula, IntArray>()           // 公式→MinHash映射
-    val key2headAtom = mutableMapOf<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
-    val atom2formula2metric = mutableMapOf<MyAtom, MutableMap<Formula, Metric>>() // 原子→公式→度量映射
+    // 流式计算结构 - 使用线程安全的ConcurrentHashMap
+    val formula2supp = ConcurrentHashMap<Formula, Int>()          // 公式→支持度映射
+    val minHashRegistry = ConcurrentHashMap<Formula, IntArray>()           // 公式→MinHash映射
+    val key2headAtom = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
+    val atom2formula2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
 
     // Initialize logger and clear the log file
     private fun initializeLogger() {
@@ -662,6 +662,7 @@ object TLearn {
     fun performLSH(myAtom: MyAtom, mySupp: Int, instanceSet: Set<Int>): Boolean {
         // 创建Formula (单原子公式)
         val minHashSignature = computeMinHash(instanceSet, myAtom.isBinary)
+        // 使用 isL2Atom：范围关系是 isHeadAtom ⊆ isL1Atom ⊆ isL2Atom
         if (myAtom.isL2Atom) {
             val formula = Formula(atom1 = myAtom)
             minHashRegistry[formula] = minHashSignature
@@ -674,20 +675,27 @@ object TLearn {
         for (bandIndex in 0 until BANDS) {
             val key = minHashSignature[bandIndex]     // 单个MinHash值作为键
             
-            // 查询相关的已有的桶
+            // 查询相关的已有的桶 - 线程安全地读取
             val bucket = key2headAtom[key]
             if (bucket != null) {
-                // 为这个桶中的每个原子增加碰撞计数
-                bucket.forEach { relevantAtom ->
-                    relevantAtom2BucketCount[relevantAtom] = 
-                        relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
+                // 同步访问bucket以避免并发修改
+                synchronized(bucket) {
+                    // 为这个桶中的每个原子增加碰撞计数
+                    bucket.forEach { relevantAtom ->
+                        relevantAtom2BucketCount[relevantAtom] = 
+                            relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
+                    }
                 }
             }
 
-            // 如果是headAtom，放入桶中
+            // 如果是headAtom，放入桶中 - 线程安全地添加
             if (myAtom.isHeadAtom) {
-                val bucket = key2headAtom.getOrPut(key) { mutableListOf() }
-                bucket.add(myAtom)
+                val bucket = key2headAtom.computeIfAbsent(key) { 
+                    java.util.Collections.synchronizedList(mutableListOf()) 
+                }
+                synchronized(bucket) {
+                    bucket.add(myAtom)
+                }
             }
         }
 
@@ -700,10 +708,9 @@ object TLearn {
             val formula = Formula(atom1 = atom)
             val supp = formula2supp[formula]
             val registry = minHashRegistry[formula]
-            // TODO: 为什么registry会出现null？
-            if (supp == null || registry == null) {
-                println("Warning: Missing supp and registry for formula $formula")
-                return@forEach
+            // 调试信息：如果仍然为null，打印详细信息
+            require(registry != null) {
+                "Error: Missing MinHash registry for formula $formula"
             }
             // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
             val jaccard = bucketCount.toDouble() / BANDS
@@ -735,13 +742,15 @@ object TLearn {
         for (bandIndex in 0 until BANDS) {
             val key = minHashSignature[bandIndex]     // 单个MinHash值作为键
             
-            // 查询相关的已有的原子桶
+            // 查询相关的已有的原子桶 - 线程安全地读取
             val bucket = key2headAtom[key]
             if (bucket != null) {
-                // 为这个桶中的每个原子增加碰撞计数
-                bucket.forEach { relevantAtom ->
-                    relevantAtom2BucketCount[relevantAtom] = 
-                        relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
+                synchronized(bucket) {
+                    // 为这个桶中的每个原子增加碰撞计数
+                    bucket.forEach { relevantAtom ->
+                        relevantAtom2BucketCount[relevantAtom] = 
+                            relevantAtom2BucketCount.getOrDefault(relevantAtom, 0) + 1
+                    }
                 }
             }
         }
@@ -765,7 +774,7 @@ object TLearn {
                 if (metric.valid && metric.betterThan(originalMetric)) {
                     // 创建二元公式组合
                     val newFormula = Formula(atom1 = myFormula.atom1, myFormula.atom2, atom)
-                    val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
+                    val formula2metric = atom2formula2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
                     formula2metric[newFormula] = metric
                     
                     cnt++
@@ -834,8 +843,8 @@ object TLearn {
 
         val newFormula = Formula(atom1 = myAtom, atom2 = atom)
         
-        // 添加到结果映射
-        val formula2metric = atom2formula2metric.getOrPut(atom) { mutableMapOf() }
+        // 添加到结果映射 - 线程安全
+        val formula2metric = atom2formula2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
         formula2metric[newFormula] = metric
         return newFormula
     }
