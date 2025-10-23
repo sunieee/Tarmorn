@@ -491,7 +491,7 @@ object TLearn {
                 // For paths with length < 3, we store the full h2t mapping
                 R2h2tSet[rp] = h2tSet
                 // R2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
+//                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
             }
         }
 
@@ -709,7 +709,7 @@ object TLearn {
             val supp = formula2supp[formula]
             val registry = minHashRegistry[formula]
             // 调试信息：如果仍然为null，打印详细信息
-            require(registry != null) {
+            require(registry != null && supp != null) {
                 "Error: Missing MinHash registry for formula $formula"
             }
             // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
@@ -817,7 +817,8 @@ object TLearn {
         var metric: Metric
         
         // 自证式一元规则（entity-anchored unary rules）问题
-        if (myAtom.isL2Atom && !myAtom.isBinary) {
+//        if (myAtom.isL2Atom && !myAtom.isBinary) {  这种写法有问题，会漏掉L1Atom的情况
+        if (!myAtom.isL1Atom && !myAtom.isBinary) {
             val constant = atom.entityId
             val inverseRelation = IdManager.getInverseRelation(myAtom.firstRelation)
             val t2hSet = ts.r2h2tSet[inverseRelation]

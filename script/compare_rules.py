@@ -104,30 +104,122 @@ def is_binary_rule(rule: str) -> bool:
 def get_head_variable_type(rule: str) -> str:
     """
     获取规则头的变量类型
-    返回: 'binary' (X,Y), 'head_var' (X,c), 'tail_var' (c,X),'loop' (X,X), 'unknown'
+    返回: 'r(X,c)', 'r(c,X)', 'r(X,X)', 'binary'
     """
     if '<=' not in rule:
-        return 'unknown'
+        raise ValueError(f"规则格式错误，缺少'<=': {rule}")
     
     head = rule.split('<=', 1)[0].strip()
     
     # 提取括号中的内容
     match = re.search(r'\(([^)]+)\)', head)
     if not match:
-        return 'unknown'
+        raise ValueError(f"规则头格式错误，无法提取括号内容: {head}")
     
-    args = match.group(1)
+    args = match.group(1).split(',')
+    if len(args) != 2:
+        raise ValueError(f"规则头参数数量错误，期望2个参数: {args}")
     
-    if '(X,Y)' in head:
+    arg1, arg2 = args[0].strip(), args[1].strip()
+    
+    # 定义变量类型：X类变量和A类变量
+    x_vars = {'X', 'Y', 'Z'}  # X类变量
+    a_vars = {'A', 'B', 'C'}  # A类变量
+    
+    # 判断变量类型
+    is_x_var1 = arg1 in x_vars
+    is_x_var2 = arg2 in x_vars
+    is_a_var1 = arg1 in a_vars
+    is_a_var2 = arg2 in a_vars
+    is_var1 = is_x_var1 or is_a_var1
+    is_var2 = is_x_var2 or is_a_var2
+    
+    if arg1 == 'X' and arg2 == 'Y':
         return 'binary'
-    elif '(X,X)' in head:
-        return 'loop'
-    elif '(X,' in head:
-        return 'head_var'  # X在头部位置
-    elif ',X)' in head:
-        return 'tail_var'  # X在尾部位置
+    elif is_x_var1 and is_x_var2 and arg1 == arg2:
+        return 'r(X,X)'  # 两个相同的X类变量
+    elif is_x_var1 and not is_var2:
+        return 'r(X,c)'  # X类变量,常量
+    elif not is_var1 and is_x_var2:
+        return 'r(c,X)'  # 常量,X类变量
     else:
-        return 'constant'
+        raise ValueError(f"不支持的规则头类型: ({arg1},{arg2}) in {rule}")
+
+def parse_body_atoms(body: str) -> List[str]:
+    """
+    正确解析body中的原子，考虑原子内部可能包含逗号
+    例如: "/award/award_category/winners./award/award_honor/ceremony(/m/0gs9p,X), other_relation(Y,Z)"
+    """
+    atoms = []
+    current_atom = ""
+    paren_count = 0
+    
+    i = 0
+    while i < len(body):
+        char = body[i]
+        
+        if char == '(':
+            paren_count += 1
+        elif char == ')':
+            paren_count -= 1
+        elif char == ',' and paren_count == 0:
+            # 只有在括号外的逗号才是原子分隔符
+            if current_atom.strip():
+                atoms.append(current_atom.strip())
+            current_atom = ""
+            i += 1
+            continue
+        
+        current_atom += char
+        i += 1
+    
+    # 添加最后一个原子
+    if current_atom.strip():
+        atoms.append(current_atom.strip())
+    
+    return atoms
+
+def get_body_atom_type(atom: str) -> str:
+    """
+    获取body中原子的变量类型
+    返回: 'rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)'
+    """
+    # 提取括号中的内容
+    match = re.search(r'\(([^)]+)\)', atom.strip())
+    if not match:
+        print("Wrong format:", atom)
+        raise ValueError(f"Body原子格式错误，无法提取括号内容: {atom}")
+    
+    args = match.group(1).split(',')
+    if len(args) != 2:
+        raise ValueError(f"Body原子参数数量错误，期望2个参数: {args} in {atom}")
+    
+    arg1, arg2 = args[0].strip(), args[1].strip()
+    
+    # 定义变量类型：X类变量和A类变量
+    x_vars = {'X', 'Y', 'Z'}  # X类变量
+    a_vars = {'A', 'B', 'C'}  # A类变量
+    
+    # 判断变量类型
+    is_x_var1 = arg1 in x_vars
+    is_x_var2 = arg2 in x_vars
+    is_a_var1 = arg1 in a_vars
+    is_a_var2 = arg2 in a_vars
+    is_var1 = is_x_var1 or is_a_var1
+    is_var2 = is_x_var2 or is_a_var2
+    
+    if is_x_var1 and is_x_var2 and arg1 == arg2:
+        return 'rp(X,X)'  # 两个相同的X类变量
+    elif is_x_var1 and is_a_var2:
+        return 'rp(X,A)'  # X类变量和A类变量
+    elif is_a_var1 and is_x_var2:
+        return 'rp(A,X)'  # A类变量和X类变量
+    elif is_x_var1 and not is_var2:
+        return 'rp(X,c)'  # X类变量和常量
+    elif not is_var1 and is_x_var2:
+        return 'rp(c,X)'  # 常量和X类变量
+    else:
+        raise ValueError(f"不支持的Body原子类型: ({arg1},{arg2}) in {atom}")
 
 def get_relation_path_length(atom: str) -> int:
     """
@@ -153,12 +245,19 @@ def analyze_rule_statistics(rules_dict: Dict[str, List], file_name: str) -> Dict
         'total_rules': len(rules_dict),
         'binary_rules': 0,
         'unary_rules': 0,
-        'unary_head_var': 0,  # U规则中head variable
-        'unary_tail_var': 0,  # U规则中tail variable
-        'unary_loop': 0,       # U规则中loop (X,X)
-        'unary_constant': 0,   # U规则中constant
-        'body_relation_lengths': defaultdict(int),  # body中不同关系路径长度的分布
+        'atom_relation_lengths': defaultdict(int),  # body中不同关系路径长度的分布
     }
+    
+    # Unary规则矩阵：head_type × body_type
+    head_types = ['r(X,c)', 'r(c,X)', 'r(X,X)']
+    body_types = ['rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)']
+    
+    # 初始化矩阵
+    stats['unary_matrix'] = {}
+    for head_type in head_types:
+        stats['unary_matrix'][head_type] = {}
+        for body_type in body_types:
+            stats['unary_matrix'][head_type][body_type] = 0
     
     for normalized_rule, rule_list in rules_dict.items():
         rule = rule_list[0][0]  # 取第一个原始规则
@@ -169,21 +268,31 @@ def analyze_rule_statistics(rules_dict: Dict[str, List], file_name: str) -> Dict
         else:
             stats['unary_rules'] += 1
             
-            # 分析Unary规则的头部变量类型
+            # 分析Unary规则的头部和body类型
             head_type = get_head_variable_type(rule)
-            stats_key = f'unary_{head_type}'
-            stats[stats_key] += 1
+            
+            if head_type in head_types:
+                body = rule.split('<=', 1)[1].strip()
+                # 正确分割body中的多个原子（考虑原子内部的逗号）
+                atoms = parse_body_atoms(body)
+                
+                for atom in atoms:
+                    body_type = get_body_atom_type(atom)
+                    stats['unary_matrix'][head_type][body_type] += 1
+            else:
+                # 如果是unary规则但头部类型不在预期范围内，报错
+                raise ValueError(f"Unary规则的头部类型不在预期范围内: {head_type} in {rule}")
         
         # 分析body中原子的关系路径长度
         if '<=' in rule:
             body = rule.split('<=', 1)[1].strip()
-            # 分割body中的多个原子（用逗号分隔）
-            atoms = [atom.strip() for atom in body.split(',')]
+            # 正确分割body中的多个原子（考虑原子内部的逗号）
+            atoms = parse_body_atoms(body)
             
             for atom in atoms:
                 length = get_relation_path_length(atom)
                 if length > 0:
-                    stats['body_relation_lengths'][length] += 1
+                    stats['atom_relation_lengths'][length] += 1
     
     return stats
 
@@ -215,41 +324,83 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
                         stats2['unary_rules'] - stats1['unary_rules']])
         writer.writerow([])
         
-        # ========== Unary规则头部变量类型分布 ==========
+        # ========== Unary规则矩阵分布 ==========
         if stats1['unary_rules'] > 0 or stats2['unary_rules'] > 0:
-            writer.writerow(['Unary规则头部变量类型'])
-            writer.writerow(['类型', file1_name, file2_name, '差异'])
-            writer.writerow(['Head Variable (X,c)', 
-                            f"{stats1['unary_head_var']} ({stats1['unary_head_var']/max(stats1['unary_rules'],1)*100:.2f}%)" if stats1['unary_rules'] > 0 else "0 (0.00%)",
-                            f"{stats2['unary_head_var']} ({stats2['unary_head_var']/max(stats2['unary_rules'],1)*100:.2f}%)" if stats2['unary_rules'] > 0 else "0 (0.00%)",
-                            stats2['unary_head_var'] - stats1['unary_head_var']])
-            writer.writerow(['Tail Variable (c,X)', 
-                            f"{stats1['unary_tail_var']} ({stats1['unary_tail_var']/max(stats1['unary_rules'],1)*100:.2f}%)" if stats1['unary_rules'] > 0 else "0 (0.00%)",
-                            f"{stats2['unary_tail_var']} ({stats2['unary_tail_var']/max(stats2['unary_rules'],1)*100:.2f}%)" if stats2['unary_rules'] > 0 else "0 (0.00%)",
-                            stats2['unary_tail_var'] - stats1['unary_tail_var']])
-            writer.writerow(['Loop (X,X)', 
-                            f"{stats1['unary_loop']} ({stats1['unary_loop']/max(stats1['unary_rules'],1)*100:.2f}%)" if stats1['unary_rules'] > 0 else "0 (0.00%)",
-                            f"{stats2['unary_loop']} ({stats2['unary_loop']/max(stats2['unary_rules'],1)*100:.2f}%)" if stats2['unary_rules'] > 0 else "0 (0.00%)",
-                            stats2['unary_loop'] - stats1['unary_loop']])
-            writer.writerow(['Constant', 
-                            f"{stats1['unary_constant']} ({stats1['unary_constant']/max(stats1['unary_rules'],1)*100:.2f}%)" if stats1['unary_rules'] > 0 else "0 (0.00%)",
-                            f"{stats2['unary_constant']} ({stats2['unary_constant']/max(stats2['unary_rules'],1)*100:.2f}%)" if stats2['unary_rules'] > 0 else "0 (0.00%)",
-                            stats2['unary_constant'] - stats1['unary_constant']])
+            head_types = ['r(X,c)', 'r(c,X)', 'r(X,X)', 'sum']
+            body_types = ['rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)', 'sum']
+            
+            # 输出file1的矩阵
+            writer.writerow([f'{file1_name} Unary规则矩阵'])
+            # 表头
+            header = ['head\\body'] + body_types
+            writer.writerow(header)
+            
+            # 计算每行和每列的总和
+            matrix1 = stats1.get('unary_matrix', {})
+            for head_type in ['r(X,c)', 'r(c,X)', 'r(X,X)']:
+                row = [head_type]
+                row_sum = 0
+                for body_type in ['rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)']:
+                    count = matrix1.get(head_type, {}).get(body_type, 0)
+                    row.append(count)
+                    row_sum += count
+                row.append(row_sum)  # 行总和
+                writer.writerow(row)
+            
+            # 计算列总和
+            sum_row = ['sum']
+            total_sum = 0
+            for body_type in ['rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)']:
+                col_sum = sum(matrix1.get(head_type, {}).get(body_type, 0) 
+                             for head_type in ['r(X,c)', 'r(c,X)', 'r(X,X)'])
+                sum_row.append(col_sum)
+                total_sum += col_sum
+            sum_row.append(total_sum)  # 总总和
+            writer.writerow(sum_row)
             writer.writerow([])
-        
-        # ========== Body中关系路径长度分布 ==========
-        writer.writerow(['Body中关系路径长度分布'])
+            
+            # 输出file2的矩阵
+            writer.writerow([f'{file2_name} Unary规则矩阵'])
+            # 表头
+            writer.writerow(header)
+            
+            # 计算每行和每列的总和
+            matrix2 = stats2.get('unary_matrix', {})
+            for head_type in ['r(X,c)', 'r(c,X)', 'r(X,X)']:
+                row = [head_type]
+                row_sum = 0
+                for body_type in ['rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)']:
+                    count = matrix2.get(head_type, {}).get(body_type, 0)
+                    row.append(count)
+                    row_sum += count
+                row.append(row_sum)  # 行总和
+                writer.writerow(row)
+            
+            # 计算列总和
+            sum_row = ['sum']
+            total_sum = 0
+            for body_type in ['rp(X,c)', 'rp(c,X)', 'rp(X,A)', 'rp(A,X)', 'rp(X,X)']:
+                col_sum = sum(matrix2.get(head_type, {}).get(body_type, 0) 
+                             for head_type in ['r(X,c)', 'r(c,X)', 'r(X,X)'])
+                sum_row.append(col_sum)
+                total_sum += col_sum
+            sum_row.append(total_sum)  # 总总和
+            writer.writerow(sum_row)
+            writer.writerow([])
+
+        # ========== Atom中关系路径长度分布 ==========
+        writer.writerow(['Atom中关系路径长度分布'])
         writer.writerow(['长度', file1_name, file2_name, '差异'])
         
-        total_atoms1 = sum(stats1['body_relation_lengths'].values())
-        total_atoms2 = sum(stats2['body_relation_lengths'].values())
+        total_atoms1 = sum(stats1['atom_relation_lengths'].values())
+        total_atoms2 = sum(stats2['atom_relation_lengths'].values())
         
         # 获取所有出现的长度
-        all_lengths = sorted(set(stats1['body_relation_lengths'].keys()) | set(stats2['body_relation_lengths'].keys()))
+        all_lengths = sorted(set(stats1['atom_relation_lengths'].keys()) | set(stats2['atom_relation_lengths'].keys()))
         
         for length in all_lengths:
-            count1 = stats1['body_relation_lengths'].get(length, 0)
-            count2 = stats2['body_relation_lengths'].get(length, 0)
+            count1 = stats1['atom_relation_lengths'].get(length, 0)
+            count2 = stats2['atom_relation_lengths'].get(length, 0)
             pct1 = f"{count1/total_atoms1*100:.2f}%" if total_atoms1 > 0 else "0.00%"
             pct2 = f"{count2/total_atoms2*100:.2f}%" if total_atoms2 > 0 else "0.00%"
             writer.writerow([f'长度{length} (L{length})', 

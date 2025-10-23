@@ -1845,7 +1845,7 @@ def analyze_rule_from_string(rule_str: str, kg: KnowledgeGraph) -> Dict:
 
 if __name__ == "__main__":
     # 数据集路径（相对于当前脚本的路径）
-    dataset_path = "../data/FB15k-237/train.txt"
+    dataset_path = "data/FB15k-237/train.txt"
     
     # 要分析的规则示例
     test_rules = [
@@ -1876,7 +1876,9 @@ if __name__ == "__main__":
 
     test_rules = [
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/category_of(X,A), /time/event/instance_of_recurring_event(Y,A)",
-        "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_winner/awards_won./award/award_honor/award_winner(B,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)"
+        "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_winner/awards_won./award/award_honor/award_winner(B,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)",
+
+        "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)"
     ]
 
     try:
