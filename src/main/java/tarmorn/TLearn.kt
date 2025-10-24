@@ -23,6 +23,21 @@ import tarmorn.structure.TLearn.Metric
  * Implements the connection algorithm: Binary Atom L=1 -connect-> Binary Atom L<=MAX_PATH_LENGTH
  */
 object TLearn {
+    // DEBUG级别，越高输出越详细
+    var DEBUG_LEVEL = 1
+
+    // DEBUG输出函数封装
+    private fun debug1(message: String) {
+        if (DEBUG_LEVEL >= 1) {
+            println("[DEBUG1] $message")
+        }
+    }
+
+    private fun debug2(message: String) {
+        if (DEBUG_LEVEL >= 2) {
+            println("[DEBUG2] $message")
+        }
+    }
 
     const val MIN_SUPP = 50
     const val MAX_PATH_LENGTH = 2
@@ -186,7 +201,7 @@ object TLearn {
 
         // Step 2: Connect relations using multiple threads
         try {
-//            connectRelations()
+            connectRelations()
         } catch (e: Exception) {
             println("Error during relation connection: ${e.message}")
             e.printStackTrace()
@@ -503,8 +518,7 @@ object TLearn {
      * 直接使用预计算的MinHash签名
      */
     fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>): Pair<Boolean, Boolean> {
-//        println("Atomizing binary relation path: ${IdManager.getRelationString(rp)} with supp=$supp")
-//        println(instanceSet)
+        debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}, inverseSet.size=${inverseSet.size}")
 
         val inverseRp = RelationPath.getInverseRelation(rp)
         // 1. r(X,Y): Binary Atom with relation path rp
@@ -522,6 +536,7 @@ object TLearn {
      * 需要动态计算MinHash签名
      */
     fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
+        debug2("atomizeUnaryRelationPath: rp=$rp, h2tSet.size=${h2tSet.size}, t2hSet.size=${t2hSet.size}, loopSet.size=${loopSet.size}")
         val inverseRp = RelationPath.getInverseRelation(rp)
 
         // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
@@ -660,6 +675,7 @@ object TLearn {
      * 为Atom计算MinHash并加入LSH分桶
      */
     fun performLSH(currentAtom: MyAtom, instanceSet: Set<Int>): Boolean {
+        debug2("performLSH: Atom=$currentAtom, instanceSet.size=${instanceSet.size}")
         // 动态计算支持度
         val mySupp = instanceSet.size
         
@@ -726,7 +742,7 @@ object TLearn {
                 if (validateAndCreateFormula(currentAtom, bucketAtom, instanceSet, jaccard) != null) cnt++
             }
             if (metric.inverse().valid && currentAtom.isHeadAtom) {
-                if (validateAndCreateFormula(bucketAtom, currentAtom, instanceSet, jaccard) != null) cnt++
+                if (validateAndCreateFormula(bucketAtom, currentAtom, bucketAtom.getInstanceSet(), jaccard) != null) cnt++
             }
 
         }
@@ -804,31 +820,33 @@ object TLearn {
 
     /**
      * 验证并创建公式 - 处理自证式一元规则问题和度量计算
-     * @param myAtom 当前原子
-     * @param atom 目标原子
+     * @param currentAtom 当前原子
+     * @param bucketAtom 目标原子
      * @param instanceSet 实例集合
      * @param jaccard Jaccard相似度
      * @return 如果创建成功返回公式，否则返回null
      */
     private fun validateAndCreateFormula(
-        myAtom: MyAtom, 
-        atom: MyAtom, 
-        instanceSet: Set<Int>, 
+        currentAtom: MyAtom,
+        bucketAtom: MyAtom,
+        instanceSet: Set<Int>,
         jaccard: Double
     ): Formula? {
+        debug2("validateAndCreateFormula: myAtom=$currentAtom, atom=$bucketAtom, instanceSet.size=${instanceSet.size}, jaccard=$jaccard")
         var intersectionSize: Double
         var metric: Metric
         
         // 动态计算支持度
-        val atomInstances = atom.getInstanceSet()
+        val atomInstances = bucketAtom.getInstanceSet()
         val supp = atomInstances.size
         val mySupp = instanceSet.size
+        debug2("validateAndCreateFormula: atomInstances.size=$supp, mySupp=$mySupp")
         
         // 自证式一元规则（entity-anchored unary rules）问题
 //        if (myAtom.isL2Atom && !myAtom.isBinary) {  这种写法有问题，会漏掉L1Atom的情况
-        if (!myAtom.isL1Atom && !myAtom.isBinary) {
-            val constant = atom.entityId
-            val inverseRelation = IdManager.getInverseRelation(myAtom.firstRelation)
+        if (!currentAtom.isL1Atom && !currentAtom.isBinary) {
+            val constant = bucketAtom.entityId
+            val inverseRelation = IdManager.getInverseRelation(currentAtom.firstRelation)
             val t2hSet = ts.r2h2tSet[inverseRelation]
             if (t2hSet == null) {
                 val inverseRelationStr = IdManager.getRelationString(inverseRelation)
@@ -843,18 +861,21 @@ object TLearn {
 
             intersectionSize = newInstanceSet.intersect(atomInstances).size.toDouble()
             metric = Metric(jaccard, intersectionSize, supp, newInstanceSet.size)
+            debug2("validateAndCreateFormula: unary rule, constant=$constant, newInstanceSet.size=${newInstanceSet.size}, intersectionSize=$intersectionSize, metric=$metric")
         } else {
             intersectionSize = instanceSet.intersect(atomInstances).size.toDouble()
             metric = Metric(jaccard, intersectionSize, supp, mySupp)
+            debug2("validateAndCreateFormula: binary/general, intersectionSize=$intersectionSize, metric=$metric")
         }
 
         if (!metric.valid) return null
 
-        val newFormula = Formula(atom1 = myAtom, atom2 = atom)
+        val newFormula = Formula(atom1 = currentAtom, atom2 = bucketAtom)
         
         // 添加到结果映射 - 线程安全
-        val formula2metric = atom2formula2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
+        val formula2metric = atom2formula2metric.computeIfAbsent(bucketAtom) { ConcurrentHashMap() }
         formula2metric[newFormula] = metric
+        debug2("validateAndCreateFormula: newFormula=$newFormula, metric=$metric")
         return newFormula
     }
 
