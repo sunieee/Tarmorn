@@ -41,6 +41,7 @@ object TLearn {
 
     const val MIN_SUPP = 50
     const val MAX_PATH_LENGTH = 2
+    const val ESTIMATE_RATIO = 0.8
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 200
@@ -738,10 +739,10 @@ object TLearn {
             var intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
             var metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
-            if (metric.valid) {
+            if (metric.estimateValid) {
                 if (validateAndCreateFormula(currentAtom, bucketAtom, instanceSet, jaccard) != null) cnt++
             }
-            if (metric.inverse().valid && currentAtom.isHeadAtom) {
+            if (metric.inverse().estimateValid && currentAtom.isHeadAtom) {
                 if (validateAndCreateFormula(bucketAtom, currentAtom, bucketAtom.getInstanceSet(), jaccard) != null) cnt++
             }
 

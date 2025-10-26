@@ -597,21 +597,21 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
             
             writer.writerow([f'共同规则示例 (共{len(common_rules)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
-                writer.writerow(['原规则', '转换后规则', f'{file1_name}指标', f'{file2_name}指标', '真实结果'])
+                writer.writerow(['转换后规则', f'{file1_name}指标', f'{file2_name}指标', '真实结果'])
                 for rule in selected_rules:
                     simplified_rule = convert_to_simplified_format(rule)
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
                     real_result_str = str(real_result['join_result']) if real_result else 'N/A'
-                    writer.writerow([rule, simplified_rule, str(metrics1), str(metrics2), real_result_str])
+                    writer.writerow([simplified_rule, str(metrics1), str(metrics2), real_result_str])
             else:
-                writer.writerow(['原规则', '转换后规则', f'{file1_name}指标', f'{file2_name}指标'])
+                writer.writerow(['转换后规则', f'{file1_name}指标', f'{file2_name}指标'])
                 for rule in selected_rules:
                     simplified_rule = convert_to_simplified_format(rule)
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
-                    writer.writerow([rule, simplified_rule, str(metrics1), str(metrics2)])
+                    writer.writerow([simplified_rule, str(metrics1), str(metrics2)])
             writer.writerow([])
         
         # ========== 仅在file1中的规则 ==========
