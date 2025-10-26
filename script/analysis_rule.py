@@ -297,10 +297,25 @@ class RuleParser:
             simplified_head = f"INVERSE_{head_relation}({head_constant})"
         
         # 构建完整的简写规则
+        # 一元规则的body部分需要带括号：
+        # - 如果有body常量，格式为 body_path(constant)
+        # - 如果没有body常量（只有中间变量），格式为 body_path(·)，表示有中间变量
         if body_constant:
             simplified_body = f"{body_path}({body_constant})"
         else:
-            simplified_body = body_path
+            # 检查是否有中间变量（body原子数 > 1，或者单个原子中有非自由变量）
+            has_intermediate_var = len(body_atoms) > 1
+            if not has_intermediate_var and len(body_atoms) == 1:
+                # 单个原子，检查是否有中间变量
+                atom = body_atoms[0]
+                args = RuleParser._extract_variables(atom)
+                # 如果有两个参数且都是变量（单字母），说明有中间变量
+                has_intermediate_var = len(args) == 2 and all(len(arg) == 1 for arg in args)
+            
+            if has_intermediate_var:
+                simplified_body = f"{body_path}(·)"
+            else:
+                simplified_body = body_path
         
         result = f"{simplified_head} <= {simplified_body}"
         debug(f"[DEBUG] Unary simplified result: {result}")
@@ -499,8 +514,8 @@ class RuleParser:
         - body1(X,A), body2(Y,A) -> body1·INVERSE_body2 (X->A<-Y)
         - body1(X,A), body2(A,B), body3(Y,B) -> body1·body2·INVERSE_body3 (X->A->B<-Y)
         """
-        if len(body_atoms) <= 1:
-            return body_atoms[0] if body_atoms else ""
+        if not body_atoms:
+            return ""
         
         # 解析原子
         parsed_atoms = []
@@ -511,6 +526,25 @@ class RuleParser:
         
         debug(f"[DEBUG] Building binary body path: atoms={[(a['relation'], a['args']) for a in parsed_atoms]}")
         debug(f"[DEBUG] Free vars: {free_vars}")
+        
+        if len(parsed_atoms) == 1:
+            # 单个原子，提取关系部分
+            atom = parsed_atoms[0]
+            # 二元规则的单个原子，直接返回关系（可能需要加INVERSE）
+            if len(free_vars) == 2:
+                X, Y = free_vars[0], free_vars[1]
+                args = atom['args']
+                # 检查参数顺序是否匹配
+                if args[0] == X and args[1] == Y:
+                    # 顺序匹配，直接使用关系
+                    return atom['relation']
+                elif args[0] == Y and args[1] == X:
+                    # 顺序相反，使用逆关系
+                    return f"INVERSE_{atom['relation']}"
+                else:
+                    # 其他情况，直接返回关系
+                    return atom['relation']
+            return atom['relation']
         
         if len(free_vars) != 2:
             # 简化处理：直接连接所有关系

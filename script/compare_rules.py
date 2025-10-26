@@ -7,11 +7,11 @@
 import re
 import os
 import csv
-from typing import Set, List, Tuple, Dict
+from typing import Set, List, Tuple, Dict, Optional
 from collections import defaultdict
 
 # 导入analysis_rule模块
-from analysis_rule import load_dataset, analyze_rule_from_string
+from analysis_rule import load_dataset, analyze_rule_from_string, RuleParser
 
 def parse_rule_line(line: str) -> Tuple[str, Dict, str]:
     """
@@ -103,6 +103,60 @@ def normalize_rule(rule: str) -> str:
         head, body = rule.split('<=', 1)
         return f"{head.strip()} <= {body.strip()}"
     return rule
+
+def convert_to_simplified_format(rule: str) -> str:
+    """
+    将带括号格式的规则转换为简写格式
+    使用analysis_rule.py中的RuleParser._normalize_to_simplified方法
+    
+    例如:
+    /award/award_category/winners./award/award_honor/ceremony(X,Y) <=
+    /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,A)
+    
+    转换为:
+    /award/award_category/winners./award/award_honor/ceremony <=
+    /award/award_category/winners./award/award_honor/award_winner · INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner
+    """
+    if '<=' not in rule:
+        return rule
+    
+    head_part, body_part = rule.split('<=', 1)
+    head_part = head_part.strip()
+    body_part = body_part.strip()
+    
+    # 检查是否已经是简写格式
+    # 简写格式特征: 二元规则头部没有括号，或一元规则头部只有一个参数
+    if '(' not in head_part or ')' not in head_part:
+        # 已经是简写格式，但需要添加空格美化
+        return beautify_simplified_rule(rule)
+    
+    paren_content = head_part.split('(')[1].split(')')[0]
+    if ',' not in paren_content:
+        # 一元简写格式，但需要添加空格美化
+        return beautify_simplified_rule(rule)
+    
+    # 使用RuleParser转换
+    try:
+        normalized = RuleParser._normalize_to_simplified(head_part, body_part)
+        # 美化输出：在·连接符左右添加空格
+        normalized = beautify_simplified_rule(normalized)
+        return normalized
+    except Exception as e:
+        # 如果转换失败，返回原始规则
+        print(f"Warning: Failed to convert rule to simplified format: {rule}, error: {e}")
+        return rule
+
+def beautify_simplified_rule(rule: str) -> str:
+    """
+    美化简写格式规则：在·连接符左右添加空格
+    
+    例如：/rel1·/rel2·INVERSE_/rel3 => /rel1 · /rel2 · INVERSE_/rel3
+    """
+    # 替换·为 · （左右各添加一个空格）
+    # 但要避免重复添加空格
+    beautified = re.sub(r'\s*·\s*', ' · ', rule)
+    return beautified
+
 
 def is_binary_rule(rule: str) -> bool:
     """
@@ -236,15 +290,23 @@ def get_relation_path_length(atom: str) -> int:
     """
     获取原子中关系路径的长度（关系的个数）
     通过计数"·"的个数+1来确定
-    """
-    # 提取关系部分（括号之前的部分）
-    match = re.match(r'([^(]+)\(', atom.strip())
-    if not match:
-        return 0
     
-    relation_path = match.group(1)
-    # 计算"·"的个数
-    dot_count = relation_path.count('·')
+    注意：这个函数现在用于简写格式的原子
+    简写格式的原子就是一个关系路径，可能包含多个关系用·连接
+    """
+    # 对于简写格式，atom可能不包含括号，就是纯关系路径
+    # 或者是 relation_path(constant) 格式
+    
+    # 移除括号部分（如果有）
+    if '(' in atom:
+        relation_path = atom.split('(')[0].strip()
+    else:
+        relation_path = atom.strip()
+    
+    # 计算"·"的个数（忽略空格）
+    # 移除所有空格后再计数
+    relation_path_no_space = relation_path.replace(' ', '')
+    dot_count = relation_path_no_space.count('·')
     # 关系路径长度 = "·"的个数 + 1
     return dot_count + 1
 
@@ -252,28 +314,60 @@ def get_rule_length_type(rule: str) -> str:
     """
     获取规则的长度类型
     返回: 'L1', 'L2', 'L3', 或 'other'
+    
+    注意：首先将规则转换为简写格式，然后基于简写格式判断长度类型
+    这样可以正确区分L1/L2/L3，避免将L3误判为L1
     """
     if '<=' not in rule:
         return 'other'
     
-    body = rule.split('<=', 1)[1].strip()
-    atoms = parse_body_atoms(body)
+    # 首先转换为简写格式
+    simplified_rule = convert_to_simplified_format(rule)
     
-    # 获取所有原子的关系路径长度
-    lengths = []
-    for atom in atoms:
-        length = get_relation_path_length(atom)
-        if length > 0:
-            lengths.append(length)
+    # 从简写格式中提取body
+    body = simplified_rule.split('<=', 1)[1].strip()
     
-    if not lengths:
-        print('No valid atoms in rule body:', rule)
-        return 'L0'
+    # 对于简写格式的二元规则，body就是一个关系路径（可能包含·连接多个关系）
+    # 对于简写格式的一元规则，body是 relation_path(constant) 格式
+    # 可能有多个这样的原子（虽然通常一元规则只有一个body原子）
+    
+    # 解析body原子
+    # 简写格式的二元规则: body就是一个关系路径，没有逗号分隔
+    # 简写格式的一元规则: body可能是 rel(c) 或 rel1·rel2(c)
+    
+    # 检查是否为二元规则（简写格式下，二元规则的body没有括号，或者head没有括号）
+    head = simplified_rule.split('<=', 1)[0].strip()
+    is_binary = '(' not in head or '(X,Y)' in head
+    
+    if is_binary and ',' not in body:
+        # 二元规则简写格式：body是单个关系路径
+        length = get_relation_path_length(body)
+        return f'L{length}'
+    else:
+        # 一元规则或带逗号的body（可能转换失败）
+        # 尝试按照简写格式解析
+        atoms = parse_body_atoms(body)
         
-    # 判断规则长度类型
-    max_length = max(lengths)
-    assert max_length <= 3, f"Unexpected relation path length: {max_length} in rule: {rule}"
-    return f'L{max_length}'
+        if len(atoms) == 1:
+            # 单个原子，直接计算长度
+            length = get_relation_path_length(atoms[0])
+            return f'L{length}'
+        else:
+            # 多个原子，取最大长度
+            lengths = []
+            for atom in atoms:
+                length = get_relation_path_length(atom)
+                if length > 0:
+                    lengths.append(length)
+            
+            if not lengths:
+                print('No valid atoms in rule body:', rule)
+                return 'L0'
+                
+            # 判断规则长度类型
+            max_length = max(lengths)
+            assert max_length <= 3, f"Unexpected relation path length: {max_length} in rule: {rule}"
+            return f'L{max_length}'
 
 def analyze_rule_statistics(rules_dict: Dict[str, List]) -> Dict:
     """
@@ -503,19 +597,21 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
             
             writer.writerow([f'共同规则示例 (共{len(common_rules)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
-                writer.writerow(['规则', f'{file1_name}指标', f'{file2_name}指标', '真实结果'])
+                writer.writerow(['原规则', '转换后规则', f'{file1_name}指标', f'{file2_name}指标', '真实结果'])
                 for rule in selected_rules:
+                    simplified_rule = convert_to_simplified_format(rule)
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
                     real_result_str = str(real_result['join_result']) if real_result else 'N/A'
-                    writer.writerow([rule, str(metrics1), str(metrics2), real_result_str])
+                    writer.writerow([rule, simplified_rule, str(metrics1), str(metrics2), real_result_str])
             else:
-                writer.writerow(['规则', f'{file1_name}指标', f'{file2_name}指标'])
+                writer.writerow(['原规则', '转换后规则', f'{file1_name}指标', f'{file2_name}指标'])
                 for rule in selected_rules:
+                    simplified_rule = convert_to_simplified_format(rule)
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
-                    writer.writerow([rule, str(metrics1), str(metrics2)])
+                    writer.writerow([rule, simplified_rule, str(metrics1), str(metrics2)])
             writer.writerow([])
         
         # ========== 仅在file1中的规则 ==========
@@ -530,17 +626,19 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
             
             writer.writerow([f'仅在{file1_name}中的规则 (共{len(only_in_1)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
-                writer.writerow(['规则', '指标', '真实结果'])
+                writer.writerow(['转换后规则', '指标', '真实结果'])
                 for rule in selected_rules:
+                    simplified_rule = convert_to_simplified_format(rule)
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
                     real_result_str = str(real_result['join_result']) if real_result else 'N/A'
-                    writer.writerow([rule, str(metrics1), real_result_str])
+                    writer.writerow([simplified_rule, str(metrics1), real_result_str])
             else:
-                writer.writerow(['规则', '指标'])
+                writer.writerow(['转换后规则', '指标'])
                 for rule in selected_rules:
+                    simplified_rule = convert_to_simplified_format(rule)
                     metrics1 = rules1[rule][0][1] if rules1[rule] else {}
-                    writer.writerow([rule, str(metrics1)])
+                    writer.writerow([simplified_rule, str(metrics1)])
             writer.writerow([])
         
         # ========== 仅在file2中的规则 ==========
@@ -555,18 +653,20 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
             
             writer.writerow([f'仅在{file2_name}中的规则 (共{len(only_in_2)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
             if kg is not None:
-                writer.writerow(['规则', '指标', '真实结果'])
+                writer.writerow(['转换后规则', '指标', '真实结果'])
                 for rule in selected_rules:
+                    simplified_rule = convert_to_simplified_format(rule)
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
                     real_result = analyze_rule_from_string(rule, kg) if kg else None
                     real_result_str = str(real_result['join_result']) if real_result else 'N/A'
-                    writer.writerow([rule, str(metrics2), real_result_str])
+                    writer.writerow([simplified_rule, str(metrics2), real_result_str])
             else:
-                writer.writerow(['规则', '指标'])
+                writer.writerow(['转换后规则', '指标'])
                 for rule in selected_rules:
+                    simplified_rule = convert_to_simplified_format(rule)
                     metrics2 = rules2[rule][0][1] if rules2[rule] else {}
-                    writer.writerow([rule, str(metrics2)])
-    
+                    writer.writerow([simplified_rule, str(metrics2)])
+
     print(f"\n统计结果已保存到: {output_file}")
 
 def main(dataset="FB15k-237", file1_name="rules-100-filtered", file2_name="rule.txt", target_relation="/award/award_category/winners./award/award_honor/ceremony"):
