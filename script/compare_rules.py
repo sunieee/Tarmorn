@@ -41,14 +41,20 @@ def parse_rule_line(line: str) -> Tuple[str, Dict, str]:
     
     return None, None, line
 
-def load_rules_with_target_relation(file_path: str, target_relation: str) -> Dict[str, List[Tuple[str, Dict, str]]]:
+def load_rules_with_target_relation(file_path: str, target_relation: str = None) -> Dict[str, List[Tuple[str, Dict, str]]]:
     """
-    加载文件中包含目标关系作为头部的所有规则
+    加载文件中的规则
+    如果target_relation为None，加载所有规则
+    如果target_relation不为None，只加载包含目标关系作为头部的规则
     返回: {标准化规则: [(原始规则, 指标字典, 原始行)]}
     """
     rules_dict = defaultdict(list)
     
-    print(f"Loading rules from: {file_path}")
+    if target_relation is None:
+        print(f"Loading all rules from: {file_path}")
+    else:
+        print(f"Loading rules from: {file_path}")
+        print(f"Target relation: {target_relation}")
     
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -58,19 +64,25 @@ def load_rules_with_target_relation(file_path: str, target_relation: str) -> Dic
             for line in f:
                 line_count += 1
                 if line_count % 100000 == 0:
-                    print(f"  Processed {line_count} lines, found {target_rule_count} target rules")
+                    if target_relation is None:
+                        print(f"  Processed {line_count} lines, loaded {target_rule_count} rules")
+                    else:
+                        print(f"  Processed {line_count} lines, found {target_rule_count} target rules")
                 
                 rule, metrics, original_line = parse_rule_line(line)
                 
-                # 使用 rule.startswith(target_relation) 来判断
-                if rule and rule.startswith(target_relation):
+                # 如果target_relation为None，加载所有规则；否则只加载匹配的规则
+                if rule and (target_relation is None or rule.startswith(target_relation)):
                     target_rule_count += 1
                     # 标准化规则（移除置信度差异，便于比较）
                     normalized_rule = normalize_rule(rule)
                     rules_dict[normalized_rule].append((rule, metrics, original_line.strip()))
             
             print(f"  Total lines: {line_count}")
-            print(f"  Found {target_rule_count} rules with target relation")
+            if target_relation is None:
+                print(f"  Loaded {target_rule_count} total rules")
+            else:
+                print(f"  Found {target_rule_count} rules with target relation")
             print(f"  Unique normalized rules: {len(rules_dict)}")
             
     except FileNotFoundError:
@@ -153,7 +165,6 @@ def parse_body_atoms(body: str) -> List[str]:
     atoms = []
     current_atom = ""
     paren_count = 0
-    
     i = 0
     while i < len(body):
         char = body[i]
@@ -237,7 +248,34 @@ def get_relation_path_length(atom: str) -> int:
     # 关系路径长度 = "·"的个数 + 1
     return dot_count + 1
 
-def analyze_rule_statistics(rules_dict: Dict[str, List], file_name: str) -> Dict:
+def get_rule_length_type(rule: str) -> str:
+    """
+    获取规则的长度类型
+    返回: 'L1', 'L2', 'L3', 或 'other'
+    """
+    if '<=' not in rule:
+        return 'other'
+    
+    body = rule.split('<=', 1)[1].strip()
+    atoms = parse_body_atoms(body)
+    
+    # 获取所有原子的关系路径长度
+    lengths = []
+    for atom in atoms:
+        length = get_relation_path_length(atom)
+        if length > 0:
+            lengths.append(length)
+    
+    if not lengths:
+        print('No valid atoms in rule body:', rule)
+        return 'L0'
+        
+    # 判断规则长度类型
+    max_length = max(lengths)
+    assert max_length <= 3, f"Unexpected relation path length: {max_length} in rule: {rule}"
+    return f'L{max_length}'
+
+def analyze_rule_statistics(rules_dict: Dict[str, List]) -> Dict:
     """
     分析规则的详细统计信息
     """
@@ -245,7 +283,14 @@ def analyze_rule_statistics(rules_dict: Dict[str, List], file_name: str) -> Dict
         'total_rules': len(rules_dict),
         'binary_rules': 0,
         'unary_rules': 0,
-        'atom_relation_lengths': defaultdict(int),  # body中不同关系路径长度的分布
+        'L0_unary': 0,
+        'L1_unary': 0,
+        'L2_unary': 0,
+        'L0_binary': 0,
+        'L1_binary': 0,
+        'L2_binary': 0,
+        'L3_binary': 0,
+        'atom_relation_lengths': defaultdict(int),
     }
     
     # Unary规则矩阵：head_type × body_type
@@ -260,35 +305,39 @@ def analyze_rule_statistics(rules_dict: Dict[str, List], file_name: str) -> Dict
             stats['unary_matrix'][head_type][body_type] = 0
     
     for normalized_rule, rule_list in rules_dict.items():
-        rule = rule_list[0][0]  # 取第一个原始规则
-        
+        rule = rule_list[0][0]
+        length_type = get_rule_length_type(rule)
         # 判断Binary还是Unary
         if is_binary_rule(rule):
             stats['binary_rules'] += 1
+            if length_type in ['L0', 'L1', 'L2', 'L3']:
+                stats[f'{length_type}_binary'] += 1
         else:
             stats['unary_rules'] += 1
-            
+            if length_type in ['L0', 'L1', 'L2']:
+                stats[f'{length_type}_unary'] += 1
             # 分析Unary规则的头部和body类型
-            head_type = get_head_variable_type(rule)
-            
-            if head_type in head_types:
-                body = rule.split('<=', 1)[1].strip()
-                # 正确分割body中的多个原子（考虑原子内部的逗号）
-                atoms = parse_body_atoms(body)
-                
-                for atom in atoms:
-                    body_type = get_body_atom_type(atom)
-                    stats['unary_matrix'][head_type][body_type] += 1
-            else:
-                # 如果是unary规则但头部类型不在预期范围内，报错
-                raise ValueError(f"Unary规则的头部类型不在预期范围内: {head_type} in {rule}")
-        
+            try:
+                head_type = get_head_variable_type(rule)
+                if head_type in head_types:
+                    body = rule.split('<=', 1)[1].strip()
+                    atoms = parse_body_atoms(body)
+                    for atom in atoms:
+                        try:
+                            body_type = get_body_atom_type(atom)
+                            stats['unary_matrix'][head_type][body_type] += 1
+                        except ValueError as e:
+                            print(f"Warning: 无法解析原子 '{atom}' in rule '{rule}': {e}")
+                            continue
+                else:
+                    print(f"Warning: Unary规则的头部类型不在预期范围内: {head_type} in {rule}")
+            except ValueError as e:
+                print(f"Warning: 无法解析规则头 '{rule}': {e}")
+                continue
         # 分析body中原子的关系路径长度
         if '<=' in rule:
             body = rule.split('<=', 1)[1].strip()
-            # 正确分割body中的多个原子（考虑原子内部的逗号）
             atoms = parse_body_atoms(body)
-            
             for atom in atoms:
                 length = get_relation_path_length(atom)
                 if length > 0:
@@ -314,14 +363,30 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
         # ========== 规则类型分布 ==========
         writer.writerow(['规则类型分布'])
         writer.writerow(['类型', file1_name, file2_name, '差异'])
-        writer.writerow(['Binary规则 (X,Y)', 
-                        f"{stats1['binary_rules']} ({stats1['binary_rules']/stats1['total_rules']*100:.2f}%)",
-                        f"{stats2['binary_rules']} ({stats2['binary_rules']/stats2['total_rules']*100:.2f}%)",
-                        stats2['binary_rules'] - stats1['binary_rules']])
-        writer.writerow(['Unary规则', 
-                        f"{stats1['unary_rules']} ({stats1['unary_rules']/stats1['total_rules']*100:.2f}%)",
-                        f"{stats2['unary_rules']} ({stats2['unary_rules']/stats2['total_rules']*100:.2f}%)",
-                        stats2['unary_rules'] - stats1['unary_rules']])
+        
+        # 定义规则类型
+        rule_types = [
+            ('L0 Unary', 'L0_unary'),
+            ('L1 Unary', 'L1_unary'), 
+            ('L2 Unary', 'L2_unary'),
+            ('Unary', 'unary_rules'),
+            ('L0 Binary', 'L0_binary'),
+            ('L1 Binary', 'L1_binary'),
+            ('L2 Binary', 'L2_binary'),
+            ('L3 Binary', 'L3_binary'),
+            ('Binary', 'binary_rules')
+        ]
+        
+        # 遍历输出规则类型统计
+        for display_name, stat_key in rule_types:
+            count1 = stats1[stat_key]
+            count2 = stats2[stat_key]
+            pct1 = count1 / stats1['total_rules'] * 100
+            pct2 = count2 / stats2['total_rules'] * 100
+            writer.writerow([display_name,
+                            f"{count1} ({pct1:.2f}%)",
+                            f"{count2} ({pct2:.2f}%)",
+                            count2 - count1])
         writer.writerow([])
         
         # ========== Unary规则矩阵分布 ==========
@@ -504,25 +569,7 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
     
     print(f"\n统计结果已保存到: {output_file}")
 
-def compare_rules(rules1: Dict[str, List], rules2: Dict[str, List], file1_name: str, file2_name: str, kg=None):
-    """
-    比较两个规则集合
-    """
-    print(f"\n=== 规则比较分析 ===")
-    print(f"文件1: {file1_name}")
-    print(f"文件2: {file2_name}")
-    
-    # 详细统计
-    stats1 = analyze_rule_statistics(rules1, file1_name)
-    stats2 = analyze_rule_statistics(rules2, file2_name)
-    
-    set1 = set(rules1.keys())
-    set2 = set(rules2.keys())
-    
-    # 返回统计数据，用于CSV导出
-    return stats1, stats2, set1, set2
-
-def main(dataset="FB15k-237", file1_name="rules-100-filtered", file2_name="rule.txt"):
+def main(dataset="FB15k-237", file1_name="rules-100-filtered", file2_name="rule.txt", target_relation="/award/award_category/winners./award/award_honor/ceremony"):
     """
     主函数
     """
@@ -531,15 +578,15 @@ def main(dataset="FB15k-237", file1_name="rules-100-filtered", file2_name="rule.
     file1 = os.path.join(base_dir, "out", dataset, file1_name)
     file2 = os.path.join(base_dir, "out", dataset, file2_name)
     dataset_path = os.path.join(base_dir, "data", dataset, "train.txt")
-
-    # 目标关系
-    target_relation = "/award/award_category/winners./award/award_honor/ceremony"
     
     print("=== 规则文件比较工具 ===")
     print(f"比较文件:")
     print(f"  File 1: {file1}")
     print(f"  File 2: {file2}")
-    print(f"目标关系: {target_relation}")
+    if target_relation:
+        print(f"目标关系: {target_relation}")
+    else:
+        print("分析模式: 全量规则分析")
     
     # 检查文件是否存在
     if not os.path.exists(file1):
@@ -572,11 +619,20 @@ def main(dataset="FB15k-237", file1_name="rules-100-filtered", file2_name="rule.
         print(f"将不包含真实结果信息")
     
     # 比较规则并生成统计
-    stats1, stats2, set1, set2 = compare_rules(rules1, rules2, file1_name, file2_name, None)
+    stats1 = analyze_rule_statistics(rules1)
+    stats2 = analyze_rule_statistics(rules2)
+    
+    set1 = set(rules1.keys())
+    set2 = set(rules2.keys())
     
     # 导出到CSV
-    csv_output_path = os.path.join(base_dir, "out", dataset, "comparison_result.csv")
+    output_suffix = "all_rule" if target_relation is None else "rule_" + target_relation.split('/')[-1]
+    csv_output_path = os.path.join(base_dir, "out", dataset, f"{output_suffix}_comparison.csv")
     save_statistics_to_csv(stats1, stats2, file1_name, file2_name, set1, set2, rules1, rules2, csv_output_path, kg)
 
 if __name__ == "__main__":
-    main()
+    # 默认进行特定关系分析
+    # main()
+
+    # 如果要进行全量分析
+    main(target_relation=None)
