@@ -40,8 +40,8 @@ object TLearn {
     }
 
     const val MIN_SUPP = 50
-    const val MAX_PATH_LENGTH = 2
-    const val ESTIMATE_RATIO = 0.8
+    const val MAX_PATH_LENGTH = 3
+    const val ESTIMATE_RATIO = 1
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 200
@@ -299,8 +299,8 @@ object TLearn {
                 }
                 println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
 
-                if (activeCount < Settings.WORKER_THREADS / 4) {
-                    println("FORCING SHUTDOWN: 75% threads have finished")
+                if (activeCount < Settings.WORKER_THREADS / 2) {
+                    println("FORCING SHUTDOWN: 1/2 threads have finished")
                     futures.forEach { it.cancel(true) }
                     threadPool.shutdownNow()
                     break
@@ -363,9 +363,9 @@ object TLearn {
 
                 if (supp >= MIN_SUPP) {
                     // 检查反向关系对的连接结果
-//                    if (IdManager.getInverseRelation(r1) == ri) {
-//                        println("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp")
-//                    }
+                   if (IdManager.getInverseRelation(r1) == ri) {
+                       debug1("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp")
+                   }
                     
                     relationQueue.offer(connectedPath)
                     val cnt = addedCount.incrementAndGet()
@@ -374,9 +374,12 @@ object TLearn {
                      logWorkerResult(connectedPath, supp)
 
                     //  || activeThreadCount.get() < Settings.WORKER_THREADS
-                    if (cnt % 100 == 0 || activeThreadCount.get() < Settings.WORKER_THREADS / 4) {
-                        val remaining = relationQueue.size
+                    val remaining = relationQueue.size
+                    if (cnt % 100 == 0) {
                         println("Thread $threadId: Added $cnt new paths; latest supp=$supp; TODO: $remaining remaining in queue")
+                    }
+                    if (activeThreadCount.get() < Settings.WORKER_THREADS / 4) {
+                        debug2("Thread $threadId: Added $cnt new paths; latest supp=$supp; TODO: $remaining remaining in queue")
                     }
                 }
             }
@@ -456,6 +459,9 @@ object TLearn {
             for (r1Head in r1HeadEntities) {
                 for (riTail in riTailEntities) {
                     if (r1Head != riTail) { // Object Entity Constraint: avoid self-loops
+                        require(r1Head != connectingEntity && connectingEntity != riTail) {
+                            "Connection node $connectingEntity should not equal head $r1Head or tail $riTail"
+                        }
                         val pairHashValue = pairHash(r1Head, riTail)
                         // instanceSet.add() returns true if element was added (not already present)
                         if (instanceSet.add(pairHashValue)) {

@@ -678,6 +678,9 @@ class RuleParser:
         
         例如：/rel1·/rel2(/m/entity) 
         返回：(["/rel1", "/rel2"], "/m/entity")
+        
+        特殊情况：/rel(·) 表示"任意实体"，不是常量约束
+        返回：(["/rel"], None)
         """
         body_constant = None
         
@@ -689,7 +692,13 @@ class RuleParser:
             
             if last_paren_start < last_paren_end:
                 entity_part = body_part[last_paren_start+1:last_paren_end].strip()
-                if entity_part.startswith('/m/'):
+                # 检查是否是"任意实体"占位符
+                if entity_part == '·':
+                    # (·) 表示任意实体，不是常量约束
+                    # 移除括号部分，但不设置body_constant
+                    body_part = body_part[:last_paren_start].strip()
+                elif entity_part.startswith('/m/'):
+                    # 真正的常量约束
                     body_constant = entity_part
                     # 移除括号部分
                     body_part = body_part[:last_paren_start].strip()
@@ -937,6 +946,8 @@ class RuleSupportCalculator:
     
     def __init__(self, kg: KnowledgeGraph):
         self.kg = kg
+        # 实例缓存，存储每个路径的实例集合
+        self.instance_cache = {}
     
     def get_binary_instances_join(self, relation_path: List[str]) -> Set[Tuple[str, str]]:
         """
@@ -953,83 +964,169 @@ class RuleSupportCalculator:
         if not relation_path:
             return set()
         
-        if len(relation_path) == 1:
-            result = self.kg.get_relation_pairs(relation_path[0])
-            debug(f"    [DEBUG] Single relation {relation_path[0]} has {len(result)} instances")
-            return result
+        # 使用新的 compute_supp 方法
+        result = self.compute_supp(relation_path)
         
-        # 逐级连接关系
-        current_relation = relation_path[-1]
-        for i in range(len(relation_path) - 2, -1, -1):
-            debug(f"    [DEBUG] Joining {relation_path[i]} with {current_relation}")
-            current_relation = self.join_relations(relation_path[i], current_relation)
-        
-        result = self.kg.get_relation_pairs(current_relation)
-        debug(f"    [DEBUG] Final joined relation {current_relation} has {len(result)} instances")
+        debug(f"    [DEBUG] Final result has {len(result)} instances")
         return result
     
-    def join_relations(self, r1: str, r2: str) -> str:
+    def compute_supp(self, relation_path: List[str]) -> Set[Tuple[str, str]]:
         """
-        连接两个关系：r1 · r2
-        返回新关系的名称，并将结果存储到kg.r2h2t中
+        计算关系路径的实例集合，确保路径上所有实体都不相等
+        
+        对于长度为3的路径 r1·r2·r3，同时考虑两种拆分：
+        1. (r1·r2)·r3：确保 A!=B!=D
+        2. r1·(r2·r3)：确保 A!=C!=D
+        两种拆分的交集才是最终结果，这样能确保 A!=B!=C!=D
+        
+        Args:
+            relation_path: 关系路径列表
+            
+        Returns:
+            满足所有约束的 (X, Y) 对集合
         """
-        new_relation_name = f"{r1}·{r2}"
+        path_str = '·'.join(relation_path)
         
         # 如果已经计算过，直接返回
-        if new_relation_name in self.kg.r2h2t:
-            debug(f"      [DEBUG] Using cached join result: {new_relation_name}")
-            return new_relation_name
+        if path_str in self.instance_cache:
+            debug(f"      [DEBUG] Using cached instances for {path_str}")
+            return self.instance_cache[path_str]
         
-        debug(f"      [DEBUG] Computing join: {r1} · {r2}")
+        if len(relation_path) == 1:
+            # 单个关系，直接返回其实例
+            instances = self.kg.get_relation_pairs(relation_path[0])
+            self.instance_cache[path_str] = instances
+            return instances
         
-        # 获取r1和r2的r2h2t映射
+        if len(relation_path) == 2:
+            # 两个关系，直接连接
+            instances = self._join_two_relations(relation_path[0], relation_path[1])
+            self.instance_cache[path_str] = instances
+            return instances
+        
+        # 长度 >= 3 的路径，需要考虑所有 N-1 种拆分方式
+        n = len(relation_path)
+        debug(f"      [DEBUG] Computing {n}-path with {n-1} split methods")
+        
+        # 所有拆分方式的结果
+        split_results = []
+        
+        # 遍历所有可能的拆分位置
+        for split_pos in range(1, n):
+            left_path = relation_path[:split_pos]
+            right_path = relation_path[split_pos:]
+            
+            debug(f"      [DEBUG] Split {split_pos}: {' · '.join(left_path)} | {' · '.join(right_path)}")
+            
+            # 递归计算左右两部分
+            left_instances = self.compute_supp(left_path)
+            if not left_instances:
+                debug(f"      [DEBUG] Left part is empty, this split gives 0 instances")
+                # 如果某个拆分的左边为空，这个拆分的结果是空集
+                split_results.append(set())
+                continue
+            
+            right_instances = self.compute_supp(right_path)
+            if not right_instances:
+                debug(f"      [DEBUG] Right part is empty, this split gives 0 instances")
+                split_results.append(set())
+                continue
+            
+            # 统一使用 instances · instances 连接左右两部分
+            split_result = self._join_two_instance_sets(left_instances, right_instances)
+            
+            debug(f"      [DEBUG] Split {split_pos} result: {len(split_result)} instances")
+            split_results.append(split_result)
+        
+        # 取所有拆分结果的交集
+        if not split_results:
+            result = set()
+        else:
+            result = split_results[0]
+            for split_result in split_results[1:]:
+                result = result.intersection(split_result)
+        
+        debug(f"      [DEBUG] Final {n}-path result (intersection of {len(split_results)} splits): {len(result)} instances")
+        
+        self.instance_cache[path_str] = result
+        return result
+    
+    def _join_two_relations(self, r1: str, r2: str) -> Set[Tuple[str, str]]:
+        """连接两个关系，确保 X != A != Y"""
+        debug(f"      [DEBUG] Joining two relations: {r1} · {r2}")
+        
         r1_h2t = self.kg.r2h2t.get(r1, {})
         r2_h2t = self.kg.r2h2t.get(r2, {})
         
-        debug(f"      [DEBUG] r1 ({r1}) has {sum(len(tails) for tails in r1_h2t.values())} instances")
-        debug(f"      [DEBUG] r2 ({r2}) has {sum(len(tails) for tails in r2_h2t.values())} instances")
-        
-        # 高效获取连接节点：r1的所有tail ∩ r2的所有head
+        # 获取连接节点
         inverse_r1 = self.kg.get_inverse_relation(r1)
         r1_tails = set(self.kg.r2h2t.get(inverse_r1, {}).keys())
         r2_heads = set(r2_h2t.keys())
         connection_nodes = r1_tails.intersection(r2_heads)
         
-        debug(f"      [DEBUG] r1 tails: {len(r1_tails)}, r2 heads: {len(r2_heads)}, connection nodes: {len(connection_nodes)}")
+        debug(f"      [DEBUG] Connection nodes: {len(connection_nodes)}")
         
-        # 对每个连接节点计算笛卡尔积
-        result_h2t = defaultdict(set)  # r1·r2 的正向索引
-        result_t2h = defaultdict(set)  # r1·r2 的逆向索引
-        total_results = 0
+        result = set()
         for node in connection_nodes:
-            inverse_r1 = self.kg.get_inverse_relation(r1)
-            r1_heads_to_node = self.kg.r2h2t.get(inverse_r1, {}).get(node, set())
-            r2_tails_from_node = r2_h2t.get(node, set())
+            r1_heads = self.kg.r2h2t.get(inverse_r1, {}).get(node, set())
+            r2_tails = r2_h2t.get(node, set())
             
-            for h1 in r1_heads_to_node:
-                for t2 in r2_tails_from_node:
-                    if h1 != t2:  # 规则语义：不允许 X == Y
-                        result_h2t[h1].add(t2)  # 正向：h1 -> t2
-                        result_t2h[t2].add(h1)  # 逆向：t2 -> h1
-                        total_results += 1
+            for h in r1_heads:
+                for t in r2_tails:
+                    # 确保 h != node != t 且 h != t
+                    if h != node and node != t and h != t:
+                        result.add((h, t))
         
-        debug(f"      [DEBUG] Join result: {total_results} instances")
+        debug(f"      [DEBUG] Join result: {len(result)} instances")
+        return result
+    
+    def _join_instances_with_relation(self, instances: Set[Tuple[str, str]], relation: str) -> Set[Tuple[str, str]]:
+        """将实例集合与关系连接：instances · relation"""
+        debug(f"      [DEBUG] Joining {len(instances)} instances with relation {relation}")
         
-        # 将结果存储到kg的r2h2t中
-        self.kg.r2h2t[new_relation_name] = result_h2t
-        self.kg.relations.add(new_relation_name)
+        r_h2t = self.kg.r2h2t.get(relation, {})
+        result = set()
         
-        # 同时存储逆关系
-        inverse_r2 = self.kg.get_inverse_relation(r2)
-        inverse_r1 = self.kg.get_inverse_relation(r1)
-        inverse_relation_name = f"{inverse_r2}·{inverse_r1}"
+        for (x, y) in instances:
+            # y 作为关系 relation 的 head
+            if y in r_h2t:
+                for z in r_h2t[y]:
+                    # 确保 x != y != z 且 x != z
+                    if x != y and y != z and x != z:
+                        result.add((x, z))
         
-        self.kg.r2h2t[inverse_relation_name] = result_t2h
-        self.kg.relations.add(inverse_relation_name)
+        debug(f"      [DEBUG] Result: {len(result)} instances")
+        return result
+    
+    def _join_relation_with_instances(self, relation: str, instances: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+        """将关系与实例集合连接：relation · instances"""
+        debug(f"      [DEBUG] Joining relation {relation} with {len(instances)} instances")
         
-        debug(f"      [DEBUG] Also computed inverse relation: {inverse_relation_name}")
+        # 需要找到 relation 的逆关系来获取 tail -> head 的映射
+        inverse_rel = self.kg.get_inverse_relation(relation)
+        inv_h2t = self.kg.r2h2t.get(inverse_rel, {})
         
-        return new_relation_name
+        result = set()
+        
+        for (y, z) in instances:
+            # y 作为关系 relation 的 tail，找到所有能到达 y 的 head
+            if y in inv_h2t:
+                for x in inv_h2t[y]:
+                    # 确保 x != y != z 且 x != z
+                    if x != y and y != z and x != z:
+                        result.add((x, z))
+        
+        debug(f"      [DEBUG] Result: {len(result)} instances")
+        return result
+    
+    def _join_two_instance_sets(self, left: Set[Tuple[str, str]], right: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+        """连接两个实例集合"""
+        result = set()
+        for (x, y) in left:
+            for (y2, z) in right:
+                if y == y2 and x != y and y != z and x != z:
+                    result.add((x, z))
+        return result
     
     def get_unary_instances_bruteforce(self, rule_info: Dict) -> Set[str]:
         """
@@ -1914,6 +2011,27 @@ if __name__ == "__main__":
 
         "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)"
     ]
+
+    test_rules = [
+        "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(·)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency · INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency · /education/university/local_tuition./measurement_unit/dated_money_value/currency"
+    ]
+
+    # 下面这些rules理论上supp都应该是0，因为 currency 都是多对一关系，所以后半段 INVERSE_currency·currency 不可能有实例
+    test_rules = {
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/statistical_region/gdp_real./measurement_unit/adjusted_money_value/adjustment_currency(B,Y)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /business/business_operation/operating_income./measurement_unit/dated_money_value/currency(B,A), /organization/endowed_organization/endowment./measurement_unit/dated_money_value/currency(B,Y)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(B,A), /business/business_operation/operating_income./measurement_unit/dated_money_value/currency(B,Y)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,Y)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gdp_nominal./measurement_unit/dated_money_value/currency(B,A), /location/statistical_region/gdp_real./measurement_unit/adjusted_money_value/adjustment_currency(B,Y)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /business/business_operation/assets./measurement_unit/dated_money_value/currency(B,A), /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(B,Y)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(B,A), /business/business_operation/revenue./measurement_unit/dated_money_value/currency(B,Y)",
+        }
+    
+    # 注意，单独计算下面的rule，发现bodySize != 0，这是严重的问题
+    # test_rules = ["INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency·/education/university/local_tuition./measurement_unit/dated_money_value/currency·INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency"]
+
+    # test_rules = ["/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  /location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency·INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency·/education/university/local_tuition./measurement_unit/dated_money_value/currency"]
 
     try:
         # 加载数据集
