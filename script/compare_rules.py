@@ -439,6 +439,68 @@ def analyze_rule_statistics(rules_dict: Dict[str, List]) -> Dict:
     
     return stats
 
+def write_rule_section(writer, rules_set: Set, rules_dict: Dict, section_title: str, kg=None):
+    """
+    写入规则示例部分（辅助函数）
+    
+    Args:
+        writer: CSV writer对象
+        rules_set: 规则集合
+        rules_dict: 规则字典
+        section_title: 部分标题
+        kg: 知识图谱（可选）
+    """
+    if not rules_set:
+        return
+    
+    # 分离Binary和Unary规则，并按长度分类Binary规则
+    binary_rules = [rule for rule in rules_set if is_binary_rule(rule)]
+    unary_rules = [rule for rule in rules_set if not is_binary_rule(rule)]
+    
+    # 将Binary规则按长度分类
+    l1_binary = [r for r in binary_rules if get_rule_length_type(r) == 'L1']
+    l2_binary = [r for r in binary_rules if get_rule_length_type(r) == 'L2']
+    l3_binary = [r for r in binary_rules if get_rule_length_type(r) == 'L3']
+    other_binary = [r for r in binary_rules if get_rule_length_type(r) not in ['L1', 'L2', 'L3']]
+    
+    # 选择Binary规则：至少3个L1，3个L2，其余补充
+    selected_binary = []
+    selected_binary.extend(l1_binary[:3])  # 至少3个L1
+    selected_binary.extend(l2_binary[:3])  # 至少3个L2
+    
+    # 补充到10个Binary规则
+    remaining_needed = 10 - len(selected_binary)
+    if remaining_needed > 0:
+        # 从剩余的规则中补充
+        remaining_rules = l1_binary[3:] + l2_binary[3:] + l3_binary + other_binary
+        selected_binary.extend(remaining_rules[:remaining_needed])
+    
+    # 选择10个Unary规则
+    selected_unary = unary_rules[:10]
+    
+    # 组合所有选择的规则
+    selected_rules = selected_binary + selected_unary
+    
+    # 写入标题
+    writer.writerow([f'{section_title} (共{len(rules_set)}条，展示前{len(selected_rules)}条: 前10条Binary(至少3个L1+3个L2), 后10条Unary)'])
+    
+    # 写入表头和数据
+    if kg is not None:
+        writer.writerow(['转换后规则', '指标', '真实结果'])
+        for rule in selected_rules:
+            simplified_rule = convert_to_simplified_format(rule)
+            metrics = rules_dict[rule][0][1] if rules_dict[rule] else {}
+            real_result = analyze_rule_from_string(rule, kg) if kg else None
+            real_result_str = str(real_result['join_result']) if real_result else 'N/A'
+            writer.writerow([simplified_rule, str(metrics), real_result_str])
+    else:
+        writer.writerow(['转换后规则', '指标'])
+        for rule in selected_rules:
+            simplified_rule = convert_to_simplified_format(rule)
+            metrics = rules_dict[rule][0][1] if rules_dict[rule] else {}
+            writer.writerow([simplified_rule, str(metrics)])
+    writer.writerow([])
+
 def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_name: str, 
                            set1: Set, set2: Set, rules1: Dict, rules2: Dict, output_file: str, kg=None):
     """
@@ -614,58 +676,10 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
                     writer.writerow([simplified_rule, str(metrics1), str(metrics2)])
             writer.writerow([])
         
-        # ========== 仅在file1中的规则 ==========
-        if only_in_1:
-            # 分离Binary和Unary规则
-            binary_rules = [rule for rule in only_in_1 if is_binary_rule(rule)]
-            unary_rules = [rule for rule in only_in_1 if not is_binary_rule(rule)]
-            
-            # 计算每种类型应该取多少条
-            half_n = topN // 2
-            selected_rules = binary_rules[:half_n] + unary_rules[:half_n]
-            
-            writer.writerow([f'仅在{file1_name}中的规则 (共{len(only_in_1)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
-            if kg is not None:
-                writer.writerow(['转换后规则', '指标', '真实结果'])
-                for rule in selected_rules:
-                    simplified_rule = convert_to_simplified_format(rule)
-                    metrics1 = rules1[rule][0][1] if rules1[rule] else {}
-                    real_result = analyze_rule_from_string(rule, kg) if kg else None
-                    real_result_str = str(real_result['join_result']) if real_result else 'N/A'
-                    writer.writerow([simplified_rule, str(metrics1), real_result_str])
-            else:
-                writer.writerow(['转换后规则', '指标'])
-                for rule in selected_rules:
-                    simplified_rule = convert_to_simplified_format(rule)
-                    metrics1 = rules1[rule][0][1] if rules1[rule] else {}
-                    writer.writerow([simplified_rule, str(metrics1)])
-            writer.writerow([])
-        
-        # ========== 仅在file2中的规则 ==========
-        if only_in_2:
-            # 分离Binary和Unary规则
-            binary_rules = [rule for rule in only_in_2 if is_binary_rule(rule)]
-            unary_rules = [rule for rule in only_in_2 if not is_binary_rule(rule)]
-            
-            # 计算每种类型应该取多少条
-            half_n = topN // 2
-            selected_rules = binary_rules[:half_n] + unary_rules[:half_n]
-            
-            writer.writerow([f'仅在{file2_name}中的规则 (共{len(only_in_2)}条，展示前{topN}条: 前{half_n}条Binary, 后{half_n}条Unary)'])
-            if kg is not None:
-                writer.writerow(['转换后规则', '指标', '真实结果'])
-                for rule in selected_rules:
-                    simplified_rule = convert_to_simplified_format(rule)
-                    metrics2 = rules2[rule][0][1] if rules2[rule] else {}
-                    real_result = analyze_rule_from_string(rule, kg) if kg else None
-                    real_result_str = str(real_result['join_result']) if real_result else 'N/A'
-                    writer.writerow([simplified_rule, str(metrics2), real_result_str])
-            else:
-                writer.writerow(['转换后规则', '指标'])
-                for rule in selected_rules:
-                    simplified_rule = convert_to_simplified_format(rule)
-                    metrics2 = rules2[rule][0][1] if rules2[rule] else {}
-                    writer.writerow([simplified_rule, str(metrics2)])
+        # ========== 仅在某个文件中的规则 ==========
+        # 使用辅助函数处理两个部分
+        write_rule_section(writer, only_in_1, rules1, f'仅在{file1_name}中的规则', kg)
+        write_rule_section(writer, only_in_2, rules2, f'仅在{file2_name}中的规则', kg)
 
     print(f"\n统计结果已保存到: {output_file}")
 
