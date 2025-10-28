@@ -39,12 +39,13 @@ object TLearn {
         }
     }
 
-    const val MIN_SUPP = 50
+    const val MIN_CONF = 0
+    const val MIN_SUPP = 40
     const val MAX_PATH_LENGTH = 3
-    const val ESTIMATE_RATIO = 1
+    const val ESTIMATE_RATIO = 0.8
 
     // MinHash parameters: MH_DIM = BANDS * R
-    const val MH_DIM = 200
+    const val MH_DIM = 256
     const val R = 1  // 每band维度
     const val BANDS = MH_DIM / R
     // const val bucketCountThreshold = 2  // 弃用，过滤太多不应该过滤的
@@ -190,7 +191,7 @@ object TLearn {
         } as MutableMap<Long, MutableMap<Int, Int>>
         r2instanceSet = R2h2tSet.mapValues { entry ->
             entry.value.flatMap { (head, tails) ->
-                tails.map { tail -> pairHash(head, tail) }
+                tails.map { tail -> pairHash32(head, tail) }
             }.toMutableSet()
         }.toMutableMap()
 
@@ -359,7 +360,7 @@ object TLearn {
         for (r1 in relationL1) {
             val connectedPath = attemptConnection(r1, ri)
             if (connectedPath != null) {
-                val supp = computeSupp(connectedPath, r1, ri)
+                val supp = computeSupp(connectedPath)
 
                 if (supp >= MIN_SUPP) {
                     // 检查反向关系对的连接结果
@@ -425,18 +426,36 @@ object TLearn {
 
     /**
      * Step 4 & 5: Compute supp for a connected relation path
-     * Uses the correct connection algorithm matching Python implementation
+     * 根据路径长度选择不同的计算方法
      */
-    fun computeSupp(rp: Long, r1: Long, ri: Long): Int {
-        // Get tail entities of r1 (these become connecting entities)
+    fun computeSupp(rp: Long): Int {
         val pathLength = RelationPath.getLength(rp)
+        
+        return when (pathLength) {
+            2 -> computeSuppLength2(rp)
+            3 -> computeSuppLength3(rp)
+            else -> throw IllegalArgumentException("Unsupported path length: $pathLength")
+        }
+    }
+
+    /**
+     * 计算长度为2的路径支持度
+     * 使用原有的连接算法
+     */
+    private fun computeSuppLength2(rp: Long): Int {
+        // 分解路径: rp = r1 · r2
+        val relations = RelationPath.decode(rp)
+        val r1 = relations[0]
+        val r2 = relations[1]
+        
+        // Get tail entities of r1 (these become connecting entities)
         val r1TailEntities = r2tSet[r1]!!
-        // Get head entities for ri
-        val riHeadEntities = R2h2supp[ri]?.keys ?: emptySet()
+        // Get head entities for r2
+        val r2HeadEntities = R2h2supp[r2]?.keys ?: emptySet()
 
         // Find intersection of possible connecting entities (connection nodes)
         val connectingEntities = r1TailEntities.asSequence()
-            .filter { it in riHeadEntities }
+            .filter { it in r2HeadEntities }
 
         // Initialize data structures
         val h2tSet = mutableMapOf<Int, MutableSet<Int>>()
@@ -449,29 +468,23 @@ object TLearn {
         
         for (connectingEntity in connectingEntities) {
             // Get head entities that can reach this connecting entity via r1
-            // This is equivalent to: entities where (entity, r1, connectingEntity) exists
             val r1HeadEntities = R2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
 
-            // Get tail entities reachable from this connecting entity via ri
-            val riTailEntities = R2h2tSet[ri]?.get(connectingEntity) ?: emptySet()
+            // Get tail entities reachable from this connecting entity via r2
+            val r2TailEntities = R2h2tSet[r2]?.get(connectingEntity) ?: emptySet()
 
             // Create Cartesian product, avoiding duplicates
             for (r1Head in r1HeadEntities) {
-                for (riTail in riTailEntities) {
-                    if (r1Head != riTail) { // Object Entity Constraint: avoid self-loops
-                        require(r1Head != connectingEntity && connectingEntity != riTail) {
-                            "Connection node $connectingEntity should not equal head $r1Head or tail $riTail"
+                for (r2Tail in r2TailEntities) {
+                    if (r1Head != r2Tail) { // Object Entity Constraint: X != Y
+                        require(r1Head != connectingEntity && connectingEntity != r2Tail) {
+                            "Connection node $connectingEntity should not equal head $r1Head or tail $r2Tail"
                         }
-                        val pairHashValue = pairHash(r1Head, riTail)
-                        // instanceSet.add() returns true if element was added (not already present)
-                        if (instanceSet.add(pairHashValue)) {
-                            inverseSet.add(pairHash(riTail, r1Head))
-                            
-                            // Store h2t mapping only for paths with length < 3
-                            if (pathLength < 3) {
-                                h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(riTail)
-                                t2hSet.getOrPut(riTail) { mutableSetOf() }.add(r1Head)
-                            }
+                        val pairHash32Value = pairHash32(r1Head, r2Tail)
+                        if (instanceSet.add(pairHash32Value)) {
+                            inverseSet.add(pairHash32(r2Tail, r1Head))
+                            h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(r2Tail)
+                            t2hSet.getOrPut(r2Tail) { mutableSetOf() }.add(r1Head)
                         }
                     } else {
                         loopSet.add(r1Head)
@@ -490,34 +503,131 @@ object TLearn {
         
         val size = instanceSet.size
 
-        // 因为R2supp占用内存较小，且需要记录，频繁访问，直接存储
+        // 存储支持度
         val inverseRp = RelationPath.getInverseRelation(rp)
         R2supp[rp] = size
-        // 只有当 rp != inverseRp 时才单独存储反向路径的支持度
-        if (rp != inverseRp) {
-            R2supp[inverseRp] = size
-        }
+        if (rp != inverseRp) R2supp[inverseRp] = size
 
         if (size >= MIN_SUPP) {
-            // Add to main data structures
-//            r2instanceSet[rp] = instanceSet
-//            r2instanceSet[inverseRp] = inverseSet
             val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
-//            val (forwardSuccess, inverseSuccess) = Pair(true, true) // 跳过Binary原子化，直接进行Unary原子化
 
-            if (forwardSuccess || pathLength < 3) R2h2supp[rp] = h2supp
-            if (inverseSuccess || pathLength < 3) R2h2supp[inverseRp] = t2supp
+            if (forwardSuccess) R2h2supp[rp] = h2supp
+            if (inverseSuccess) R2h2supp[inverseRp] = t2supp
 
-            // 长度超过1的不进行Unary原子化
-            if (pathLength < 3) {
-                // For paths with length < 3, we store the full h2t mapping
-                R2h2tSet[rp] = h2tSet
-                // R2h2tSet[RelationPath.getInverseRelation(rp)] = h2tSet
-//                atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
-            }
+            R2h2tSet[rp] = h2tSet
         }
 
         return size
+    }
+
+    /**
+     * 计算长度为3的路径支持度
+     * 使用两种拆分方式的交集
+     */
+    private fun computeSuppLength3(rp: Long): Int {
+        debug2("computeSuppLength3: rp=${IdManager.getRelationString(rp)}")
+        
+        // 分解路径: rp = r1 · r2 · r3
+        val relations = RelationPath.decode(rp)
+        val r1 = relations[0]
+        val r2 = relations[1]
+        val r3 = relations[2]
+        
+        // 方式一: r1 · (r2·r3)
+        val r2r3 = RelationPath.connectHead(r2, r3)
+        // 方式二: INVERSE_r3 · (INVERSE_r2·INVERSE_r1)
+        val invR3 = IdManager.getInverseRelation(r3)
+        val invR2 = IdManager.getInverseRelation(r2)
+        val invR1 = IdManager.getInverseRelation(r1)
+        val invR2R1 = RelationPath.connectHead(invR2, invR1)
+        
+        // 检查两个复合路径是否都存在于R2h2supp中
+        if (!R2h2supp.containsKey(r2r3) || !R2h2supp.containsKey(invR2R1)) {
+            debug2("  Required paths not found in R2h2supp (r2·r3: ${R2h2supp.containsKey(r2r3)}, INVERSE_r2·INVERSE_r1: ${R2h2supp.containsKey(invR2R1)}), returning 0")
+            val inverseRp = RelationPath.getInverseRelation(rp)
+            R2supp[rp] = 0
+            if (rp != inverseRp) R2supp[inverseRp] = 0
+            return 0
+        }
+        
+        // 先计算方式二，得到约束集合
+        val (instances2, inverses2) = computeJoinLength1AndPathPairs(invR3, invR2R1)
+        debug2("  Method 2 (INVERSE_r3 · INVERSE_r2·INVERSE_r1): ${instances2.size} instances")
+        
+        // 方式一：在连接过程中直接使用方式二的结果进行过滤
+        val (instances1, inverses1) = computeJoinLength1AndPathPairs(r1, r2r3, inverses2.toSet(), instances2.toSet())
+        debug2("  Method 1 (r1 · r2·r3) with filtering: ${instances1.size} instances")
+        
+        val size = instances1.size
+        
+        // 存储支持度
+        val inverseRp = RelationPath.getInverseRelation(rp)
+        R2supp[rp] = size
+        if (rp != inverseRp) R2supp[inverseRp] = size
+
+        if (size >= MIN_SUPP) {
+            atomizeBinaryRelationPath(rp, size, instances1.toMutableSet(), inverses1.toMutableSet())
+        }
+
+        return size
+    }
+
+    /**
+     * 连接单个关系(长度为1)与路径(长度为2)
+     * 返回: Pair<IntArray, IntArray> 分别代表instanceSet和inverseSet（已经pairHash32）
+     * @param filterInstances 可选的过滤集合，只保留在此集合中的instance
+     * @param filterInverses 可选的过滤集合，只保留在此集合中的inverse
+     */
+    private fun computeJoinLength1AndPathPairs(
+        r1: Long, 
+        path: Long, 
+        filterInstances: Set<Int>? = null,
+        filterInverses: Set<Int>? = null
+    ): Pair<IntArray, IntArray> {
+        require(RelationPath.getLength(r1) == 1) { "r1 must be length 1" }
+        require(RelationPath.getLength(path) == 2) { "path must be length 2" }
+        
+        // 获取r1的tail实体（连接节点）
+        val r1TailEntities = r2tSet[r1]!!
+        // 获取path的head实体
+        val pathHeadEntities = R2h2supp[path]?.keys ?: emptySet()
+        
+        // 找到连接节点
+        val connectingEntities = r1TailEntities.asSequence()
+            .filter { it in pathHeadEntities }
+        
+        val instanceList = mutableListOf<Int>()
+        val inverseList = mutableListOf<Int>()
+        
+        for (connectingEntity in connectingEntities) {
+            // 获取能通过r1到达connectingEntity的head实体
+            val r1HeadEntities = R2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
+            
+            // 获取从connectingEntity通过path能到达的tail实体
+            val pathTailEntities = R2h2tSet[path]?.get(connectingEntity) ?: emptySet()
+            
+            // 笛卡尔积，排除 x == z，并根据过滤集合进行过滤
+            for (x in r1HeadEntities) {
+                for (z in pathTailEntities) {
+                    if (x != z) {
+                        require(x != connectingEntity && connectingEntity != z) {
+                            "Connection node $connectingEntity should not equal head $x or tail $z"
+                        }
+                        
+                        val instanceHash = pairHash32(x, z)
+                        if (filterInstances != null && instanceHash !in filterInstances) continue
+
+                        val inverseHash = pairHash32(z, x)
+                        if (filterInverses != null && inverseHash !in filterInverses) continue
+                        
+                        instanceList.add(instanceHash)
+                        inverseList.add(inverseHash)
+                    }
+                }
+            }
+        }
+        
+        return Pair(instanceList.toIntArray(), inverseList.toIntArray())
     }
 
     /**
@@ -626,12 +736,83 @@ object TLearn {
         return signature
     }
 
+    // 建议：把 MH_DIM 设为 2 的幂（例如 256/512），使位运算更快
+// private const val MH_DIM = 200 // 你已有
+
+    // 这两个种子建议在进程启动时固定或随机化一次（奇数种子更好）
+    private const val OPH_SEED_BIN  = 0x9e3779b9.toInt() // 决定“落到哪个桶”
+    private const val OPH_SEED_RANK = 0x85ebca6b.toInt() // 决定“该元素在桶内的秩值”
+    private const val DOPH_SALT     = 0x165667b1.toInt()
+
+    private inline fun pos32(x: Int) = x and 0x7fffffff
+
+    /**
+     * OPH + DOPH（32位、零分配、O(|S| + k)）
+     */
+    fun computeMinHashDOPH(instanceSet: Set<Int>, isBinary: Boolean = false): IntArray {
+        if (instanceSet.isEmpty()) {
+            throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
+        }
+
+        val k = MH_DIM
+        val sig = IntArray(k) { Int.MAX_VALUE }
+        require((k and (k - 1)) == 0) { "MH_DIM must be a power of 2" }
+        val mask = k - 1
+
+        // 一次遍历：对每个元素只做两次 32 位哈希
+        for (e in instanceSet) {
+            // hBin: 决定桶 id
+            val hBin  = computeUnaryHash(e, OPH_SEED_BIN)
+            val binId = pos32(hBin) and mask
+
+            // hRank: 决定该元素在该桶的秩值（越小越好）
+            // 这里把 binId 混入，避免不同桶的 rank 值相关
+            val hRank = computeUnaryHash(e, OPH_SEED_RANK) xor (binId * DOPH_SALT)
+            val rank  = pos32(mix32(hRank))
+
+            if (rank < sig[binId]) sig[binId] = rank
+        }
+
+        // DOPH：致密化空桶（把空桶用“下一非空桶的值 ^ 偏移”填上，循环寻找）
+        // 这样能消除 OPH 的空桶偏差，并保持估计稳定
+        if (sig.any { it == Int.MAX_VALUE }) {
+            for (i in 0 until k) {
+                if (sig[i] != Int.MAX_VALUE) continue
+                var j = 1
+                // 找到右侧最近的非空桶（环形）
+                while (j < k && sig[(i + j) % k] == Int.MAX_VALUE) j++
+                if (j == k) {
+                    // 极端情况：所有桶都空（理论上 instanceSet 非空时不该发生）
+                    // 给个确定性值
+                    sig[i] = pos32(mix32(i * DOPH_SALT + 1))
+                } else {
+                    val donorIdx = (i + j) % k
+                    // 计算与 i/j 相关的偏移，避免多个空桶复制出完全相同的值
+                    val offset = pos32(mix32(i * DOPH_SALT + j))
+                    sig[i] = sig[donorIdx] xor offset
+                }
+            }
+        }
+
+        if (isBinary) {
+            for (i in 0 until k) sig[i] = -sig[i]
+        }
+        return sig
+    }
+
+
 
     fun pairHash(entity1: Int, entity2: Int): Int {
         // 直接实现Pair的hashCode原理，避免创建对象
         // 33550337 is a prime number, and the 6th perfect number + 1
 //        return entity1 * 33550337 + entity2
         return entity1 * 307 + entity2
+    }
+
+    fun pairHash32(h: Int, t: Int): Int {
+        val uH = h * -0x61c88647     // 0x9E3779B9 的补码（黄金比例常数）
+        val uT = t * 0x85ebca6b.toInt()
+        return uH xor Integer.rotateLeft(uT, 16)
     }
 
     fun mix64(z0: Long): Long {
@@ -653,7 +834,7 @@ object TLearn {
      */
     fun computeBinaryHash(entity1: Int, entity2: Int, seed: Int): Int {
         // 使用Triple的hashCode，确保顺序敏感且高效
-        var hash = pairHash(entity1, entity2)
+        var hash = pairHash32(entity1, entity2)
         hash = mix32(hash xor seed)
 //        require(finalHash < Int.MAX_VALUE && finalHash > 0)
         // 确保返回正数
@@ -666,7 +847,7 @@ object TLearn {
      */
     fun computeUnaryHash(entity: Int, seed: Int): Int {
         // 使用Pair的hashCode，简洁高效
-//        val hash = pairHash(entity, seed)
+//        val hash = pairHash32(entity, seed)
         val hash = mix32(entity xor seed)
         // 与seedIndex进行额外的混合
 //        val finalHash = - abs(hash) - 1
@@ -687,7 +868,7 @@ object TLearn {
         val mySupp = instanceSet.size
         
         // 创建Formula (单原子公式)
-        val minHashSignature = computeMinHash(instanceSet, currentAtom.isBinary)
+        val minHashSignature = computeMinHashDOPH(instanceSet, currentAtom.isBinary)
         // 使用 isL2Atom：范围关系是 isHeadAtom ⊆ isL1Atom ⊆ isL2Atom
         if (currentAtom.isL2Atom) {
             val formula = Formula(atom1 = currentAtom)

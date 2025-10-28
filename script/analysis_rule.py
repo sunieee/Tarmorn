@@ -1121,11 +1121,19 @@ class RuleSupportCalculator:
     
     def _join_two_instance_sets(self, left: Set[Tuple[str, str]], right: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
         """连接两个实例集合"""
+        # 建立 right 的索引: head -> set of tails
+        right_index = defaultdict(set)
+        for (y2, z) in right:
+            right_index[y2].add(z)
+        
         result = set()
         for (x, y) in left:
-            for (y2, z) in right:
-                if y == y2 and x != y and y != z and x != z:
-                    result.add((x, z))
+            if y in right_index:
+                # 对于所有能连接的 z，检查 x != z
+                for z in right_index[y]:
+                    if x != z:
+                        result.add((x, z))
+        
         return result
     
     def get_unary_instances_bruteforce(self, rule_info: Dict) -> Set[str]:
