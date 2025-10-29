@@ -30,5 +30,8 @@ data class Metric(
     fun inverse() =  Metric(jaccard, support, bodySize, headSize)
 
     fun betterThan(other: Metric) =
-        this.jaccard > other.jaccard && this.confidence >= other.confidence
+        this.confidence > other.confidence * 1.5 && this.jaccard > other.jaccard
+
+    fun estimateBetterThan(other: Metric) =
+        this.confidence > other.confidence * 1.5 * tarmorn.TLearn.ESTIMATE_RATIO && this.jaccard > other.jaccard * tarmorn.TLearn.ESTIMATE_RATIO
 }

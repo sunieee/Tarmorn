@@ -40,7 +40,7 @@ object TLearn {
     }
 
     const val MIN_CONF = 0
-    const val MIN_SUPP = 40
+    const val MIN_SUPP = 20
     const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.8
 
@@ -214,9 +214,14 @@ object TLearn {
 
             // 打印LSH分桶结果
             printLSHBuckets()
+//            checkSpecificRelationBuckets()
 
             // 保存atom2formula2metric到JSON文件
             saveAtom2Formula2MetricToJson()
+            
+            // 打印内存诊断信息
+            printMemoryDiagnostics()
+            
             // 关闭日志
             closeLogger()
             // return r2tripleSet.mapValues { it.value.toSet() }
@@ -897,6 +902,7 @@ object TLearn {
 
             // 如果是headAtom，放入桶中 - 线程安全地添加
             if (currentAtom.isHeadAtom) {
+            // if (currentAtom.isL1Atom) {
                 val bucket = key2headAtom.computeIfAbsent(key) { 
                     java.util.Collections.synchronizedList(mutableListOf()) 
                 }
@@ -909,6 +915,7 @@ object TLearn {
         // 进行相似性评估和过滤 - 使用预计算的碰撞次数
         var cnt = 0
         relevantAtom2BucketCount.forEach { (bucketAtom, bucketCount) ->
+            // if (!bucketAtom.isHeadAtom) return@forEach // 只考虑headAtom进行组合
             // if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
             bucketCountMap[bucketCount] = bucketCountMap.getOrDefault(bucketCount, 0) + 1
             if (bucketAtom == currentAtom) return@forEach // 跳过相同原子，避免重复组合
@@ -942,10 +949,13 @@ object TLearn {
      * LSH分桶 - 专门用于L2Formula，从key2headAtom中查找相关原子进行组合
      * 使用一级桶正确估计Jaccard相似度
      */
-    fun performLSHforL2Formula(myFormula: Formula, myFormulaInstances: IntArray, minHashSignature: IntArray, originalMetric: Metric): Int {
-        // 动态计算myFormula的支持度
-        val mySupp = myFormulaInstances.size
-        
+    // TODO: 这里 originalMetric 意味着 headAtom必须是formula的第二个，因此bodySize需要重新算
+    // TODO: 需要有一个map记录已经计算过的formula
+    fun performLSHforL2Formula(formula: Formula, instanceSet: Set<Int>, originalMetric: Metric): Int {
+        // 动态计算formula的支持度
+        val mySupp = instanceSet.size
+        val minHashSignature = computeMinHashDOPH(instanceSet, formula.isBinary)
+
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()  // 统计每个相关原子的碰撞次数
 
         // 分为BANDS个band，每个band有R=1行，直接使用MinHash值作为键
@@ -970,7 +980,7 @@ object TLearn {
         relevantAtom2BucketCount.forEach { (atom, bucketCount) ->
             // if (bucketCount < bucketCountThreshold) return@forEach // 跳过碰撞次数过少的，避免噪声
             bucketCountMap[bucketCount] = bucketCountMap.getOrDefault(bucketCount, 0) + 1
-            if (atom == myFormula.atom1 || atom == myFormula.atom2) return@forEach // 跳过相同原子，避免重复组合
+            if (atom == formula.atom1 || atom == formula.atom2) return@forEach // 跳过相同原子，避免重复组合
             
             // 直接使用碰撞次数计算Jaccard相似度
             val jaccard = bucketCount.toDouble() / BANDS
@@ -980,19 +990,23 @@ object TLearn {
             val supp = atomInstances.size
             
             // 估计交集大小
-            val intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
-            val metric = Metric(jaccard, intersectionSize, supp, mySupp)
+            var intersectionSize = estimateIntersectionSize(jaccard, mySupp, supp)
+            var metric = Metric(jaccard, intersectionSize, supp, mySupp)
 
-            if (metric.valid && metric.betterThan(originalMetric)) {
-                // 创建二元公式组合
-                val newFormula = Formula(atom1 = myFormula.atom1, myFormula.atom2, atom)
-                val formula2metric = atom2formula2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
-                formula2metric[newFormula] = metric
-                
-                cnt++
+            if (metric.estimateValid) {
+                // 精确验证，并创建二元公式组合
+                intersectionSize = instanceSet.intersect(atomInstances).size.toDouble()
+                metric = Metric(jaccard, intersectionSize, supp, mySupp)
+                if (metric.valid && metric.betterThan(originalMetric)) {
+                    val newFormula = Formula(atom1 = formula.atom1, formula.atom2, atom)
+                    val formula2metric = atom2formula2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
+                    formula2metric[newFormula] = metric
+                    
+                    cnt++
+                }
             }
         }
-//        if (cnt > 0) println("Found $cnt valid combinations for L2Formula $myFormula:")
+//        if (cnt > 0) println("Found $cnt valid combinations for L2Formula $formula:")
         return cnt
     }
     
@@ -1028,6 +1042,7 @@ object TLearn {
         val atomInstances = bucketAtom.getInstanceSet()
         val supp = atomInstances.size
         val mySupp = instanceSet.size
+        lateinit var intersectionSet: Set<Int>
         debug2("validateAndCreateFormula: atomInstances.size=$supp, mySupp=$mySupp")
         
         // 自证式一元规则（entity-anchored unary rules）问题
@@ -1046,12 +1061,14 @@ object TLearn {
             } else {
                 instanceSet // 如果逆关系不存在，使用原始实例集合
             }
-
-            intersectionSize = newInstanceSet.intersect(atomInstances).size.toDouble()
+            
+            intersectionSet = newInstanceSet.intersect(atomInstances)
+            intersectionSize = intersectionSet.size.toDouble()
             metric = Metric(jaccard, intersectionSize, supp, newInstanceSet.size)
             debug2("validateAndCreateFormula: unary rule, constant=$constant, newInstanceSet.size=${newInstanceSet.size}, intersectionSize=$intersectionSize, metric=$metric")
         } else {
-            intersectionSize = instanceSet.intersect(atomInstances).size.toDouble()
+            intersectionSet = instanceSet.intersect(atomInstances)
+            intersectionSize = intersectionSet.size.toDouble()
             metric = Metric(jaccard, intersectionSize, supp, mySupp)
             debug2("validateAndCreateFormula: binary/general, intersectionSize=$intersectionSize, metric=$metric")
         }
@@ -1064,6 +1081,8 @@ object TLearn {
         val formula2metric = atom2formula2metric.computeIfAbsent(bucketAtom) { ConcurrentHashMap() }
         formula2metric[newFormula] = metric
         debug2("validateAndCreateFormula: newFormula=$newFormula, metric=$metric")
+
+//        performLSHforL2Formula(newFormula, intersectionSet, metric)
         return newFormula
     }
 
@@ -1159,6 +1178,7 @@ object TLearn {
                     // 输出规则：仅当formula包含恰好两个原子时
                     val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
                     val otherAtoms = atomsInFormula.filter { it != atom }
+                    require(otherAtoms.isNotEmpty()) { "Error: No other atoms found. Atom: $atom, Formula: $formula" }
 
                     val formulaString = otherAtoms.joinToString(",") { it.toString() }
                         .replace("\"", "\\\"").replace("\n", "\\n")
@@ -1167,16 +1187,11 @@ object TLearn {
                     writer.write("\n")
 
 
-                    if (atomsInFormula.size == 2) {
-                        val other = if (atomsInFormula[0] == atom) atomsInFormula[1]
-                                    else if (atomsInFormula[1] == atom) atomsInFormula[0]
-                                    else null
-                        if (other != null) {
-                            val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${other.getRuleString()}"
-                            ruleWriter.write(ruleLine)
-                            ruleWriter.write("\n")
-                        }
-                    }
+                    val ruleBody = otherAtoms.joinToString(",") { atom -> atom.getRuleString() }
+                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${ruleBody}"
+                    ruleWriter.write(ruleLine)
+                    ruleWriter.write("\n")
+
                 }
 
                 writer.write("  }")
@@ -1198,5 +1213,220 @@ object TLearn {
         println("Successfully saved rules to ${outputRule.absolutePath}")
         println("Total atoms: ${atom2formula2metric.size}")
         println("Total formulas: ${atom2formula2metric.values.sumOf { it.size }}")
+    }
+
+    /**
+     * 打印内存诊断信息 - 检查各个数据结构的大小
+     */
+    private fun printMemoryDiagnostics() {
+        println("\n" + "=".repeat(80))
+        println("MEMORY DIAGNOSTICS - Data Structure Sizes")
+        println("=".repeat(80))
+        
+        // 1. 基础数据结构
+        println("\n[1] Basic Data Structures:")
+        println("  R2supp.size = ${R2supp.size}")
+        println("  R2h2tSet.size = ${R2h2tSet.size}")
+        println("  R2h2supp.size = ${R2h2supp.size}")
+        println("  r2instanceSet.size = ${r2instanceSet.size}")
+        println("  r2tSet.size = ${r2tSet.size}")
+        println("  r2loopSet.size = ${r2loopSet.size}")
+        println("  relationL1.size = ${relationL1.size}")
+        
+        // 2. R2h2tSet 详细信息
+        println("\n[2] R2h2tSet Details:")
+        val r2h2tSetTotalHeads = R2h2tSet.values.sumOf { it.size }
+        val r2h2tSetTotalTails = R2h2tSet.values.sumOf { h2tMap -> h2tMap.values.sumOf { it.size } }
+        println("  Total relation paths: ${R2h2tSet.size}")
+        println("  Total head entities: $r2h2tSetTotalHeads")
+        println("  Total (head, tail) pairs: $r2h2tSetTotalTails")
+        println("  Average heads per relation: ${r2h2tSetTotalHeads.toDouble() / R2h2tSet.size}")
+        println("  Average tails per head: ${r2h2tSetTotalTails.toDouble() / r2h2tSetTotalHeads}")
+        
+        // 估算 R2h2tSet 内存占用
+        val r2h2tSetMemory = estimateR2h2tSetMemory(R2h2tSet.size, r2h2tSetTotalHeads, r2h2tSetTotalTails)
+        println("  Estimated memory usage: ${r2h2tSetMemory} MB")
+        println("  Memory breakdown:")
+        println("    - Outer HashMap (${R2h2tSet.size} entries): ${(R2h2tSet.size * 48.0 / 1024 / 1024).format(2)} MB")
+        println("    - Inner HashMaps (${r2h2tSetTotalHeads} total): ${(r2h2tSetTotalHeads * 48.0 / 1024 / 1024).format(2)} MB")
+        println("    - MutableSets (${r2h2tSetTotalHeads} sets): ${(r2h2tSetTotalHeads * 32.0 / 1024 / 1024).format(2)} MB")
+        println("    - Integer objects (${r2h2tSetTotalTails} tail integers): ${(r2h2tSetTotalTails * 16.0 / 1024 / 1024).format(2)} MB")
+        
+        // 3. r2instanceSet 详细信息
+        println("\n[3] r2instanceSet Details:")
+        val r2instanceSetTotal = r2instanceSet.values.sumOf { it.size }
+        println("  Total relations: ${r2instanceSet.size}")
+        println("  Total instances: $r2instanceSetTotal")
+        println("  Average instances per relation: ${r2instanceSetTotal.toDouble() / r2instanceSet.size}")
+        
+        // 估算 r2instanceSet 内存占用
+        val r2instanceSetMemory = estimateMapOfSetsMemory(r2instanceSet.size, r2instanceSetTotal)
+        println("  Estimated memory usage: ${r2instanceSetMemory} MB")
+        
+        // 4. LSH 相关结构
+        println("\n[4] LSH Structures:")
+        println("  formula2supp.size = ${formula2supp.size}")
+        println("  minHashRegistry.size = ${minHashRegistry.size}")
+        println("  key2headAtom.size = ${key2headAtom.size}")
+        
+        val key2headAtomTotalAtoms = key2headAtom.values.sumOf { it.size }
+        println("  Total atoms in LSH buckets: $key2headAtomTotalAtoms")
+        println("  Average atoms per bucket: ${key2headAtomTotalAtoms.toDouble() / key2headAtom.size}")
+        
+        val bucketSizes = key2headAtom.values.map { it.size }
+        println("  Bucket size - Min: ${bucketSizes.minOrNull() ?: 0}")
+        println("  Bucket size - Max: ${bucketSizes.maxOrNull() ?: 0}")
+        println("  Bucket size - Median: ${bucketSizes.sorted().getOrNull(bucketSizes.size / 2) ?: 0}")
+        
+        // 估算 LSH 结构内存
+        val minHashRegistryMemory = (minHashRegistry.size * (48 + MH_DIM * 4).toDouble() / 1024 / 1024).format(2)
+        println("  Estimated memory - minHashRegistry: $minHashRegistryMemory MB")
+        val key2headAtomMemory = ((key2headAtom.size * 48 + key2headAtomTotalAtoms * 64).toDouble() / 1024 / 1024).format(2)
+        println("  Estimated memory - key2headAtom: $key2headAtomMemory MB")
+        
+        // 5. atom2formula2metric 详细信息
+        println("\n[5] atom2formula2metric Details:")
+        println("  Total atoms: ${atom2formula2metric.size}")
+        val totalFormulas = atom2formula2metric.values.sumOf { it.size }
+        println("  Total formulas: $totalFormulas")
+        println("  Average formulas per atom: ${totalFormulas.toDouble() / atom2formula2metric.size}")
+        
+        val formulasPerAtom = atom2formula2metric.values.map { it.size }
+        println("  Formulas per atom - Min: ${formulasPerAtom.minOrNull() ?: 0}")
+        println("  Formulas per atom - Max: ${formulasPerAtom.maxOrNull() ?: 0}")
+        println("  Formulas per atom - Median: ${formulasPerAtom.sorted().getOrNull(formulasPerAtom.size / 2) ?: 0}")
+        
+        // 估算 atom2formula2metric 内存
+        val atom2formula2metricMemory = ((atom2formula2metric.size * 48 + totalFormulas * 128).toDouble() / 1024 / 1024).format(2)
+        println("  Estimated memory usage: $atom2formula2metricMemory MB")
+        
+        // 找出拥有最多公式的前10个原子
+        val top10Atoms = atom2formula2metric.entries
+            .sortedByDescending { it.value.size }
+            .take(10)
+        println("\n  Top 10 atoms with most formulas:")
+        top10Atoms.forEachIndexed { index, (atom, formulas) ->
+            println("    ${index + 1}. $atom -> ${formulas.size} formulas")
+        }
+        
+        // 6. 队列和计数器
+        println("\n[6] Processing Statistics:")
+        println("  relationQueue.size = ${relationQueue.size}")
+        println("  processedCount = ${processedCount.get()}")
+        println("  addedCount = ${addedCount.get()}")
+        println("  activeThreadCount = ${activeThreadCount.get()}")
+        
+        // 7. 内存使用情况
+        println("\n[7] JVM Memory Usage:")
+        val runtime = Runtime.getRuntime()
+        val usedMemory = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        val maxMemory = runtime.maxMemory() / (1024 * 1024)
+        val totalMemory = runtime.totalMemory() / (1024 * 1024)
+        val freeMemory = runtime.freeMemory() / (1024 * 1024)
+        
+        println("  Used Memory: ${usedMemory} MB")
+        println("  Free Memory: ${freeMemory} MB")
+        println("  Total Memory: ${totalMemory} MB")
+        println("  Max Memory: ${maxMemory} MB")
+        println("  Memory Usage: ${(usedMemory * 100.0 / maxMemory).format(2)}%")
+        
+        // 估算各数据结构内存总和
+        println("\n[7.1] Estimated Memory Breakdown:")
+        val r2h2tSetMem = estimateR2h2tSetMemory(R2h2tSet.size, r2h2tSetTotalHeads, r2h2tSetTotalTails).toDouble()
+        val r2instanceSetMem = estimateMapOfSetsMemory(r2instanceSet.size, r2instanceSetTotal).toDouble()
+        val minHashMem = (minHashRegistry.size * (48 + MH_DIM * 4).toDouble() / 1024 / 1024)
+        val key2headAtomMem = ((key2headAtom.size * 48 + key2headAtomTotalAtoms * 64).toDouble() / 1024 / 1024)
+        val atom2formula2metricMem = ((atom2formula2metric.size * 48 + totalFormulas * 128).toDouble() / 1024 / 1024)
+        
+        println("  R2h2tSet: ${r2h2tSetMem.format(2)} MB (${(r2h2tSetMem * 100 / usedMemory).format(1)}%)")
+        println("  r2instanceSet: ${r2instanceSetMem.format(2)} MB (${(r2instanceSetMem * 100 / usedMemory).format(1)}%)")
+        println("  minHashRegistry: ${minHashMem.format(2)} MB (${(minHashMem * 100 / usedMemory).format(1)}%)")
+        println("  key2headAtom: ${key2headAtomMem.format(2)} MB (${(key2headAtomMem * 100 / usedMemory).format(1)}%)")
+        println("  atom2formula2metric: ${atom2formula2metricMem.format(2)} MB (${(atom2formula2metricMem * 100 / usedMemory).format(1)}%)")
+        val totalEstimated = r2h2tSetMem + r2instanceSetMem + minHashMem + key2headAtomMem + atom2formula2metricMem
+        println("  Total Estimated: ${totalEstimated.format(2)} MB (${(totalEstimated * 100 / usedMemory).format(1)}% of used memory)")
+        println("  Other/Overhead: ${(usedMemory - totalEstimated).format(2)} MB")
+        
+        // 8. 可能的内存问题识别
+        println("\n[8] Potential Memory Issues:")
+        val issues = mutableListOf<String>()
+        
+        if (r2h2tSetTotalTails > 10_000_000) {
+            issues.add("⚠ R2h2tSet has ${r2h2tSetTotalTails} (head,tail) pairs - may cause memory overflow")
+        }
+        
+        if (totalFormulas > 1_000_000) {
+            issues.add("⚠ atom2formula2metric has ${totalFormulas} formulas - may cause memory overflow")
+        }
+        
+        if (key2headAtomTotalAtoms > 100_000) {
+            issues.add("⚠ LSH buckets contain ${key2headAtomTotalAtoms} atoms - may cause memory overflow")
+        }
+        
+        val maxFormulaCount = formulasPerAtom.maxOrNull() ?: 0
+        if (maxFormulaCount > 10_000) {
+            issues.add("⚠ Some atoms have up to ${maxFormulaCount} formulas - highly skewed distribution")
+        }
+        
+        val maxBucketSize = bucketSizes.maxOrNull() ?: 0
+        if (maxBucketSize > 1_000) {
+            issues.add("⚠ Some LSH buckets have up to ${maxBucketSize} atoms - poor hash distribution")
+        }
+        
+        if (usedMemory > maxMemory * 0.9) {
+            issues.add("⚠ Memory usage at ${(usedMemory * 100.0 / maxMemory).format(2)}% - critical level")
+        }
+        
+        if (issues.isEmpty()) {
+            println("  ✓ No obvious memory issues detected")
+        } else {
+            issues.forEach { println("  $it") }
+        }
+        
+        println("\n" + "=".repeat(80))
+        println("END OF MEMORY DIAGNOSTICS")
+        println("=".repeat(80) + "\n")
+    }
+    
+    // 辅助函数：格式化Double为指定小数位数
+    private fun Double.format(digits: Int) = "%.${digits}f".format(this)
+    
+    /**
+     * 估算 R2h2tSet 的内存占用
+     * 结构: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
+     */
+    private fun estimateR2h2tSetMemory(outerMapSize: Int, totalInnerMaps: Int, totalTails: Int): String {
+        // JVM对象内存估算（64位系统，压缩指针）：
+        // - HashMap entry: ~48 bytes (对象头16 + key 8 + value 8 + hash 4 + next 8 + 对齐4)
+        // - HashSet entry: ~32 bytes (对象头16 + 数组引用8 + size等字段8)
+        // - Integer对象: ~16 bytes (对象头12 + int值4)
+        // - Long对象: ~24 bytes (对象头12 + long值8 + 对齐4)
+        
+        val outerMapMemory = outerMapSize * 48.0  // 外层HashMap entries
+        val outerMapLongKeys = outerMapSize * 24.0  // Long keys
+        val innerMapsMemory = totalInnerMaps * 48.0  // 内层HashMap entries (每个head一个)
+        val innerMapIntKeys = totalInnerMaps * 16.0  // Int keys (heads)
+        val setsMemory = totalInnerMaps * 32.0  // MutableSet对象
+        val tailIntegers = totalTails * 16.0  // tail的Integer对象
+        
+        val totalBytes = outerMapMemory + outerMapLongKeys + innerMapsMemory + innerMapIntKeys + setsMemory + tailIntegers
+        val totalMB = totalBytes / 1024 / 1024
+        
+        return totalMB.format(2)
+    }
+    
+    /**
+     * 估算 Map<K, MutableSet<V>> 的内存占用
+     */
+    private fun estimateMapOfSetsMemory(mapSize: Int, totalElements: Int): String {
+        val mapMemory = mapSize * 48.0  // HashMap entries
+        val keysMemory = mapSize * 24.0  // Long keys (假设key是Long)
+        val setsMemory = mapSize * 32.0  // MutableSet对象
+        val elementsMemory = totalElements * 16.0  // 元素Integer对象
+        
+        val totalBytes = mapMemory + keysMemory + setsMemory + elementsMemory
+        val totalMB = totalBytes / 1024 / 1024
+        
+        return totalMB.format(2)
     }
 }

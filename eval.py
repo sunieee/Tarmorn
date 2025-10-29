@@ -66,6 +66,9 @@ print("hits@3  " + '{0:.6f}'.format(ranking.hits.get_hits_at_k(3)))
 print("hits@10 " + '{0:.6f}'.format(ranking.hits.get_hits_at_k(10)))
 print()
 
+print("MRR " + '{0:.6f}'.format(ranking.hits.get_mrr()) + \
+      ", hits@1 " + '{0:.6f}'.format(ranking.hits.get_hits_at_k(1)) + \
+      ", hits@3 " + '{0:.6f}'.format(ranking.hits.get_hits_at_k(3)))
 # now some code to some nice overview on the different relations and directions
 # the loop interates over all relations in the test set
 print("relation".ljust(25) + "\t" + "MRR-h" + "\t" + "MRR-t" + "\t" + "Num triples")

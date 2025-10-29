@@ -25,4 +25,10 @@ data class Formula(
     override fun toString(): String {
         return listOfNotNull(atom1, atom2, atom3).joinToString(" & ")
     }
+
+    val isBinary: Boolean
+        get() = atom1!!.isBinary
+
+    val size: Int
+        get() = listOfNotNull(atom1, atom2, atom3).size
 }
