@@ -1377,10 +1377,201 @@ object TLearn {
             issues.add("⚠ Memory usage at ${(usedMemory * 100.0 / maxMemory).format(2)}% - critical level")
         }
         
+        // 检查未估算的内存黑洞
+        val unexplainedMemory = usedMemory - totalEstimated
+        if (unexplainedMemory > usedMemory * 0.5) {
+            issues.add("⚠⚠⚠ CRITICAL: ${unexplainedMemory.format(2)} MB (${(unexplainedMemory * 100 / usedMemory).format(1)}%) memory unaccounted for!")
+            issues.add("    Possible causes: instanceSet storage, intermediate objects, or hidden caches")
+        }
+        
         if (issues.isEmpty()) {
             println("  ✓ No obvious memory issues detected")
         } else {
             issues.forEach { println("  $it") }
+        }
+        
+        // 9. 深度内存分析 - 查找隐藏的内存占用
+        println("\n[9] Deep Memory Analysis - Finding Hidden Memory Usage:")
+        
+        // 分析 MyAtom 对象的 instanceSet 缓存
+        println("  Analyzing MyAtom instanceSet caches...")
+        var totalAtomInstanceSets = 0
+        var totalAtomInstances = 0
+        try {
+            // 收集所有唯一的 MyAtom 对象
+            val allAtoms = mutableSetOf<MyAtom>()
+            allAtoms.addAll(key2headAtom.values.flatten())
+            allAtoms.addAll(atom2formula2metric.keys)
+            
+            println("    Total unique MyAtom objects: ${allAtoms.size}")
+            
+            // 尝试估算每个 atom 的 instanceSet 大小
+            for (atom in allAtoms) {
+                try {
+                    val instanceSet = atom.getInstanceSet()
+                    totalAtomInstanceSets++
+                    totalAtomInstances += instanceSet.size
+                } catch (e: Exception) {
+                    // 忽略无法获取的
+                }
+            }
+            
+            val atomInstancesMemory = (totalAtomInstances * 16.0 / 1024 / 1024)
+            println("    Total atom instanceSets: $totalAtomInstanceSets")
+            println("    Total instances in atoms: $totalAtomInstances")
+            println("    Estimated memory: ${atomInstancesMemory.format(2)} MB")
+            
+        } catch (e: Exception) {
+            println("    Error analyzing atoms: ${e.message}")
+        }
+        
+        // 分析 Formula 对象
+        println("\n  Analyzing Formula objects...")
+        val allFormulas = mutableSetOf<Formula>()
+        allFormulas.addAll(formula2supp.keys)
+        allFormulas.addAll(minHashRegistry.keys)
+        atom2formula2metric.values.forEach { allFormulas.addAll(it.keys) }
+        println("    Total unique Formula objects: ${allFormulas.size}")
+        val formulaMemory = (allFormulas.size * 64.0 / 1024 / 1024)
+        println("    Estimated Formula objects memory: ${formulaMemory.format(2)} MB")
+        
+        // 分析 R2h2supp
+        println("\n  Analyzing R2h2supp...")
+        val r2h2suppTotalEntries = R2h2supp.values.sumOf { it.size }
+        println("    Total paths: ${R2h2supp.size}")
+        println("    Total (head -> supp) entries: $r2h2suppTotalEntries")
+        val r2h2suppMemory = ((R2h2supp.size * 48 + r2h2suppTotalEntries * 32).toDouble() / 1024 / 1024)
+        println("    Estimated memory: ${r2h2suppMemory.format(2)} MB")
+        
+        // 分析 r2loopSet
+        println("\n  Analyzing r2loopSet...")
+        val r2loopSetTotal = r2loopSet.values.sumOf { it.size }
+        println("    Total relations: ${r2loopSet.size}")
+        println("    Total loop entities: $r2loopSetTotal")
+        val r2loopSetMemory = estimateMapOfSetsMemory(r2loopSet.size, r2loopSetTotal).toDouble()
+        println("    Estimated memory: ${r2loopSetMemory.format(2)} MB")
+        
+        // 分析 r2tSet
+        println("\n  Analyzing r2tSet...")
+        val r2tSetTotalEntities = r2tSet.values.sumOf { it.size }
+        println("    Total relations: ${r2tSet.size}")
+        println("    Total tail entities (snapshot arrays): $r2tSetTotalEntities")
+        val r2tSetMemory = ((r2tSet.size * 48 + r2tSetTotalEntities * 4).toDouble() / 1024 / 1024)
+        println("    Estimated memory: ${r2tSetMemory.format(2)} MB")
+        
+        // 分析 R2supp
+        println("\n  Analyzing R2supp...")
+        println("    Total entries: ${R2supp.size}")
+        val r2suppMemory = (R2supp.size * 32.0 / 1024 / 1024)
+        println("    Estimated memory: ${r2suppMemory.format(2)} MB")
+        
+        // 分析 TripleSet 原始数据
+        println("\n  Analyzing TripleSet (ts) original data...")
+        val tsR2tripleSetTotal = ts.r2tripleSet.values.sumOf { it.size }
+        println("    r2tripleSet relations: ${ts.r2tripleSet.size}")
+        println("    Total triples: $tsR2tripleSetTotal")
+        val tsMemory = ((ts.r2tripleSet.size * 48 + tsR2tripleSetTotal * 80).toDouble() / 1024 / 1024)
+        println("    Estimated memory: ${tsMemory.format(2)} MB")
+        
+        // 分析队列
+        println("\n  Analyzing relationQueue...")
+        println("    Queue size: ${relationQueue.size}")
+        val queueMemory = (relationQueue.size * 24.0 / 1024 / 1024)
+        println("    Estimated memory: ${queueMemory.format(2)} MB")
+        
+        // 分析 IdManager 字符串缓存
+        println("\n  Analyzing IdManager string caches...")
+        val entityCount = IdManager.getEntityCount()
+        val relationCount = IdManager.getRelationCount()
+        println("    Total entities: $entityCount")
+        println("    Total relations: $relationCount")
+        // 估算：每个字符串平均50字符，每个字符2字节，加上HashMap entry开销
+        val idManagerMemory = ((entityCount + relationCount) * (50 * 2 + 64).toDouble() / 1024 / 1024)
+        println("    Estimated memory: ${idManagerMemory.format(2)} MB")
+        println("    (Assuming avg 50 chars per string)")
+        
+        // 尝试获取实际字符串长度
+        try {
+            val avgEntityStrLen = IdManager.getAverageEntityStringLength()
+            val avgRelationStrLen = IdManager.getAverageRelationStringLength()
+            val actualIdManagerMemory = (
+                (entityCount * (avgEntityStrLen * 2 + 64) + 
+                 relationCount * (avgRelationStrLen * 2 + 64)).toDouble() / 1024 / 1024
+            )
+            println("    Actual avg lengths - entities: ${avgEntityStrLen.format(1)}, relations: ${avgRelationStrLen.format(1)}")
+            println("    Refined memory estimate: ${actualIdManagerMemory.format(2)} MB")
+        } catch (e: Exception) {
+            println("    (Could not get actual string lengths)")
+        }
+        
+        // 总结所有发现的内存占用
+        println("\n  [9.1] Complete Memory Breakdown:")
+        
+        // 计算实际的IdManager内存（如果可用）
+        val actualIdManagerMem = try {
+            val entityCount = IdManager.getEntityCount()
+            val relationCount = IdManager.getRelationCount()
+            val avgEntityStrLen = IdManager.getAverageEntityStringLength()
+            val avgRelationStrLen = IdManager.getAverageRelationStringLength()
+            (entityCount * (avgEntityStrLen * 2 + 64) + 
+             relationCount * (avgRelationStrLen * 2 + 64)).toDouble() / 1024 / 1024
+        } catch (e: Exception) {
+            idManagerMemory
+        }
+        
+        val completeBreakdown = mutableListOf(
+            "R2h2tSet" to r2h2tSetMem,
+            "r2instanceSet" to r2instanceSetMem,
+            "minHashRegistry" to minHashMem,
+            "key2headAtom" to key2headAtomMem,
+            "atom2formula2metric" to atom2formula2metricMem,
+            "MyAtom instanceSets" to (totalAtomInstances * 16.0 / 1024 / 1024),
+            "Formula objects" to formulaMemory,
+            "R2h2supp" to r2h2suppMemory,
+            "r2loopSet" to r2loopSetMemory,
+            "r2tSet" to r2tSetMemory,
+            "R2supp" to r2suppMemory,
+            "TripleSet (ts)" to tsMemory,
+            "relationQueue" to queueMemory,
+            "IdManager strings" to actualIdManagerMem
+        )
+        
+        val sortedBreakdown = completeBreakdown.sortedByDescending { it.second }
+        sortedBreakdown.forEach { (name, memMB) ->
+            println("    ${name.padEnd(25)}: ${memMB.format(2).padStart(12)} MB (${(memMB * 100 / usedMemory).format(1).padStart(5)}%)")
+        }
+        
+        val totalAccountedFor = sortedBreakdown.sumOf { it.second }
+        println("    ${"TOTAL ACCOUNTED".padEnd(25)}: ${totalAccountedFor.format(2).padStart(12)} MB (${(totalAccountedFor * 100 / usedMemory).format(1).padStart(5)}%)")
+        println("    ${"STILL MISSING".padEnd(25)}: ${(usedMemory - totalAccountedFor).format(2).padStart(12)} MB (${((usedMemory - totalAccountedFor) * 100 / usedMemory).format(1).padStart(5)}%)")
+        
+        if ((usedMemory - totalAccountedFor) > 1000) {
+            println("\n  ⚠⚠⚠ WARNING: Over ${(usedMemory - totalAccountedFor).format(0)} MB still unaccounted!")
+            println("  Likely culprits:")
+            println("    - String objects (relation names, entity names) - CHECK IdManager ABOVE")
+            println("    - Duplicate MyAtom objects (not using object pooling)")
+            println("    - Hidden caches in MyAtom.getInstanceSet() calls")
+            println("    - Intermediate computation results not garbage collected")
+            println("    - JVM internal structures and overhead")
+            println("    - Possible memory leak in worker threads")
+            println("    - MinHash signature arrays (${minHashRegistry.size} x ${MH_DIM} x 4 bytes)")
+            
+            // 最可能的罪魁祸首分析
+            println("\n  🔍 MOST LIKELY CAUSES:")
+            
+            // 1. MyAtom 对象重复
+            val estimatedMyAtomObjects = key2headAtomTotalAtoms + atom2formula2metric.size
+            val myAtomObjectsMemory = (estimatedMyAtomObjects * 32.0 / 1024 / 1024)
+            println("    1. MyAtom objects (~${estimatedMyAtomObjects}): ~${myAtomObjectsMemory.format(2)} MB")
+            
+            // 2. Formula 对象中的 atom 引用
+            val estimatedFormulaAtomRefs = totalFormulas * 2  // 每个formula平均2个atom引用
+            println("    2. Formula atom references (~${estimatedFormulaAtomRefs}): included in Formula objects")
+            
+            // 3. 检查是否有大量重复的 Set 对象
+            println("    3. Checking for duplicate/redundant data structures...")
+            println("       - R2h2tSet contains Sets that may overlap with r2instanceSet")
+            println("       - Consider using shared immutable sets or interning")
         }
         
         println("\n" + "=".repeat(80))
