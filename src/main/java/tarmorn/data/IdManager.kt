@@ -196,14 +196,4 @@ object IdManager {
         nextRelationId = 1L
         originalRelationCount = 0L
     }
-
-    fun getAverageEntityStringLength(): Double {
-        return if (entity2id.isEmpty()) 0.0
-        else entity2id.keys.sumOf { it.length }.toDouble() / entity2id.size
-    }
-    
-    fun getAverageRelationStringLength(): Double {
-        return if (relation2id.isEmpty()) 0.0
-        else relation2id.keys.sumOf { it.length }.toDouble() / relation2id.size
-    }
 }

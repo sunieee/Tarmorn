@@ -53,14 +53,14 @@ data class MyAtom(val relationId: Long, val entityId: Int) {
             // Unary constant: r(X,c) -> 使用逆关系 r'(c,X) 的 tail 集合
             entityId > 0 -> {
                 val inv = IdManager.getInverseRelation(relationId)
-                TLearn.R2h2tSet[inv]?.get(entityId) ?: emptySet()
+                TLearn.r2h2tSet[inv]?.get(entityId) ?: emptySet()
             }
             // Existence: r(X,·) -> 所有 head 实体
             entityId == 0 ->
-                TLearn.R2h2tSet[relationId]?.keys ?: emptySet()
+                TLearn.r2h2tSet[relationId]?.keys ?: emptySet()
             // Loop: r(X,X) -> 自环实体集合
             entityId == IdManager.getXId() ->
-                TLearn.r2loopSet[relationId] ?: emptySet()
+                TLearn.R2loopSet[relationId] ?: emptySet()
             else -> emptySet()
         }
     }

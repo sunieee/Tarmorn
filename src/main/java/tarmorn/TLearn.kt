@@ -60,13 +60,14 @@ object TLearn {
     // lateinit var r2tripleSet: MutableMap<Long, MutableSet<MyTriple>>
     lateinit var R2supp: ConcurrentHashMap<Long, Int>
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
-    lateinit var R2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
-    lateinit var R2h2supp: MutableMap<Long, MutableMap<Int, Int>>
+    val R2connSet = ConcurrentHashMap<Long, MutableSet<Int>>()
+    lateinit var R2loopSet: MutableMap<Long, MutableSet<Int>>
 
     // 小写的r标识relationL1，并且在初始化后不再修改
+    lateinit var r2h2supp: MutableMap<Long, MutableMap<Int, Int>>
     lateinit var r2instanceSet: MutableMap<Long, MutableSet<Int>>
     lateinit var r2tSet: Map<Long, IntArray>    // 仅保留relationL1到尾实体，使用快照数组以提升遍历性能
-    lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
+    lateinit var r2h2tSet: Map<Long, MutableMap<Int, MutableSet<Int>>>
 
     // Thread-safe relation queue using BlockingQueue (no need to sort by supp)
     val relationQueue = LinkedBlockingQueue<Long>()
@@ -180,20 +181,19 @@ object TLearn {
 
         // Initialize data structures
         // r2tripleSet = ts.r2tripleSet
-        r2loopSet = ts.r2loopSet
-        // 复制一份ts.r2h2tSet，避免直接引用
-        R2h2tSet = ts.r2h2tSet.mapValues { entry ->
-            entry.value.mapValues { it.value.toMutableSet() }.toMutableMap()
-        }.toMutableMap()
+        R2loopSet = ts.r2loopSet.mapValues { it.value.toMutableSet() }.toMutableMap()
         R2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
-        R2h2supp = R2h2tSet.mapValues { entry ->
-            entry.value.mapValues { it.value.size }.toMutableMap()
-        } as MutableMap<Long, MutableMap<Int, Int>>
-        r2instanceSet = R2h2tSet.mapValues { entry ->
+        r2instanceSet = ts.r2h2tSet.mapValues { entry ->
             entry.value.flatMap { (head, tails) ->
                 tails.map { tail -> pairHash32(head, tail) }
             }.toMutableSet()
         }.toMutableMap()
+        r2h2supp = ts.r2h2tSet.mapValues { entry ->
+            entry.value.mapValues { it.value.size }.toMutableMap()
+        }.toMutableMap()
+        r2h2tSet = ts.r2h2tSet.mapValues { entry ->
+            entry.value.mapValues { it.value.toMutableSet() }.toMutableMap()
+        }.toMap()
 
         println("Starting TLearn algorithm...")
         println("MIN_SUPP: $MIN_SUPP, MAX_PATH_LENGTH: $MAX_PATH_LENGTH")
@@ -218,10 +218,6 @@ object TLearn {
 
             // 保存atom2formula2metric到JSON文件
             saveAtom2Formula2MetricToJson()
-            
-            // 打印内存诊断信息
-            printMemoryDiagnostics()
-            
             // 关闭日志
             closeLogger()
             // return r2tripleSet.mapValues { it.value.toSet() }
@@ -243,16 +239,16 @@ object TLearn {
 
                 if (!IdManager.isInverseRelation(relation)) {
                     // 为L=1关系进行原子化，直接使用R2h2tSet中的反向索引
-                    val h2tSet = R2h2tSet[relation]
+                    val h2tSet = ts.r2h2tSet[relation]
                     val inverseRelation = RelationPath.getInverseRelation(relation)
-                    val t2hSet = R2h2tSet[inverseRelation]
-                    
+                    val t2hSet = ts.r2h2tSet[inverseRelation]
+
                     if (h2tSet != null && t2hSet != null) {
                         // 处理Binary原子
                         atomizeBinaryRelationPath(relation, tripleSet.size,
                             r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
                         // 处理Unary原子
-                        atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), r2loopSet[relation] ?: mutableSetOf())
+                        atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), R2loopSet[relation] ?: mutableSetOf())
                     } else {
                         println("Warning: Missing h2tSet or t2hSet for relation ${IdManager.getRelationString(relation)} or its inverse ${IdManager.getRelationString(inverseRelation)}")
                     }
@@ -264,7 +260,7 @@ object TLearn {
         // 使用不可变快照，避免并发修改影响，并提升遍历效率
         r2tSet = relationL1.associateWith { r ->
             val inv = IdManager.getInverseRelation(r)
-            val keys = R2h2supp[inv]?.keys ?: emptySet()
+            val keys = r2h2supp[inv]?.keys ?: emptySet()
             // 拷贝为数组，遍历更快，且是稳定快照
             keys.toIntArray()
         }
@@ -456,7 +452,7 @@ object TLearn {
         // Get tail entities of r1 (these become connecting entities)
         val r1TailEntities = r2tSet[r1]!!
         // Get head entities for r2
-        val r2HeadEntities = R2h2supp[r2]?.keys ?: emptySet()
+        val r2HeadEntities = r2h2supp[r2]?.keys ?: emptySet()
 
         // Find intersection of possible connecting entities (connection nodes)
         val connectingEntities = r1TailEntities.asSequence()
@@ -473,10 +469,10 @@ object TLearn {
         
         for (connectingEntity in connectingEntities) {
             // Get head entities that can reach this connecting entity via r1
-            val r1HeadEntities = R2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
+            val r1HeadEntities = ts.r2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
 
             // Get tail entities reachable from this connecting entity via r2
-            val r2TailEntities = R2h2tSet[r2]?.get(connectingEntity) ?: emptySet()
+            val r2TailEntities = ts.r2h2tSet[r2]?.get(connectingEntity) ?: emptySet()
 
             // Create Cartesian product, avoiding duplicates
             for (r1Head in r1HeadEntities) {
@@ -497,14 +493,17 @@ object TLearn {
                 }
             }
         }
+
+        R2connSet[rp] = connectingEntities.toMutableSet()
+        R2loopSet[rp] = loopSet
         
         // Calculate support counts for heads and tails
-        for ((head, tails) in h2tSet) {
-            h2supp[head] = tails.size
-        }
-        for ((tail, heads) in t2hSet) {
-            t2supp[tail] = heads.size
-        }
+        for ((head, tails) in h2tSet) h2supp[head] = tails.size
+        for ((tail, heads) in t2hSet) t2supp[tail] = heads.size
+
+        // 显式地清空h2tSet和t2hSet以帮助GC回收
+        h2tSet.clear()
+        t2hSet.clear()
         
         val size = instanceSet.size
 
@@ -516,10 +515,9 @@ object TLearn {
         if (size >= MIN_SUPP) {
             val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
 
-            if (forwardSuccess) R2h2supp[rp] = h2supp
-            if (inverseSuccess) R2h2supp[inverseRp] = t2supp
-
-            R2h2tSet[rp] = h2tSet
+//            if (forwardSuccess) R2supp[rp] = h2supp
+//            if (inverseSuccess) R2supp[inverseRp] = t2supp
+//            R2h2tSet[rp] = h2tSet
         }
 
         return size
@@ -546,9 +544,9 @@ object TLearn {
         val invR1 = IdManager.getInverseRelation(r1)
         val invR2R1 = RelationPath.connectHead(invR2, invR1)
         
-        // 检查两个复合路径是否都存在于R2h2supp中
-        if (!R2h2supp.containsKey(r2r3) || !R2h2supp.containsKey(invR2R1)) {
-            debug2("  Required paths not found in R2h2supp (r2·r3: ${R2h2supp.containsKey(r2r3)}, INVERSE_r2·INVERSE_r1: ${R2h2supp.containsKey(invR2R1)}), returning 0")
+        // 检查两个复合路径是否都存在于R2supp中
+        if (R2supp[r2r3]?: 0 < MIN_SUPP || R2supp[invR2R1]?: 0 < MIN_SUPP) {
+            debug2("  Required paths not valid in R2supp (r2·r3: ${R2supp[r2r3]?: 0}, INVERSE_r2·INVERSE_r1: ${R2supp[invR2R1]?: 0}), returning 0")
             val inverseRp = RelationPath.getInverseRelation(rp)
             R2supp[rp] = 0
             if (rp != inverseRp) R2supp[inverseRp] = 0
@@ -556,12 +554,12 @@ object TLearn {
         }
         
         // 先计算方式二，得到约束集合
-        val (instances2, inverses2) = computeJoinLength1AndPathPairs(invR3, invR2R1)
-        debug2("  Method 2 (INVERSE_r3 · INVERSE_r2·INVERSE_r1): ${instances2.size} instances")
+        // val (instances2, inverses2) = computeJoinLength1AndPathPairs(invR3, invR2R1)
+        // debug2("  Method 2 (INVERSE_r3 · INVERSE_r2·INVERSE_r1): ${instances2.size} instances")
         
         // 方式一：在连接过程中直接使用方式二的结果进行过滤
-        val (instances1, inverses1) = computeJoinLength1AndPathPairs(r1, r2r3, inverses2.toSet(), instances2.toSet())
-        debug2("  Method 1 (r1 · r2·r3) with filtering: ${instances1.size} instances")
+        val (instances1, inverses1) = computeJoinLength1AndPathPairs(r1, r2r3)
+        debug2("  Connect (r1 · r2·r3) with filtering: ${instances1.size} instances")
         
         val size = instances1.size
         
@@ -578,60 +576,50 @@ object TLearn {
     }
 
     /**
-     * 连接单个关系(长度为1)与路径(长度为2)
+     * 连接单个关系(长度为1)与路径(长度为2)，形如： A -r1-> B -r2-> C -r3-> D，其中 path = r2r3
      * 返回: Pair<IntArray, IntArray> 分别代表instanceSet和inverseSet（已经pairHash32）
      * @param filterInstances 可选的过滤集合，只保留在此集合中的instance
      * @param filterInverses 可选的过滤集合，只保留在此集合中的inverse
      */
     private fun computeJoinLength1AndPathPairs(
         r1: Long, 
-        path: Long, 
-        filterInstances: Set<Int>? = null,
-        filterInverses: Set<Int>? = null
+        path: Long
     ): Pair<IntArray, IntArray> {
         require(RelationPath.getLength(r1) == 1) { "r1 must be length 1" }
         require(RelationPath.getLength(path) == 2) { "path must be length 2" }
-        
-        // 获取r1的tail实体（连接节点）
-        val r1TailEntities = r2tSet[r1]!!
-        // 获取path的head实体
-        val pathHeadEntities = R2h2supp[path]?.keys ?: emptySet()
-        
-        // 找到连接节点
-        val connectingEntities = r1TailEntities.asSequence()
-            .filter { it in pathHeadEntities }
-        
+
         val instanceList = mutableListOf<Int>()
         val inverseList = mutableListOf<Int>()
-        
-        for (connectingEntity in connectingEntities) {
-            // 获取能通过r1到达connectingEntity的head实体
-            val r1HeadEntities = R2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
-            
-            // 获取从connectingEntity通过path能到达的tail实体
-            val pathTailEntities = R2h2tSet[path]?.get(connectingEntity) ?: emptySet()
-            
-            // 笛卡尔积，排除 x == z，并根据过滤集合进行过滤
-            for (x in r1HeadEntities) {
-                for (z in pathTailEntities) {
-                    if (x != z) {
-                        require(x != connectingEntity && connectingEntity != z) {
-                            "Connection node $connectingEntity should not equal head $x or tail $z"
-                        }
 
-                        val inverseHash = pairHash32(z, x)
-                        if (filterInverses != null && inverseHash !in filterInverses) continue
-                        
-                        val instanceHash = pairHash32(x, z)
-                        if (filterInstances != null && instanceHash !in filterInstances) continue
-                        
-                        instanceList.add(instanceHash)
-                        inverseList.add(inverseHash)
+        val relations = RelationPath.decode(path)
+        val r2 = relations[0]
+        val r3 = relations[1]
+
+        val r2t2h = ts.r2h2tSet[IdManager.getInverseRelation(r2)]?: emptyMap()
+        val r3h2t = ts.r2h2tSet[r3]?: emptyMap()
+
+        // 获取r1的tail实体（连接节点）
+        val r1Tails = r2tSet[r1]!!.toMutableSet()
+        val r1t2h = ts.r2h2tSet[IdManager.getInverseRelation(r1)] ?: emptyMap()
+
+        val r2r3Conn = R2connSet[path] ?: emptySet()
+        for (C in r2r3Conn) {
+            val r1r2Conn = (r2t2h[C] ?: emptySet()).intersect(r1Tails)
+            
+            for (B in r1r2Conn) {
+                for (D in r3h2t[C] ?: emptySet()) {
+                    for (A in r1t2h[B] ?: emptySet()) {
+                        if (B != D && A != C) {
+                            val inverseHash = pairHash32(D, A)
+                            val instanceHash = pairHash32(A, D)
+                            instanceList.add(instanceHash)
+                            inverseList.add(inverseHash)
+                        }
                     }
                 }
-            }
+            }   
         }
-        
+
         return Pair(instanceList.toIntArray(), inverseList.toIntArray())
     }
 
@@ -657,14 +645,17 @@ object TLearn {
      * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
      * 需要动态计算MinHash签名
      */
-    fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
-        debug2("atomizeUnaryRelationPath: rp=$rp, h2tSet.size=${h2tSet.size}, t2hSet.size=${t2hSet.size}, loopSet.size=${loopSet.size}")
-        val inverseRp = RelationPath.getInverseRelation(rp)
+    fun atomizeUnaryRelationPath(r: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
+        // 要求r是L=1关系
+        require(RelationPath.isL1Relation(r)) { "Relation r must be length 1" }
+        
+        debug2("atomizeUnaryRelationPath: rp=$r, h2tSet.size=${h2tSet.size}, t2hSet.size=${t2hSet.size}, loopSet.size=${loopSet.size}")
+        val inverseRp = RelationPath.getInverseRelation(r)
 
         // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
-        R2h2supp[inverseRp]?.forEach { (constant, supp) ->
+        r2h2supp[inverseRp]?.forEach { (constant, supp) ->
             if (supp >= MIN_SUPP) {
-                val unaryAtom = MyAtom(rp, constant)
+                val unaryAtom = MyAtom(r, constant)
                 // 生成Unary实例集合：所有能到达constant的head实体
                 val unaryInstanceSet = t2hSet[constant]
                 if (unaryInstanceSet != null) {
@@ -674,16 +665,16 @@ object TLearn {
         }
         
         // 4. r(X,·): Unary Atom for existence - relation rp has head entities
-        val headEntityCount = R2h2supp[rp]?.size ?: 0
+        val headEntityCount = r2h2supp[r]?.size ?: 0
         if (headEntityCount >= MIN_SUPP) {
-            val existenceAtom = MyAtom(rp, 0) // 0表示存在性原子"·"
+            val existenceAtom = MyAtom(r, 0) // 0表示存在性原子"·"
             // 生成Existence实例集合：所有head实体
             val existenceInstanceSet = h2tSet.keys
             performLSH(existenceAtom, existenceInstanceSet)
         }
         
         // 5. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
-        R2h2supp[rp]?.forEach { (constant, supp) ->
+        r2h2supp[r]?.forEach { (constant, supp) ->
             if (supp >= MIN_SUPP) {
                 val inverseUnaryAtom = MyAtom(inverseRp, constant)
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
@@ -696,7 +687,7 @@ object TLearn {
         }
         
         // 6. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
-        val inverseTailEntityCount = R2h2supp[inverseRp]?.size ?: 0
+        val inverseTailEntityCount = r2h2supp[inverseRp]?.size ?: 0
         if (inverseTailEntityCount >= MIN_SUPP) {
             val inverseExistenceAtom = MyAtom(inverseRp, 0)
             // 生成逆Existence实例集合：所有tail实体
@@ -706,7 +697,7 @@ object TLearn {
 
         // 7. r(X,X): Unary Atom for loops - r(X,X) exists
         if (loopSet.size >= MIN_SUPP) {
-            val loopAtom = MyAtom(rp, IdManager.getXId()) // X表示循环原子
+            val loopAtom = MyAtom(r, IdManager.getXId()) // X表示循环原子
             performLSH(loopAtom, loopSet)
         }
     }
@@ -1213,411 +1204,5 @@ object TLearn {
         println("Successfully saved rules to ${outputRule.absolutePath}")
         println("Total atoms: ${atom2formula2metric.size}")
         println("Total formulas: ${atom2formula2metric.values.sumOf { it.size }}")
-    }
-
-    /**
-     * 打印内存诊断信息 - 检查各个数据结构的大小
-     */
-    private fun printMemoryDiagnostics() {
-        println("\n" + "=".repeat(80))
-        println("MEMORY DIAGNOSTICS - Data Structure Sizes")
-        println("=".repeat(80))
-        
-        // 1. 基础数据结构
-        println("\n[1] Basic Data Structures:")
-        println("  R2supp.size = ${R2supp.size}")
-        println("  R2h2tSet.size = ${R2h2tSet.size}")
-        println("  R2h2supp.size = ${R2h2supp.size}")
-        println("  r2instanceSet.size = ${r2instanceSet.size}")
-        println("  r2tSet.size = ${r2tSet.size}")
-        println("  r2loopSet.size = ${r2loopSet.size}")
-        println("  relationL1.size = ${relationL1.size}")
-        
-        // 2. R2h2tSet 详细信息
-        println("\n[2] R2h2tSet Details:")
-        val r2h2tSetTotalHeads = R2h2tSet.values.sumOf { it.size }
-        val r2h2tSetTotalTails = R2h2tSet.values.sumOf { h2tMap -> h2tMap.values.sumOf { it.size } }
-        println("  Total relation paths: ${R2h2tSet.size}")
-        println("  Total head entities: $r2h2tSetTotalHeads")
-        println("  Total (head, tail) pairs: $r2h2tSetTotalTails")
-        println("  Average heads per relation: ${r2h2tSetTotalHeads.toDouble() / R2h2tSet.size}")
-        println("  Average tails per head: ${r2h2tSetTotalTails.toDouble() / r2h2tSetTotalHeads}")
-        
-        // 估算 R2h2tSet 内存占用
-        val r2h2tSetMemory = estimateR2h2tSetMemory(R2h2tSet.size, r2h2tSetTotalHeads, r2h2tSetTotalTails)
-        println("  Estimated memory usage: ${r2h2tSetMemory} MB")
-        println("  Memory breakdown:")
-        println("    - Outer HashMap (${R2h2tSet.size} entries): ${(R2h2tSet.size * 48.0 / 1024 / 1024).format(2)} MB")
-        println("    - Inner HashMaps (${r2h2tSetTotalHeads} total): ${(r2h2tSetTotalHeads * 48.0 / 1024 / 1024).format(2)} MB")
-        println("    - MutableSets (${r2h2tSetTotalHeads} sets): ${(r2h2tSetTotalHeads * 32.0 / 1024 / 1024).format(2)} MB")
-        println("    - Integer objects (${r2h2tSetTotalTails} tail integers): ${(r2h2tSetTotalTails * 16.0 / 1024 / 1024).format(2)} MB")
-        
-        // 3. r2instanceSet 详细信息
-        println("\n[3] r2instanceSet Details:")
-        val r2instanceSetTotal = r2instanceSet.values.sumOf { it.size }
-        println("  Total relations: ${r2instanceSet.size}")
-        println("  Total instances: $r2instanceSetTotal")
-        println("  Average instances per relation: ${r2instanceSetTotal.toDouble() / r2instanceSet.size}")
-        
-        // 估算 r2instanceSet 内存占用
-        val r2instanceSetMemory = estimateMapOfSetsMemory(r2instanceSet.size, r2instanceSetTotal)
-        println("  Estimated memory usage: ${r2instanceSetMemory} MB")
-        
-        // 4. LSH 相关结构
-        println("\n[4] LSH Structures:")
-        println("  formula2supp.size = ${formula2supp.size}")
-        println("  minHashRegistry.size = ${minHashRegistry.size}")
-        println("  key2headAtom.size = ${key2headAtom.size}")
-        
-        val key2headAtomTotalAtoms = key2headAtom.values.sumOf { it.size }
-        println("  Total atoms in LSH buckets: $key2headAtomTotalAtoms")
-        println("  Average atoms per bucket: ${key2headAtomTotalAtoms.toDouble() / key2headAtom.size}")
-        
-        val bucketSizes = key2headAtom.values.map { it.size }
-        println("  Bucket size - Min: ${bucketSizes.minOrNull() ?: 0}")
-        println("  Bucket size - Max: ${bucketSizes.maxOrNull() ?: 0}")
-        println("  Bucket size - Median: ${bucketSizes.sorted().getOrNull(bucketSizes.size / 2) ?: 0}")
-        
-        // 估算 LSH 结构内存
-        val minHashRegistryMemory = (minHashRegistry.size * (48 + MH_DIM * 4).toDouble() / 1024 / 1024).format(2)
-        println("  Estimated memory - minHashRegistry: $minHashRegistryMemory MB")
-        val key2headAtomMemory = ((key2headAtom.size * 48 + key2headAtomTotalAtoms * 64).toDouble() / 1024 / 1024).format(2)
-        println("  Estimated memory - key2headAtom: $key2headAtomMemory MB")
-        
-        // 5. atom2formula2metric 详细信息
-        println("\n[5] atom2formula2metric Details:")
-        println("  Total atoms: ${atom2formula2metric.size}")
-        val totalFormulas = atom2formula2metric.values.sumOf { it.size }
-        println("  Total formulas: $totalFormulas")
-        println("  Average formulas per atom: ${totalFormulas.toDouble() / atom2formula2metric.size}")
-        
-        val formulasPerAtom = atom2formula2metric.values.map { it.size }
-        println("  Formulas per atom - Min: ${formulasPerAtom.minOrNull() ?: 0}")
-        println("  Formulas per atom - Max: ${formulasPerAtom.maxOrNull() ?: 0}")
-        println("  Formulas per atom - Median: ${formulasPerAtom.sorted().getOrNull(formulasPerAtom.size / 2) ?: 0}")
-        
-        // 估算 atom2formula2metric 内存
-        val atom2formula2metricMemory = ((atom2formula2metric.size * 48 + totalFormulas * 128).toDouble() / 1024 / 1024).format(2)
-        println("  Estimated memory usage: $atom2formula2metricMemory MB")
-        
-        // 找出拥有最多公式的前10个原子
-        val top10Atoms = atom2formula2metric.entries
-            .sortedByDescending { it.value.size }
-            .take(10)
-        println("\n  Top 10 atoms with most formulas:")
-        top10Atoms.forEachIndexed { index, (atom, formulas) ->
-            println("    ${index + 1}. $atom -> ${formulas.size} formulas")
-        }
-        
-        // 6. 队列和计数器
-        println("\n[6] Processing Statistics:")
-        println("  relationQueue.size = ${relationQueue.size}")
-        println("  processedCount = ${processedCount.get()}")
-        println("  addedCount = ${addedCount.get()}")
-        println("  activeThreadCount = ${activeThreadCount.get()}")
-        
-        // 7. 内存使用情况
-        println("\n[7] JVM Memory Usage:")
-        val runtime = Runtime.getRuntime()
-        val usedMemory = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
-        val maxMemory = runtime.maxMemory() / (1024 * 1024)
-        val totalMemory = runtime.totalMemory() / (1024 * 1024)
-        val freeMemory = runtime.freeMemory() / (1024 * 1024)
-        
-        println("  Used Memory: ${usedMemory} MB")
-        println("  Free Memory: ${freeMemory} MB")
-        println("  Total Memory: ${totalMemory} MB")
-        println("  Max Memory: ${maxMemory} MB")
-        println("  Memory Usage: ${(usedMemory * 100.0 / maxMemory).format(2)}%")
-        
-        // 估算各数据结构内存总和
-        println("\n[7.1] Estimated Memory Breakdown:")
-        val r2h2tSetMem = estimateR2h2tSetMemory(R2h2tSet.size, r2h2tSetTotalHeads, r2h2tSetTotalTails).toDouble()
-        val r2instanceSetMem = estimateMapOfSetsMemory(r2instanceSet.size, r2instanceSetTotal).toDouble()
-        val minHashMem = (minHashRegistry.size * (48 + MH_DIM * 4).toDouble() / 1024 / 1024)
-        val key2headAtomMem = ((key2headAtom.size * 48 + key2headAtomTotalAtoms * 64).toDouble() / 1024 / 1024)
-        val atom2formula2metricMem = ((atom2formula2metric.size * 48 + totalFormulas * 128).toDouble() / 1024 / 1024)
-        
-        println("  R2h2tSet: ${r2h2tSetMem.format(2)} MB (${(r2h2tSetMem * 100 / usedMemory).format(1)}%)")
-        println("  r2instanceSet: ${r2instanceSetMem.format(2)} MB (${(r2instanceSetMem * 100 / usedMemory).format(1)}%)")
-        println("  minHashRegistry: ${minHashMem.format(2)} MB (${(minHashMem * 100 / usedMemory).format(1)}%)")
-        println("  key2headAtom: ${key2headAtomMem.format(2)} MB (${(key2headAtomMem * 100 / usedMemory).format(1)}%)")
-        println("  atom2formula2metric: ${atom2formula2metricMem.format(2)} MB (${(atom2formula2metricMem * 100 / usedMemory).format(1)}%)")
-        val totalEstimated = r2h2tSetMem + r2instanceSetMem + minHashMem + key2headAtomMem + atom2formula2metricMem
-        println("  Total Estimated: ${totalEstimated.format(2)} MB (${(totalEstimated * 100 / usedMemory).format(1)}% of used memory)")
-        println("  Other/Overhead: ${(usedMemory - totalEstimated).format(2)} MB")
-        
-        // 8. 可能的内存问题识别
-        println("\n[8] Potential Memory Issues:")
-        val issues = mutableListOf<String>()
-        
-        if (r2h2tSetTotalTails > 10_000_000) {
-            issues.add("⚠ R2h2tSet has ${r2h2tSetTotalTails} (head,tail) pairs - may cause memory overflow")
-        }
-        
-        if (totalFormulas > 1_000_000) {
-            issues.add("⚠ atom2formula2metric has ${totalFormulas} formulas - may cause memory overflow")
-        }
-        
-        if (key2headAtomTotalAtoms > 100_000) {
-            issues.add("⚠ LSH buckets contain ${key2headAtomTotalAtoms} atoms - may cause memory overflow")
-        }
-        
-        val maxFormulaCount = formulasPerAtom.maxOrNull() ?: 0
-        if (maxFormulaCount > 10_000) {
-            issues.add("⚠ Some atoms have up to ${maxFormulaCount} formulas - highly skewed distribution")
-        }
-        
-        val maxBucketSize = bucketSizes.maxOrNull() ?: 0
-        if (maxBucketSize > 1_000) {
-            issues.add("⚠ Some LSH buckets have up to ${maxBucketSize} atoms - poor hash distribution")
-        }
-        
-        if (usedMemory > maxMemory * 0.9) {
-            issues.add("⚠ Memory usage at ${(usedMemory * 100.0 / maxMemory).format(2)}% - critical level")
-        }
-        
-        // 检查未估算的内存黑洞
-        val unexplainedMemory = usedMemory - totalEstimated
-        if (unexplainedMemory > usedMemory * 0.5) {
-            issues.add("⚠⚠⚠ CRITICAL: ${unexplainedMemory.format(2)} MB (${(unexplainedMemory * 100 / usedMemory).format(1)}%) memory unaccounted for!")
-            issues.add("    Possible causes: instanceSet storage, intermediate objects, or hidden caches")
-        }
-        
-        if (issues.isEmpty()) {
-            println("  ✓ No obvious memory issues detected")
-        } else {
-            issues.forEach { println("  $it") }
-        }
-        
-        // 9. 深度内存分析 - 查找隐藏的内存占用
-        println("\n[9] Deep Memory Analysis - Finding Hidden Memory Usage:")
-        
-        // 分析 MyAtom 对象的 instanceSet 缓存
-        println("  Analyzing MyAtom instanceSet caches...")
-        var totalAtomInstanceSets = 0
-        var totalAtomInstances = 0
-        try {
-            // 收集所有唯一的 MyAtom 对象
-            val allAtoms = mutableSetOf<MyAtom>()
-            allAtoms.addAll(key2headAtom.values.flatten())
-            allAtoms.addAll(atom2formula2metric.keys)
-            
-            println("    Total unique MyAtom objects: ${allAtoms.size}")
-            
-            // 尝试估算每个 atom 的 instanceSet 大小
-            for (atom in allAtoms) {
-                try {
-                    val instanceSet = atom.getInstanceSet()
-                    totalAtomInstanceSets++
-                    totalAtomInstances += instanceSet.size
-                } catch (e: Exception) {
-                    // 忽略无法获取的
-                }
-            }
-            
-            val atomInstancesMemory = (totalAtomInstances * 16.0 / 1024 / 1024)
-            println("    Total atom instanceSets: $totalAtomInstanceSets")
-            println("    Total instances in atoms: $totalAtomInstances")
-            println("    Estimated memory: ${atomInstancesMemory.format(2)} MB")
-            
-        } catch (e: Exception) {
-            println("    Error analyzing atoms: ${e.message}")
-        }
-        
-        // 分析 Formula 对象
-        println("\n  Analyzing Formula objects...")
-        val allFormulas = mutableSetOf<Formula>()
-        allFormulas.addAll(formula2supp.keys)
-        allFormulas.addAll(minHashRegistry.keys)
-        atom2formula2metric.values.forEach { allFormulas.addAll(it.keys) }
-        println("    Total unique Formula objects: ${allFormulas.size}")
-        val formulaMemory = (allFormulas.size * 64.0 / 1024 / 1024)
-        println("    Estimated Formula objects memory: ${formulaMemory.format(2)} MB")
-        
-        // 分析 R2h2supp
-        println("\n  Analyzing R2h2supp...")
-        val r2h2suppTotalEntries = R2h2supp.values.sumOf { it.size }
-        println("    Total paths: ${R2h2supp.size}")
-        println("    Total (head -> supp) entries: $r2h2suppTotalEntries")
-        val r2h2suppMemory = ((R2h2supp.size * 48 + r2h2suppTotalEntries * 32).toDouble() / 1024 / 1024)
-        println("    Estimated memory: ${r2h2suppMemory.format(2)} MB")
-        
-        // 分析 r2loopSet
-        println("\n  Analyzing r2loopSet...")
-        val r2loopSetTotal = r2loopSet.values.sumOf { it.size }
-        println("    Total relations: ${r2loopSet.size}")
-        println("    Total loop entities: $r2loopSetTotal")
-        val r2loopSetMemory = estimateMapOfSetsMemory(r2loopSet.size, r2loopSetTotal).toDouble()
-        println("    Estimated memory: ${r2loopSetMemory.format(2)} MB")
-        
-        // 分析 r2tSet
-        println("\n  Analyzing r2tSet...")
-        val r2tSetTotalEntities = r2tSet.values.sumOf { it.size }
-        println("    Total relations: ${r2tSet.size}")
-        println("    Total tail entities (snapshot arrays): $r2tSetTotalEntities")
-        val r2tSetMemory = ((r2tSet.size * 48 + r2tSetTotalEntities * 4).toDouble() / 1024 / 1024)
-        println("    Estimated memory: ${r2tSetMemory.format(2)} MB")
-        
-        // 分析 R2supp
-        println("\n  Analyzing R2supp...")
-        println("    Total entries: ${R2supp.size}")
-        val r2suppMemory = (R2supp.size * 32.0 / 1024 / 1024)
-        println("    Estimated memory: ${r2suppMemory.format(2)} MB")
-        
-        // 分析 TripleSet 原始数据
-        println("\n  Analyzing TripleSet (ts) original data...")
-        val tsR2tripleSetTotal = ts.r2tripleSet.values.sumOf { it.size }
-        println("    r2tripleSet relations: ${ts.r2tripleSet.size}")
-        println("    Total triples: $tsR2tripleSetTotal")
-        val tsMemory = ((ts.r2tripleSet.size * 48 + tsR2tripleSetTotal * 80).toDouble() / 1024 / 1024)
-        println("    Estimated memory: ${tsMemory.format(2)} MB")
-        
-        // 分析队列
-        println("\n  Analyzing relationQueue...")
-        println("    Queue size: ${relationQueue.size}")
-        val queueMemory = (relationQueue.size * 24.0 / 1024 / 1024)
-        println("    Estimated memory: ${queueMemory.format(2)} MB")
-        
-        // 分析 IdManager 字符串缓存
-        println("\n  Analyzing IdManager string caches...")
-        val entityCount = IdManager.getEntityCount()
-        val relationCount = IdManager.getRelationCount()
-        println("    Total entities: $entityCount")
-        println("    Total relations: $relationCount")
-        // 估算：每个字符串平均50字符，每个字符2字节，加上HashMap entry开销
-        val idManagerMemory = ((entityCount + relationCount) * (50 * 2 + 64).toDouble() / 1024 / 1024)
-        println("    Estimated memory: ${idManagerMemory.format(2)} MB")
-        println("    (Assuming avg 50 chars per string)")
-        
-        // 尝试获取实际字符串长度
-        try {
-            val avgEntityStrLen = IdManager.getAverageEntityStringLength()
-            val avgRelationStrLen = IdManager.getAverageRelationStringLength()
-            val actualIdManagerMemory = (
-                (entityCount * (avgEntityStrLen * 2 + 64) + 
-                 relationCount * (avgRelationStrLen * 2 + 64)).toDouble() / 1024 / 1024
-            )
-            println("    Actual avg lengths - entities: ${avgEntityStrLen.format(1)}, relations: ${avgRelationStrLen.format(1)}")
-            println("    Refined memory estimate: ${actualIdManagerMemory.format(2)} MB")
-        } catch (e: Exception) {
-            println("    (Could not get actual string lengths)")
-        }
-        
-        // 总结所有发现的内存占用
-        println("\n  [9.1] Complete Memory Breakdown:")
-        
-        // 计算实际的IdManager内存（如果可用）
-        val actualIdManagerMem = try {
-            val entityCount = IdManager.getEntityCount()
-            val relationCount = IdManager.getRelationCount()
-            val avgEntityStrLen = IdManager.getAverageEntityStringLength()
-            val avgRelationStrLen = IdManager.getAverageRelationStringLength()
-            (entityCount * (avgEntityStrLen * 2 + 64) + 
-             relationCount * (avgRelationStrLen * 2 + 64)).toDouble() / 1024 / 1024
-        } catch (e: Exception) {
-            idManagerMemory
-        }
-        
-        val completeBreakdown = mutableListOf(
-            "R2h2tSet" to r2h2tSetMem,
-            "r2instanceSet" to r2instanceSetMem,
-            "minHashRegistry" to minHashMem,
-            "key2headAtom" to key2headAtomMem,
-            "atom2formula2metric" to atom2formula2metricMem,
-            "MyAtom instanceSets" to (totalAtomInstances * 16.0 / 1024 / 1024),
-            "Formula objects" to formulaMemory,
-            "R2h2supp" to r2h2suppMemory,
-            "r2loopSet" to r2loopSetMemory,
-            "r2tSet" to r2tSetMemory,
-            "R2supp" to r2suppMemory,
-            "TripleSet (ts)" to tsMemory,
-            "relationQueue" to queueMemory,
-            "IdManager strings" to actualIdManagerMem
-        )
-        
-        val sortedBreakdown = completeBreakdown.sortedByDescending { it.second }
-        sortedBreakdown.forEach { (name, memMB) ->
-            println("    ${name.padEnd(25)}: ${memMB.format(2).padStart(12)} MB (${(memMB * 100 / usedMemory).format(1).padStart(5)}%)")
-        }
-        
-        val totalAccountedFor = sortedBreakdown.sumOf { it.second }
-        println("    ${"TOTAL ACCOUNTED".padEnd(25)}: ${totalAccountedFor.format(2).padStart(12)} MB (${(totalAccountedFor * 100 / usedMemory).format(1).padStart(5)}%)")
-        println("    ${"STILL MISSING".padEnd(25)}: ${(usedMemory - totalAccountedFor).format(2).padStart(12)} MB (${((usedMemory - totalAccountedFor) * 100 / usedMemory).format(1).padStart(5)}%)")
-        
-        if ((usedMemory - totalAccountedFor) > 1000) {
-            println("\n  ⚠⚠⚠ WARNING: Over ${(usedMemory - totalAccountedFor).format(0)} MB still unaccounted!")
-            println("  Likely culprits:")
-            println("    - String objects (relation names, entity names) - CHECK IdManager ABOVE")
-            println("    - Duplicate MyAtom objects (not using object pooling)")
-            println("    - Hidden caches in MyAtom.getInstanceSet() calls")
-            println("    - Intermediate computation results not garbage collected")
-            println("    - JVM internal structures and overhead")
-            println("    - Possible memory leak in worker threads")
-            println("    - MinHash signature arrays (${minHashRegistry.size} x ${MH_DIM} x 4 bytes)")
-            
-            // 最可能的罪魁祸首分析
-            println("\n  🔍 MOST LIKELY CAUSES:")
-            
-            // 1. MyAtom 对象重复
-            val estimatedMyAtomObjects = key2headAtomTotalAtoms + atom2formula2metric.size
-            val myAtomObjectsMemory = (estimatedMyAtomObjects * 32.0 / 1024 / 1024)
-            println("    1. MyAtom objects (~${estimatedMyAtomObjects}): ~${myAtomObjectsMemory.format(2)} MB")
-            
-            // 2. Formula 对象中的 atom 引用
-            val estimatedFormulaAtomRefs = totalFormulas * 2  // 每个formula平均2个atom引用
-            println("    2. Formula atom references (~${estimatedFormulaAtomRefs}): included in Formula objects")
-            
-            // 3. 检查是否有大量重复的 Set 对象
-            println("    3. Checking for duplicate/redundant data structures...")
-            println("       - R2h2tSet contains Sets that may overlap with r2instanceSet")
-            println("       - Consider using shared immutable sets or interning")
-        }
-        
-        println("\n" + "=".repeat(80))
-        println("END OF MEMORY DIAGNOSTICS")
-        println("=".repeat(80) + "\n")
-    }
-    
-    // 辅助函数：格式化Double为指定小数位数
-    private fun Double.format(digits: Int) = "%.${digits}f".format(this)
-    
-    /**
-     * 估算 R2h2tSet 的内存占用
-     * 结构: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
-     */
-    private fun estimateR2h2tSetMemory(outerMapSize: Int, totalInnerMaps: Int, totalTails: Int): String {
-        // JVM对象内存估算（64位系统，压缩指针）：
-        // - HashMap entry: ~48 bytes (对象头16 + key 8 + value 8 + hash 4 + next 8 + 对齐4)
-        // - HashSet entry: ~32 bytes (对象头16 + 数组引用8 + size等字段8)
-        // - Integer对象: ~16 bytes (对象头12 + int值4)
-        // - Long对象: ~24 bytes (对象头12 + long值8 + 对齐4)
-        
-        val outerMapMemory = outerMapSize * 48.0  // 外层HashMap entries
-        val outerMapLongKeys = outerMapSize * 24.0  // Long keys
-        val innerMapsMemory = totalInnerMaps * 48.0  // 内层HashMap entries (每个head一个)
-        val innerMapIntKeys = totalInnerMaps * 16.0  // Int keys (heads)
-        val setsMemory = totalInnerMaps * 32.0  // MutableSet对象
-        val tailIntegers = totalTails * 16.0  // tail的Integer对象
-        
-        val totalBytes = outerMapMemory + outerMapLongKeys + innerMapsMemory + innerMapIntKeys + setsMemory + tailIntegers
-        val totalMB = totalBytes / 1024 / 1024
-        
-        return totalMB.format(2)
-    }
-    
-    /**
-     * 估算 Map<K, MutableSet<V>> 的内存占用
-     */
-    private fun estimateMapOfSetsMemory(mapSize: Int, totalElements: Int): String {
-        val mapMemory = mapSize * 48.0  // HashMap entries
-        val keysMemory = mapSize * 24.0  // Long keys (假设key是Long)
-        val setsMemory = mapSize * 32.0  // MutableSet对象
-        val elementsMemory = totalElements * 16.0  // 元素Integer对象
-        
-        val totalBytes = mapMemory + keysMemory + setsMemory + elementsMemory
-        val totalMB = totalBytes / 1024 / 1024
-        
-        return totalMB.format(2)
     }
 }

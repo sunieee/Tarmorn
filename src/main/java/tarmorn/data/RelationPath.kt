@@ -42,6 +42,10 @@ object RelationPath {
         return encoded
     }
 
+    fun isL1Relation(rp: Long): Boolean {
+        return rp in 1..MAX_RELATION_ID
+    }
+
     /**
      * Connect a single relation to the head of an existing path.
      * Used when the first parameter is a single relation (< MAX_RELATION_ID).
