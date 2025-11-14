@@ -25,6 +25,8 @@ data class MyAtom(val relationId: Long, val entityId: Int) {
 
     fun getRuleString(): String = IdManager.getAtomString(relationId, entityId)
 
+    fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId)
+
     val isBinary: Boolean
         get() = entityId == IdManager.getYId()
 

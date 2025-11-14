@@ -683,7 +683,7 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
 
     print(f"\n统计结果已保存到: {output_file}")
 
-def main(dataset="FB15k-237", file1_name="rules-100-40", file2_name="rule.txt", target_relation=None):
+def main(dataset="FB15k-237", file1_name="rules-100-20", file2_name="rule.txt", target_relation=None):
     """
     主函数
     """
