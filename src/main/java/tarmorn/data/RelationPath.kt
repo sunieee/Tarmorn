@@ -181,7 +181,7 @@ object RelationPath {
     /**
      * Check if this is a single relation (length = 1).
      */
-    fun isSingleRelation(encoded: Long): Boolean = getLength(encoded) == 1
+    fun isL1Relation(encoded: Long): Boolean = encoded < MAX_RELATION_ID
     
     /**
      * Get the inverse of a relation path.

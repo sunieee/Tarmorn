@@ -39,6 +39,7 @@ object TLearn {
         }
     }
 
+    const val MAX_JOIN_INSTANCES = 500_000
     const val MIN_CONF = 0
     const val MIN_SUPP = 20
     const val MAX_PATH_LENGTH = 3
@@ -76,12 +77,6 @@ object TLearn {
     // Backup of L1 relations for connection attempts
     lateinit var relationL1: List<Long>
 
-    // Synchronized logger for workers
-    private val logFile = File("out/workers.log")
-    private lateinit var logWriter: BufferedWriter
-    private var logErrorReported = false // 防止重复报告日志错误
-    private var logWriterClosed = false // 跟踪日志写入器状态
-
     private val POISON = Long.MIN_VALUE
     val processedCount = AtomicInteger(0)
     val addedCount = AtomicInteger(0)
@@ -91,54 +86,6 @@ object TLearn {
     val minHashRegistry = ConcurrentHashMap<Formula, IntArray>()           // 公式→MinHash映射
     val key2headAtom = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
     val atom2formula2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
-
-    // 目标关系子串列表：只要原子的 relation 路径字符串包含其中任意一个，就输出详细 TRACE 日志
-    @Volatile var TRACE_RELATIONS: List<String> = listOf(
-        // 示例：可按需在运行前/代码中修改
-        // "/base/biblioness/bibs_location/state",
-        // "/award/award_winning_work/awards_won./award/award_honor/award_winner",
-        // "/film/film/film_art_direction_by",
-        // "/film/film/costume_design_by"
-    )
-
-    // 判断是否需要跟踪某个原子
-    private fun shouldTrace(atom: MyAtom): Boolean {
-        if (TRACE_RELATIONS.isEmpty()) return false
-        val relationStr = IdManager.getRelationString(atom.relationId)
-        return TRACE_RELATIONS.any { relationStr.contains(it) }
-    }
-
-    // Initialize logger and clear the log file
-    private fun initializeLogger() {
-        synchronized(Any()) {
-            try {
-                logFile.parentFile?.mkdirs() // Create out directory if it doesn't exist
-                logFile.writeText("") // Clear the file content
-                logWriter = BufferedWriter(FileWriter(logFile, true)) // Append mode
-            } catch (e: Exception) {
-                println("Error initializing log file: ${e.message}")
-            }
-        }
-    }
-
-    // Close logger safely to avoid keeping file handles open and potential hangs
-    private fun closeLogger() {
-        try {
-            if (this::logWriter.isInitialized && !logWriterClosed) {
-                logWriterClosed = true
-                synchronized(logWriter) {
-                    try {
-                        logWriter.flush()
-                    } catch (_: Exception) { }
-                    try {
-                        logWriter.close()
-                    } catch (_: Exception) { }
-                }
-            }
-        } catch (e: Exception) {
-            println("Error closing log file: ${e.message}")
-        }
-    }
 
     // Initialize global hash seeds for MinHash
     private fun initializeGlobalHashSeeds() {
@@ -155,29 +102,6 @@ object TLearn {
         println("Initialized ${globalHashSeeds.size} unique global hash seeds")
     }
 
-    // Synchronized logging function
-    private fun logWorkerResult(connectedPath: Long, supp: Int) {
-        synchronized(logWriter) {
-            try {
-                // 检查 logWriter 是否仍然可用
-                if (logWriterClosed || !this::logWriter.isInitialized) {
-                    return
-                }
-                val pathString = IdManager.getRelationString(connectedPath)
-                logWriter.write("$pathString: $supp\n")
-                logWriter.flush()
-            } catch (e: Exception) {
-                // 只在第一次出现错误时打印，避免日志污染
-                synchronized(this) {
-                    if (!logErrorReported) {
-                        println("Error writing to log: ${e.message}")
-                        logErrorReported = true
-                    }
-                }
-            }
-        }
-    }
-
     // RelationPathItem moved to structure.TLearn
 
     /**
@@ -190,9 +114,6 @@ object TLearn {
         println("Loading triple set...")
         // Initialize global hash seeds first
         initializeGlobalHashSeeds()
-        
-        // Initialize and clear the log file
-        initializeLogger()
 
         // Initialize data structures
         // r2tripleSet = ts.r2tripleSet
@@ -234,9 +155,6 @@ object TLearn {
 
             // 保存atom2formula2metric到JSON文件
             saveAtom2Formula2MetricToJson()
-
-            // 关闭日志
-            closeLogger()
             // return r2tripleSet.mapValues { it.value.toSet() }
         }
     }
@@ -252,7 +170,7 @@ object TLearn {
             if (tripleSet.size >= MIN_SUPP) {
                 relationQueue.offer(relation)
                 addedCount.incrementAndGet()
-                logWorkerResult(relation, tripleSet.size)
+                debug2("[path] ${IdManager.getRelationString(relation)}: ${tripleSet.size}")
 
                 if (!IdManager.isInverseRelation(relation)) {
                     // 为L=1关系进行原子化，直接使用R2h2tSet中的反向索引
@@ -388,9 +306,7 @@ object TLearn {
                     
                     relationQueue.offer(connectedPath)
                     val cnt = addedCount.incrementAndGet()
-
-                    // Per-item log (keeps queue flowing)
-                     logWorkerResult(connectedPath, supp)
+                    debug2("[path] ${IdManager.getRelationString(connectedPath)}: $supp")
 
                     //  || activeThreadCount.get() < Settings.WORKER_THREADS
                     val remaining = relationQueue.size
@@ -504,6 +420,12 @@ object TLearn {
                             h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(r2Tail)
                             t2hSet.getOrPut(r2Tail) { mutableSetOf() }.add(r1Head)
                         }
+                        if (instanceSet.size > MAX_JOIN_INSTANCES) {
+                            // 认为这条路径极端稠密，直接放弃
+                            println("  L2 relation exceeded MAX_JOIN_INSTANCES ($MAX_JOIN_INSTANCES), r1=${IdManager.getRelationString(r1)}, path=${IdManager.getRelationString(r2)}")
+                            return 0
+                        }
+
                     } else {
                         loopSet.add(r1Head)
                     }
@@ -512,13 +434,8 @@ object TLearn {
         }
         
         // Calculate support counts for heads and tails
-        for ((head, tails) in h2tSet) {
-            h2supp[head] = tails.size
-        }
-        for ((tail, heads) in t2hSet) {
-            t2supp[tail] = heads.size
-        }
-        
+        for ((head, tails) in h2tSet) h2supp[head] = tails.size
+        for ((tail, heads) in t2hSet) t2supp[tail] = heads.size
         val size = instanceSet.size
 
         // 存储支持度
@@ -527,12 +444,13 @@ object TLearn {
         if (rp != inverseRp) R2supp[inverseRp] = size
 
         if (size >= MIN_SUPP) {
-            val (forwardSuccess, inverseSuccess) = atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
-
-            if (forwardSuccess) R2h2supp[rp] = h2supp
-            if (inverseSuccess) R2h2supp[inverseRp] = t2supp
-
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+            atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
+            R2h2supp[rp] = h2supp
+            R2h2supp[inverseRp] = t2supp
             R2h2tSet[rp] = h2tSet
+            // 应该需要保存t2h map！ 
+            R2h2tSet[inverseRp] = t2hSet
         }
 
         return size
@@ -575,9 +493,12 @@ object TLearn {
         debug2("  Method 2 (INVERSE_r3 · INVERSE_r2·INVERSE_r1): ${instances2.size} instances")
         if (instances2.size < MIN_SUPP) return 0
 
+        // 对instances2和inverses2排序，以便后续使用二分查找
+        instances2.sort()
+        inverses2.sort()
         
-        // 方式一：在连接过程中直接使用方式二的结果进行过滤
-        val (instances1, inverses1) = computeJoinLength1AndPathPairs(r1, r2r3, inverses2.toSet(), instances2.toSet())
+        // 方式一：在连接过程中直接使用方式二的结果进行过滤（使用排序数组+二分查找）
+        val (instances1, inverses1) = computeJoinLength1AndPathPairs(r1, r2r3, inverses2, instances2)
         debug2("  Method 1 (r1 · r2·r3) with filtering: ${instances1.size} instances")
         val size = instances1.size
         if (size < MIN_SUPP) return 0
@@ -593,14 +514,14 @@ object TLearn {
     /**
      * 连接单个关系(长度为1)与路径(长度为2)
      * 返回: Pair<IntArray, IntArray> 分别代表instanceSet和inverseSet（已经pairHash32）
-     * @param filterInstances 可选的过滤集合，只保留在此集合中的instance
-     * @param filterInverses 可选的过滤集合，只保留在此集合中的inverse
+     * @param filterInstances 可选的过滤数组（已排序），只保留在此数组中的instance，使用二分查找
+     * @param filterInverses 可选的过滤数组（已排序），只保留在此数组中的inverse，使用二分查找
      */
     private fun computeJoinLength1AndPathPairs(
         r1: Long, 
         path: Long, 
-        filterInstances: Set<Int>? = null,
-        filterInverses: Set<Int>? = null
+        filterInstances: IntArray? = null,
+        filterInverses: IntArray? = null
     ): Pair<IntArray, IntArray> {
         require(RelationPath.getLength(r1) == 1) { "r1 must be length 1" }
         require(RelationPath.getLength(path) == 2) { "path must be length 2" }
@@ -624,7 +545,7 @@ object TLearn {
             // 获取从connectingEntity通过path能到达的tail实体
             val pathTailEntities = R2h2tSet[path]?.get(connectingEntity) ?: emptySet()
             
-            // 笛卡尔积，排除 x == z，并根据过滤集合进行过滤
+            // 笛卡尔积，排除 x == z，并根据过滤集合进行过滤（使用二分查找）
             for (x in r1HeadEntities) {
                 for (z in pathTailEntities) {
                     if (x != z) {
@@ -633,12 +554,19 @@ object TLearn {
                         }
 
                         val inverseHash = pairHash32(z, x)
-                        if (filterInverses != null && inverseHash !in filterInverses) continue
+                        // 使用二分查找替代Set.contains，避免创建HashSet
+                        if (filterInverses != null && filterInverses.binarySearch(inverseHash) < 0) continue
                         
                         val instanceHash = pairHash32(x, z)
-                        if (filterInstances != null && instanceHash !in filterInstances) continue
+                        // 使用二分查找替代Set.contains，避免创建HashSet
+                        if (filterInstances != null && filterInstances.binarySearch(instanceHash) < 0) continue
                         
                         instanceSet.add(instanceHash)
+                        if (instanceSet.size > MAX_JOIN_INSTANCES) {
+                            // 认为这条路径极端稠密，直接放弃
+                            println("  L3 relation exceeded MAX_JOIN_INSTANCES ($MAX_JOIN_INSTANCES), r1=${IdManager.getRelationString(r1)}, path=${IdManager.getRelationString(path)}")
+                            return Pair(IntArray(0), IntArray(0))
+                        }
                         inverseSet.add(inverseHash)
                     }
                 }
@@ -652,7 +580,7 @@ object TLearn {
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
      */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>): Pair<Boolean, Boolean> {
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
         debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}, inverseSet.size=${inverseSet.size}")
 
         val inverseRp = RelationPath.getInverseRelation(rp)
@@ -660,16 +588,14 @@ object TLearn {
         val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
         val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
-        return Pair(
-            performLSH(binaryAtom, instanceSet),
-            performLSH(inverseBinaryAtom, inverseSet)
-        )
+        performLSH(binaryAtom, instanceSet)
+        performLSH(inverseBinaryAtom, inverseSet)
     }
     
     /**
      * Overload: atomize Binary relation path using primitive arrays to avoid boxing and HashSet creation.
      */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceArray: IntArray, inverseArray: IntArray): Pair<Boolean, Boolean> {
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceArray: IntArray, inverseArray: IntArray) {
         debug2("atomizeBinaryRelationPath[primitive]: rp=$rp, supp=$supp, instances=${instanceArray.size}, inverses=${inverseArray.size}")
         val inverseRp = RelationPath.getInverseRelation(rp)
         val binaryAtom = MyAtom(rp, IdManager.getYId())
@@ -677,10 +603,8 @@ object TLearn {
         // Reuse Set-based LSH with lightweight IntArraySet wrappers to avoid boxing-heavy HashSet materialization
         val instanceView = IntArraySet(instanceArray)
         val inverseView = IntArraySet(inverseArray)
-        return Pair(
-            performLSH(binaryAtom, instanceView),
-            performLSH(inverseBinaryAtom, inverseView)
-        )
+        performLSH(binaryAtom, instanceView)
+        performLSH(inverseBinaryAtom, inverseView)
     }
     
     /**
@@ -695,6 +619,12 @@ object TLearn {
         R2h2supp[inverseRp]?.forEach { (constant, supp) ->
             if (supp >= MIN_SUPP) {
                 val unaryAtom = MyAtom(rp, constant)
+                if (RelationPath.isL1Relation(rp)) {
+                    val formula = Formula(unaryAtom)
+                    val metric = Metric(0.0, supp.toDouble(), supp, R2supp[rp]!!)
+                    val formula2metric = atom2formula2metric.getOrPut(unaryAtom) { ConcurrentHashMap() }
+                    formula2metric[formula] = metric
+                }
                 // 生成Unary实例集合：所有能到达constant的head实体
                 val unaryInstanceSet = t2hSet[constant]
                 if (unaryInstanceSet != null) {
@@ -717,6 +647,12 @@ object TLearn {
             if (supp >= MIN_SUPP) {
                 val inverseUnaryAtom = MyAtom(inverseRp, constant)
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
+                if (RelationPath.isL1Relation(rp)) {
+                    val formula = Formula(inverseUnaryAtom)
+                    val metric = Metric(0.0, supp.toDouble(), supp, R2supp[inverseRp]!!)
+                    val formula2metric = atom2formula2metric.getOrPut(inverseUnaryAtom) { ConcurrentHashMap() }
+                    formula2metric[formula] = metric
+                }
                 val inverseUnaryInstanceSet = h2tSet[constant]
                 if (inverseUnaryInstanceSet != null) {
                     // TODO: h2tSet 中可能没有该constant的映射
@@ -897,18 +833,13 @@ object TLearn {
      * 对于长度超过1的关系路径，只应该将Formula添加到已经存在的LSH桶中，而不应该创建新的桶
      * 为Atom计算MinHash并加入LSH分桶
      */
-    fun performLSH(currentAtom: MyAtom, instanceSet: Set<Int>): Boolean {
+    fun performLSH(currentAtom: MyAtom, instanceSet: Set<Int>) {
         debug2("performLSH: Atom=$currentAtom, instanceSet.size=${instanceSet.size}")
         // 动态计算支持度
         val mySupp = instanceSet.size
         
         // 创建Formula (单原子公式)
         val minHashSignature = computeMinHashDOPH(instanceSet, currentAtom.isBinary)
-        val trace = shouldTrace(currentAtom)
-        if (trace) {
-            println("[TRACE-LSH] >>> Atom ${currentAtom} supp=${mySupp} head=${currentAtom.isHeadAtom} binary=${currentAtom.isBinary}")
-            println("[TRACE-LSH] MinHash(first16)=${minHashSignature.take(16).joinToString(",")}")
-        }
         // 使用 isL2Atom：范围关系是 isHeadAtom ⊆ isL1Atom ⊆ isL2Atom
         if (currentAtom.isL2Atom) {
             val formula = Formula(atom1 = currentAtom)
@@ -969,9 +900,6 @@ object TLearn {
             // 原实现将 headSize 置为 bucketAtom 的支持度，bodySize 为 currentAtom，导致日志中显示反转。
             // 为与打印格式 "currentAtom <= bucketAtom" 对齐：headSize 应为 currentAtom 的支持度(mySupp)，bodySize 为 bucketAtom 的支持度(supp)。
             var metric = Metric(jaccard, intersectionSize, mySupp, supp)
-            if (trace || shouldTrace(bucketAtom)) {
-                println("[TRACE-LSH] Candidate=${bucketAtom} bucketCount=$bucketCount jaccard=${"%.6f".format(jaccard)} estSupport=${"%.2f".format(metric.support)} headSize=${metric.headSize} bodySize=${metric.bodySize} estimateValid=${metric.estimateValid}")
-            }
 
             if (metric.estimateValid) {
                 if (validateAndCreateFormula(currentAtom, bucketAtom, instanceSet, jaccard) != null) cnt++
@@ -987,11 +915,6 @@ object TLearn {
             }
 
         }
-        if (trace) {
-            println("[TRACE-LSH] <<< Atom ${currentAtom} validCombinations=$cnt")
-        }
-//        if (cnt > 0) println("Found $cnt valid combinations for Atom: $myAtom:")
-        return currentAtom.isL2Atom || cnt > 0
     }
 
 
@@ -1034,7 +957,7 @@ object TLearn {
      */
     // TODO: 这里 originalMetric 意味着 headAtom必须是formula的第二个，因此bodySize需要重新算
     // TODO: 需要有一个map记录已经计算过的formula
-    fun performLSHforL2Formula(formula: Formula, instanceSet: Set<Int>, originalMetric: Metric): Int {
+    fun performLSHforL2Formula(formula: Formula, instanceSet: Set<Int>, originalMetric: Metric) {
         // 动态计算formula的支持度
         val mySupp = instanceSet.size
         val minHashSignature = computeMinHashDOPH(instanceSet, formula.isBinary)
@@ -1089,8 +1012,6 @@ object TLearn {
                 }
             }
         }
-//        if (cnt > 0) println("Found $cnt valid combinations for L2Formula $formula:")
-        return cnt
     }
     
     
@@ -1118,50 +1039,33 @@ object TLearn {
         jaccard: Double
     ): Formula? {
         debug2("validateAndCreateFormula: myAtom=$bodyAtom, atom=$headAtom, instanceSet.size=${bodyInstances.size}, jaccard=$jaccard")
-        var intersectionSize: Double
-        var metric: Metric
-        
         // 动态计算支持度
         val headInstances = headAtom.getInstanceSet()
         val headSupp = headInstances.size
-        val bodySupp = bodyInstances.size
-        lateinit var intersectionSet: Set<Int>
-        debug2("validateAndCreateFormula: headInstances.size=$headSupp, bodySupp=$bodySupp")
+        debug2("validateAndCreateFormula: headInstances.size=$headSupp, bodySupp=${bodyInstances.size}")
         
         // 自证式一元规则（entity-anchored unary rules）问题
         // if (myAtom.isL2Atom && !myAtom.isBinary) {  这种写法有问题，会漏掉L1Atom的情况
-        // if (!bodyAtom.isL1Atom && !bodyAtom.isBinary) {
-        //     val constant = headAtom.entityId
-        //     val inverseRelation = IdManager.getInverseRelation(bodyAtom.firstRelation)
-        //     val t2hSet = ts.r2h2tSet[inverseRelation]
-        //     if (t2hSet == null) {
-        //         val inverseRelationStr = IdManager.getRelationString(inverseRelation)
-        //         println("Warning: Missing t2hSet for relation $inverseRelationStr")
-        //     }
-        //     // 关系稀疏时，可能不存在t2hSet
-        //     val newInstanceSet = if (t2hSet != null && t2hSet[constant] != null) {
-        //         bodyInstances.filter { !t2hSet[constant]!!.contains(it) }
-        //     } else {
-        //         bodyInstances // 如果逆关系不存在，使用原始实例集合
-        //     }
-            
-        //     intersectionSet = newInstanceSet.intersect(headInstances)
-        //     intersectionSize = intersectionSet.size.toDouble()
-        //     // 与输出格式保持一致：currentAtom 为公式左侧（head），bucketAtom 为右侧（body）
-        //     // 这里 newInstanceSet.size 代表经过自证过滤后的 currentAtom 支持度（headSize），supp 为 bucketAtom 支持度（bodySize）
-        //     metric = Metric(jaccard, intersectionSize, headSupp, newInstanceSet.size)
-        //     debug2("validateAndCreateFormula: unary rule, constant=$constant, headSize=$headSupp, bodySize=${newInstanceSet.size}, intersectionSize=$intersectionSize, metric=$metric")
-        // } else {
-        intersectionSet = bodyInstances.intersect(headInstances)
-        intersectionSize = intersectionSet.size.toDouble()
+        var newInstances = bodyInstances
+        if (!bodyAtom.isL1Atom && !bodyAtom.isBinary) {
+            val constant = headAtom.entityId
+            val inverseRelation = IdManager.getInverseRelation(bodyAtom.firstRelation)
+            val t2hSet = ts.r2h2tSet[inverseRelation]
+            if (t2hSet == null) {
+                println("Warning: Missing t2hSet for relation ${IdManager.getRelationString(inverseRelation)}")
+            }
+            // 关系稀疏时，可能不存在t2hSet
+            if (t2hSet != null && t2hSet[constant] != null) {
+                newInstances = bodyInstances.filter { !t2hSet[constant]!!.contains(it) }.toSet()
+            }
+        }
+        var intersectionSet = newInstances.intersect(headInstances)
+        var intersectionSize = intersectionSet.size.toDouble()
         // 二元/一般情况：currentAtom 左侧 (head)，bucketAtom 右侧 (body)
-        metric = Metric(jaccard, intersectionSize, headSupp, bodySupp)
-        debug2("validateAndCreateFormula: binary/general, headSize=$headSupp, bodySize=$bodySupp, intersectionSize=$intersectionSize, metric=$metric")
+        var metric = Metric(jaccard, intersectionSize, headSupp, newInstances.size)
+        debug2("validateAndCreateFormula: headSize=$headSupp, bodySize=${newInstances.size}, intersectionSize=$intersectionSize, metric=$metric")
         
         if (!metric.valid) return null
-        if (shouldTrace(bodyAtom) || shouldTrace(headAtom)) {
-            println("[TRACE-LSH] NEW-FORMULA ${headAtom.getRuleString()} <= ${bodyAtom.getRuleString()} metric=$metric")
-        }
 
         val newFormula = Formula(atom1 = bodyAtom, atom2 = headAtom)
         
@@ -1266,8 +1170,7 @@ object TLearn {
                     // 输出规则：仅当formula包含恰好两个原子时
                     val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
                     val otherAtoms = atomsInFormula.filter { it != atom }
-                    require(otherAtoms.isNotEmpty()) { "Error: No other atoms found. Atom: $atom, Formula: $formula" }
-
+                    // if (otherAtoms.isEmpty()) println("Found Z rule: ${atom.getRuleString()} <=")
                     val formulaString = otherAtoms.joinToString(",") { it.toString() }
                         .replace("\"", "\\\"").replace("\n", "\\n")
                     writer.write("    \"$formulaString\": $metric")
