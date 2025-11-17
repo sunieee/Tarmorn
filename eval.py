@@ -17,6 +17,12 @@ argparser = argparse.ArgumentParser(description="Example for evaluation of a ran
 argparser.add_argument("--dataset", type=str, default="wnrr", help="dataset to use")
 argparser.add_argument("--rules", type=str, default="", help="rules to use")
 argparser.add_argument("--ranking_file", type=str, default="", help="rules to use")
+argparser.add_argument("--aggregation_function", type=str, default="maxplus", help="aggregation function to use")
+argparser.add_argument("--topk", type=int, default=100, help="topk to use")
+argparser.add_argument("--load_u_d_rules", action="store_true", help="whether to load u_d rules")
+argparser.add_argument("--load_u_xxc_rules", action="store_true", help="whether to load u_xxc rules")
+argparser.add_argument("--load_u_xxd_rules", action="store_true", help="whether to load u_xxd rules")
+
 
 args = argparser.parse_args()
 dataset = args.dataset
@@ -29,11 +35,11 @@ rules = args.rules if args.rules else f"data/rules/{dataset}.txt"
 ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{dataset}.txt"
 
 options = Options()
-options.set("ranking_handler.aggregation_function", "maxplus")
-options.set("ranking_handler.topk", 100)
-options.set("loader.load_u_d_rules", False)
-options.set("loader.load_u_xxc_rules", False)
-options.set("loader.load_u_xxd_rules", False)
+options.set("ranking_handler.aggregation_function", args.aggregation_function)
+options.set("ranking_handler.topk", args.topk)
+options.set("loader.load_u_d_rules", args.load_u_d_rules)
+options.set("loader.load_u_xxc_rules", args.load_u_xxc_rules)
+options.set("loader.load_u_xxd_rules", args.load_u_xxd_rules)
 
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", -1)  # 指定20个线程

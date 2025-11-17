@@ -8,6 +8,8 @@ import java.io.PrintWriter
 object Settings {
     // Path to the file that contains the triple set used for learning the rules.
     @JvmField
+    var MIN_SUPP: Int = 10
+    @JvmField
     var DATASET: String = "FB15k"
     @JvmField
     var PATH_TRAINING: String = "data/{DATASET}/train.txt"
@@ -20,6 +22,10 @@ object Settings {
     // Path to the file that contains the rules that will be refined or will be sued for prediction.
     @JvmField
     var PATH_RULES: String = "out/{DATASET}/rules-100"
+    @JvmField
+    var PATH_RULES_JSON: String = "out/{DATASET}/atom2formula2metric.json"
+    @JvmField
+    var PATH_RULES_TXT: String = "out/{DATASET}/rule.txt"
     // Path to the file that contains the rules that will be used as base,
     // i.e. this rule set will be added to all other rule sets loaded.
     @JvmField
@@ -288,19 +294,47 @@ object Settings {
             FileInputStream(yamlPath).use { `in` ->
                 val yaml = Yaml()
                 val config = yaml.load<MutableMap<String, Any>>(`in`)
-                loadFromYaml(config)
+                loadFrom(config)
             }
         } catch (e: IOException) {
             throw RuntimeException("Failed to load config from " + yamlPath, e)
         }
 
+        // Load from environment variables to override YAML settings
+        loadFrom(System.getenv().toMutableMap())
+
         if (AGGREGATION_TYPE == "maxplus") AGGREGATION_ID = 1
         if (AGGREGATION_TYPE == "max2") AGGREGATION_ID = 2
         if (AGGREGATION_TYPE == "noisyor") AGGREGATION_ID = 3
         if (AGGREGATION_TYPE == "maxgroup") AGGREGATION_ID = 4
+        
+        // Print all settings
+        printSettings()
+    }
+    
+    @JvmStatic
+    fun printSettings() {
+        println("=" .repeat(80))
+        println("Settings Configuration:")
+        println("=" .repeat(80))
+        for (field in Settings::class.java.fields) {
+            try {
+                val value = field.get(null)
+                val valueStr = when (value) {
+                    is IntArray -> value.joinToString(", ", "[", "]")
+                    is Array<*> -> value.joinToString(", ", "[", "]")
+                    null -> "null"
+                    else -> value.toString()
+                }
+                println("${field.name.padEnd(40)} = $valueStr")
+            } catch (e: IllegalAccessException) {
+                println("${field.name.padEnd(40)} = <inaccessible>")
+            }
+        }
+        println("=" .repeat(80))
     }
 
-    fun loadFromYaml(config: MutableMap<String, Any>) {
+    fun loadFrom(config: MutableMap<String, Any>) {
         for (field in Settings::class.java.getFields()) {
             val value = config.get(field.getName())
             if (value != null) {
@@ -313,10 +347,13 @@ object Settings {
                     } else if (type == Boolean::class.javaPrimitiveType) {
                         field.setBoolean(null, value.toString().toBoolean())
                     } else if (type == String::class.java) {
-                        field.set(null, value.toString())
-                    } else if (type == IntArray::class.java && value is MutableList<*>) {
-                        val list = value
-                        val arr = list.stream().mapToInt { o: Any? -> o.toString().toInt() }.toArray()
+                        field.set(null, value.toString().trim())
+                    } else if (type == IntArray::class.java) {
+                        val arr = when (value) {
+                            is MutableList<*> -> value.stream().mapToInt { o: Any? -> o.toString().toInt() }.toArray()
+                            is String -> value.split(",").map { it.trim().toInt() }.toIntArray()
+                            else -> throw IllegalArgumentException("Unsupported type for IntArray: ${value::class.java}")
+                        }
                         field.set(null, arr)
                     }
                 } catch (e: IllegalAccessException) {

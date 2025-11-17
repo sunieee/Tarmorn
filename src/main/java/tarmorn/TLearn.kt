@@ -41,7 +41,6 @@ object TLearn {
 
     const val MAX_JOIN_INSTANCES = 500_000
     const val MIN_CONF = 0
-    const val MIN_SUPP = 20
     const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.8
 
@@ -133,7 +132,7 @@ object TLearn {
         }.toMutableMap()
 
         println("Starting TLearn algorithm...")
-        println("MIN_SUPP: $MIN_SUPP, MAX_PATH_LENGTH: $MAX_PATH_LENGTH")
+        println("Settings.MIN_SUPP: $Settings.MIN_SUPP, MAX_PATH_LENGTH: $MAX_PATH_LENGTH")
 
         // Step 1: Initialize with L=1 relations
         initializeL1Relations()
@@ -167,7 +166,7 @@ object TLearn {
 
         for ((relation, tripleSet) in ts.r2tripleSet) {
             R2supp[relation] = tripleSet.size
-            if (tripleSet.size >= MIN_SUPP) {
+            if (tripleSet.size >= Settings.MIN_SUPP) {
                 relationQueue.offer(relation)
                 addedCount.incrementAndGet()
                 debug2("[path] ${IdManager.getRelationString(relation)}: ${tripleSet.size}")
@@ -298,7 +297,7 @@ object TLearn {
             if (connectedPath != null) {
                 val supp = computeSupp(connectedPath)
 
-                if (supp >= MIN_SUPP) {
+                if (supp >= Settings.MIN_SUPP) {
                     // 检查反向关系对的连接结果
                    if (IdManager.getInverseRelation(r1) == ri) {
                        debug1("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp")
@@ -343,13 +342,13 @@ object TLearn {
         // 原子插入，避免全局同步：只有当 rp 和 inverseRp 都是首次出现时才继续
         // 特殊处理：如果 rp == inverseRp（自反路径），只检查一次
         if (rp == inverseRp) {
-            val prevRp = R2supp.putIfAbsent(rp, 0)
+            val prevRp = R2supp.putIfAbsent(rp, -1)
             if (prevRp != null) {
                 return null
             }
         } else {
-            val prevRp = R2supp.putIfAbsent(rp, 0)
-            val prevInv = R2supp.putIfAbsent(inverseRp, 0)
+            val prevRp = R2supp.putIfAbsent(rp, -1)
+            val prevInv = R2supp.putIfAbsent(inverseRp, -1)
             if (prevRp != null || prevInv != null) {
                 return null
             }
@@ -443,7 +442,7 @@ object TLearn {
         R2supp[rp] = size
         if (rp != inverseRp) R2supp[inverseRp] = size
 
-        if (size >= MIN_SUPP) {
+        if (size >= Settings.MIN_SUPP) {
             atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
             atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
             R2h2supp[rp] = h2supp
@@ -483,15 +482,18 @@ object TLearn {
 
         // 检查两个复合路径是否都存在于R2h2supp中
 //        if (!R2h2supp.containsKey(r2r3) || !R2h2supp.containsKey(invR2R1)) {
-        if ((R2supp[r2r3]?: 0) < MIN_SUPP || (R2supp[invR2R1]?: 0) < MIN_SUPP) {
-            debug2("  Required paths not found in R2h2supp (r2·r3: ${R2h2supp.containsKey(r2r3)}, INVERSE_r2·INVERSE_r1: ${R2h2supp.containsKey(invR2R1)}), returning 0")
+        // if ((R2supp[r2r3]?: -1) == -1) computeSuppLength2(r2r3)
+        // if ((R2supp[invR2R1]?: -1) == -1) computeSuppLength2(invR2R1)
+
+        if ((R2supp[r2r3]?: -1) < Settings.MIN_SUPP || (R2supp[invR2R1]?: -1) < Settings.MIN_SUPP) {
+            debug1("  Required paths not valid (r2·r3: ${R2supp[r2r3]}, INVERSE_r2·INVERSE_r1: ${R2supp[invR2R1]}), returning 0")
             return 0
         }
         
         // 先计算方式二，得到约束集合
         val (instances2, inverses2) = computeJoinLength1AndPathPairs(invR3, invR2R1)
         debug2("  Method 2 (INVERSE_r3 · INVERSE_r2·INVERSE_r1): ${instances2.size} instances")
-        if (instances2.size < MIN_SUPP) return 0
+        if (instances2.size < Settings.MIN_SUPP) return 0
 
         // 对instances2和inverses2排序，以便后续使用二分查找
         instances2.sort()
@@ -501,7 +503,7 @@ object TLearn {
         val (instances1, inverses1) = computeJoinLength1AndPathPairs(r1, r2r3, inverses2, instances2)
         debug2("  Method 1 (r1 · r2·r3) with filtering: ${instances1.size} instances")
         val size = instances1.size
-        if (size < MIN_SUPP) return 0
+        if (size < Settings.MIN_SUPP) return 0
 
         R2supp[rp] = size
         if (rp != inverseRp) R2supp[inverseRp] = size
@@ -617,7 +619,7 @@ object TLearn {
 
         // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
         R2h2supp[inverseRp]?.forEach { (constant, supp) ->
-            if (supp >= MIN_SUPP) {
+            if (supp >= Settings.MIN_SUPP) {
                 val unaryAtom = MyAtom(rp, constant)
                 if (RelationPath.isL1Relation(rp)) {
                     val formula = Formula(unaryAtom)
@@ -635,7 +637,7 @@ object TLearn {
         
         // 4. r(X,·): Unary Atom for existence - relation rp has head entities
         val headEntityCount = R2h2supp[rp]?.size ?: 0
-        if (headEntityCount >= MIN_SUPP) {
+        if (headEntityCount >= Settings.MIN_SUPP) {
             val existenceAtom = MyAtom(rp, 0) // 0表示存在性原子"·"
             // 生成Existence实例集合：所有head实体
             val existenceInstanceSet = h2tSet.keys
@@ -644,7 +646,7 @@ object TLearn {
         
         // 5. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
         R2h2supp[rp]?.forEach { (constant, supp) ->
-            if (supp >= MIN_SUPP) {
+            if (supp >= Settings.MIN_SUPP) {
                 val inverseUnaryAtom = MyAtom(inverseRp, constant)
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
                 if (RelationPath.isL1Relation(rp)) {
@@ -663,7 +665,7 @@ object TLearn {
         
         // 6. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
         val inverseTailEntityCount = R2h2supp[inverseRp]?.size ?: 0
-        if (inverseTailEntityCount >= MIN_SUPP) {
+        if (inverseTailEntityCount >= Settings.MIN_SUPP) {
             val inverseExistenceAtom = MyAtom(inverseRp, 0)
             // 生成逆Existence实例集合：所有tail实体
             val inverseExistenceInstanceSet = t2hSet.keys
@@ -671,7 +673,7 @@ object TLearn {
         }
 
         // 7. r(X,X): Unary Atom for loops - r(X,X) exists
-        if (loopSet.size >= MIN_SUPP) {
+        if (loopSet.size >= Settings.MIN_SUPP) {
             val loopAtom = MyAtom(rp, IdManager.getXId()) // X表示循环原子
             performLSH(loopAtom, loopSet)
         }
@@ -1138,11 +1140,16 @@ object TLearn {
      * 保存atom2formula2metric为JSON文件 - 流式输出避免内存溢出
      */
     private fun saveAtom2Formula2MetricToJson() {
-        val outDir = File("out/" + Settings.DATASET)
-        outDir.mkdirs() // 确保out目录存在
-
-        val outputFile = File(outDir, "atom2formula2metric.json")
-        val outputRule = File(outDir, "rule.txt")
+        // val outDir = File("out/" + Settings.DATASET)
+        // outDir.mkdirs() // 确保out目录存在
+        val outputFile = File(Settings.PATH_RULES_JSON)
+        val outputRule = File(Settings.PATH_RULES_TXT)
+        
+        // 统计变量
+        var totalRules = 0
+        val unaryStats = IntArray(MAX_PATH_LENGTH + 1) // L0, L1, L2, L3
+        val binaryStats = IntArray(MAX_PATH_LENGTH + 1) // L0, L1, L2, L3
+        
         BufferedWriter(FileWriter(outputFile)).use { writer ->
             // Write rules in parallel while streaming JSON
             BufferedWriter(FileWriter(outputRule)).use { ruleWriter ->
@@ -1177,12 +1184,21 @@ object TLearn {
                     if (formulaIndex < formulaEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
-
                     val ruleBody = otherAtoms.joinToString(",") { atom -> atom.getRuleString() }
                     val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${ruleBody}"
                     ruleWriter.write(ruleLine)
                     ruleWriter.write("\n")
-
+                    
+                    // 统计规则
+                    totalRules++
+                    val bodyLength = otherAtoms.size
+                    if (bodyLength <= MAX_PATH_LENGTH) {
+                        if (atom.isBinary) {
+                            binaryStats[bodyLength]++
+                        } else {
+                            unaryStats[bodyLength]++
+                        }
+                    }
                 }
 
                 writer.write("  }")
@@ -1204,5 +1220,12 @@ object TLearn {
         println("Successfully saved rules to ${outputRule.absolutePath}")
         println("Total atoms: ${atom2formula2metric.size}")
         println("Total formulas: ${atom2formula2metric.values.sumOf { it.size }}")
+        
+        // 打印规则统计
+        println("Total rules: $totalRules")
+        println("Type     L0       L1       L2       L3")
+        println("-" .repeat(60))
+        println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
+        println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
     }
 }
