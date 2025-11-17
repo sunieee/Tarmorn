@@ -22,6 +22,21 @@ plt.rcParams['mathtext.rm'] = 'Times New Roman'
 plt.rcParams['mathtext.it'] = 'Times New Roman:italic'
 plt.rcParams['mathtext.bf'] = 'Times New Roman:bold'
 
+def get_strategy_order():
+    """Define the order of partition strategies from simple to complex."""
+    return [
+        'random_nonoverlap',
+        'random_multi_k2',
+        'random_multi_k3',
+        'edge_cut',
+        'vertex_cut',
+        'louvain',
+        'hub_replication_t50',
+        'bfs_expansion_r2',
+        'relation_centric'
+    ]
+
+
 def read_metrics(base_dir: str) -> pd.DataFrame:
     """Read all metrics.json files from subdirectories."""
     data = []
@@ -74,7 +89,14 @@ def read_metrics(base_dir: str) -> pd.DataFrame:
         return pd.DataFrame()
     
     df = pd.DataFrame(data)
-    df = df.sort_values('strategy')
+    
+    # Sort by predefined order
+    order_dict = {name: idx for idx, name in enumerate(get_strategy_order())}
+    df['order'] = df['strategy'].map(order_dict)
+    # Keep strategies not in predefined order at the end
+    df['order'] = df['order'].fillna(999)
+    df = df.sort_values('order').drop('order', axis=1).reset_index(drop=True)
+    
     return df
 
 
@@ -243,10 +265,10 @@ def generate_summary_table(df: pd.DataFrame, output_path: str):
 
 
 def main():
-    dataset = 'wikidata5m'
+    # dataset = 'wikidata5m'
     # dataset = 'YAGO3-10'
     # dataset = 'FB15k'
-    # dataset = 'FB15k-237'
+    dataset = 'FB15k-237'
     base_dir = os.path.join('out', dataset)
     output_heatmap = os.path.join('out', dataset, 'comparison_heatmap.png')
     output_summary = os.path.join('out', dataset, 'comparison_summary.txt')

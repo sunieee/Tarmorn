@@ -2,8 +2,8 @@
 setlocal enabledelayedexpansion
 
 REM Configuration
-set dataset=FB15k-237
-set split=louvain
+if not defined dataset set dataset=FB15k-237
+if not defined split set split=louvain
 
 REM Create output directories
 if not exist "out\%dataset%\%split%\atom2formula2metric" mkdir "out\%dataset%\%split%\atom2formula2metric"
@@ -34,3 +34,7 @@ echo All partitions processed
 echo ================================================================================
 
 endlocal 
+
+python merge_rules.py "out\%dataset%\%split%\atom2formula2metric" > "out\%dataset%\%split%\merge_rules.log"
+
+python eval.py --dataset %dataset% --rules "out\%dataset%\%split%\rule.txt" --ranking_file "out\%dataset%\%split%\eval.txt" > "out\%dataset%\%split%\eval.log"

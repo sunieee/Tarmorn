@@ -16,8 +16,8 @@ echo ###########################################################################
 echo Processing split: %%s
 echo ################################################################################
 
-REM Call run.bat with environment variables
-cmd /c "set dataset=%dataset% && set split=%%s && run.bat"
+REM Call run.bat with environment variables (no spaces around &&)
+cmd /c "set dataset=%dataset%&& set split=%%s&& run.bat"
 
 if errorlevel 1 (
 echo ERROR: Failed to process split %%s
