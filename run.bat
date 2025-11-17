@@ -34,7 +34,3 @@ echo All partitions processed
 echo ================================================================================
 
 endlocal 
-
-python merge_rules.py "out\%dataset%\%split%\atom2formula2metric" > "out\%dataset%\%split%\merge_rules.log"
-
-python eval.py --dataset %dataset% --rules "out\%dataset%\%split%\rule.txt" --ranking_file "out\%dataset%\%split%\eval.txt" > "out\%dataset%\%split%\eval.log"
