@@ -284,7 +284,8 @@ def generate_summary_table(df: pd.DataFrame, output_path: str):
 
 def main():
     # Configuration
-    base_dir = r'.\out\FB15k-237\SUPP10'
+    # base_dir = r'.\out\FB15k-237\SUPP10'
+    base_dir = r'.\out\FB15k-237'
     split_names = [
         'hub_replication_t50',
         'louvain',

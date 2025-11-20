@@ -143,27 +143,37 @@ def merge_metrics(metrics_list):
     }
 
 
-def merge_json_files(input_dir):
+def merge_json_files(input_dirs):
     """
-    Merge all part_*.json files in the input directory
-    """
-    # Find all part_*.json files
-    json_files = sorted(glob.glob(os.path.join(input_dir, 'part_*.json')))
+    Merge all part_*.json files from multiple input directories
     
-    if not json_files:
-        print(f"No part_*.json files found in {input_dir}")
+    Args:
+        input_dirs: list of directory paths
+    """
+    # Collect all part_*.json files from all directories
+    all_json_files = []
+    for input_dir in input_dirs:
+        json_files = sorted(glob.glob(os.path.join(input_dir, 'part_*.json')))
+        if json_files:
+            print(f"\nFound {len(json_files)} files in {input_dir}:")
+            for f in json_files:
+                print(f"  - {os.path.basename(f)}")
+            all_json_files.extend(json_files)
+        else:
+            print(f"\nWarning: No part_*.json files found in {input_dir}")
+    
+    if not all_json_files:
+        print("Error: No part_*.json files found in any directory")
         return None
     
-    print(f"Found {len(json_files)} files to merge:")
-    for f in json_files:
-        print(f"  - {os.path.basename(f)}")
+    print(f"\nTotal files to merge: {len(all_json_files)}")
     
     # Merged structure: atom -> formula -> list of metrics
     merged = defaultdict(lambda: defaultdict(list))
     
     # Read and merge all JSON files
-    for json_file in json_files:
-        print(f"\nProcessing {os.path.basename(json_file)}...")
+    for json_file in all_json_files:
+        print(f"\nProcessing {json_file}...")
         
         with open(json_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -292,32 +302,62 @@ def print_statistics(merged_data):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python merge_rules.py <input_directory>")
-        print("Example: python merge_rules.py out/FB15k-237/louvain/atom2formula2metric")
+    if len(sys.argv) != 2:
+        print("Usage: python merge_rules.py <split_directory>")
+        print("Example 1: python merge_rules.py out/FB15k-237/louvain")
+        print("Example 2: python merge_rules.py out/FB15k-237/louvain+edge_cut")
         sys.exit(1)
     
-    input_dir = sys.argv[1]
+    split_dir = sys.argv[1]
     
-    if not os.path.isdir(input_dir):
-        print(f"Error: {input_dir} is not a valid directory")
+    if not os.path.isdir(split_dir):
+        print(f"Error: {split_dir} is not a valid directory")
         sys.exit(1)
     
-    # Output files in parent directory
-    parent_dir = os.path.dirname(input_dir)
-    output_json = os.path.join(parent_dir, 'atom2formula2metric.json')
-    output_rules = os.path.join(parent_dir, 'rule.txt')
+    split_name = os.path.basename(split_dir)
+    
+    # Check if split name contains '+' (combined datasets)
+    if '+' in split_name:
+        # Split into individual dataset names
+        split_names = split_name.split('+')
+        
+        # Construct input directories for each split
+        parent_dir = os.path.dirname(split_dir)
+        input_dirs = []
+        for name in split_names:
+            atom_dir = os.path.join(parent_dir, name, 'atom2formula2metric')
+            if not os.path.isdir(atom_dir):
+                print(f"Error: {atom_dir} is not a valid directory")
+                sys.exit(1)
+            input_dirs.append(atom_dir)
+        # Output to the combined directory
+        output_dir = split_dir
+    else:
+        # Single dataset: just merge part_*.json in the atom2formula2metric subdirectory
+        atom_dir = os.path.join(split_dir, 'atom2formula2metric')
+        if not os.path.isdir(atom_dir):
+            print(f"Error: {atom_dir} is not a valid directory")
+            sys.exit(1)
+        input_dirs = [atom_dir]
+        output_dir = split_dir
+    
+    os.makedirs(output_dir, exist_ok=True)
+    output_json = os.path.join(output_dir, 'atom2formula2metric.json')
+    output_rules = os.path.join(output_dir, 'rule.txt')
     
     print("=" * 60)
     print("Merging JSON files")
     print("=" * 60)
-    print(f"Input directory: {input_dir}")
+    print(f"Input directories: {len(input_dirs)}")
+    for i, dir_path in enumerate(input_dirs, 1):
+        print(f"  {i}. {dir_path}")
+    print(f"Output directory: {output_dir}")
     print(f"Output JSON: {output_json}")
     print(f"Output rules: {output_rules}")
     print("=" * 60)
     
     # Merge JSON files
-    merged_data = merge_json_files(input_dir)
+    merged_data = merge_json_files(input_dirs)
     
     if merged_data is None:
         sys.exit(1)

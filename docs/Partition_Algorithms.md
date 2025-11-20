@@ -313,3 +313,36 @@ python script\partition.py --dataset data\FB15k-237 --strategy edge_cut --verbos
 --strategy relation_centric --verbose
 ```
 
+
+
+
+$$
+\begin{aligned}
+&\mathbf{B}  & r(x, y) &\leftarrow R(x, y) & L(R)\leq3\\
+&\mathbf{U_d} & r(x, c) &\leftarrow R(x, \cdot) & L(R)\leq2\\
+&\mathbf{U_c} & r(x, c) &\leftarrow R\left(x, c^{\prime}\right)& L(R)\leq2
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+& \operatorname{supp}(\phi)=\#X: \operatorname{body}(\phi)\left(X\right) \wedge head(\phi)\left(X\right) \\
+& S C(\phi)=\frac{\operatorname{supp}(\phi)}{\#X: \operatorname{body}(\phi)(X)} \cdot H C(r)=\frac{\operatorname{supp}(\phi)}{\#X: head(\phi)\left(X\right)}
+\end{aligned}
+$$
+
+
+$$
+\begin{aligned}
+& \operatorname{supp}(\phi)=\#X: \operatorname{body}(\phi)\left(X\right) \wedge head(\phi)\left(X\right) \\
+& S C(\phi)=\frac{\operatorname{supp}(\phi)}{\#X: \operatorname{body}(\phi)(X)} \cdot H C(r)=\frac{\operatorname{supp}(\phi)}{\#X: head(\phi)\left(X\right)}
+\end{aligned}
+$$
+
+$$
+\begin{aligned}
+&\mathbf{B+}  & r(x, y) &\leftarrow R_1(x, y) \land R_2(x, y) & L(R)\leq3\\
+&\mathbf{U+} & r(x, c) &\leftarrow R_1(x, c_1/\cdot)\land R_2(x,c_2/\cdot) & L(R)\leq2\\
+\end{aligned}
+$$
+Moreover, from the perspective of the essence of rule learning, support corresponds to the statistical universality of regularity, while confidence is only the local accuracy. If the research goal is to discover stable knowledge structure rules rather than just improving prediction performance, then support should be the primary evaluation and control index.

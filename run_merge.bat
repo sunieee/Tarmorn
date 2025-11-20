@@ -1,25 +1,18 @@
 @echo off
 setlocal enabledelayedexpansion
 
-@REM set dataset=FB15k-237
-set dataset=YAGO3-10
+set dataset=FB15k-237
 @REM set splits=hub_replication_t50 louvain bfs_expansion_r2 edge_cut random_multi_k2 random_multi_k3 random_nonoverlap relation_centric vertex_cut
 set splits=random_nonoverlap random_multi_k2 random_multi_k3 edge_cut vertex_cut louvain hub_replication_t50 bfs_expansion_r2 relation_centric
+set merged_splits=edge_cut+vertex_cut edge_cut+relation_centric edge_cut+vertex_cut+relation_centric
 
-echo ################################################################################
-echo Starting batch processing for dataset: %dataset%
-echo Split methods: %splits%
-echo ################################################################################
-
-REM Iterate through all split methods
-for %%s in (%splits%) do (
+for %%s in (%merged_splits%) do (
 echo.
 echo ################################################################################
 echo Processing split: %%s
 echo ################################################################################
 
-REM Call run.bat with environment variables (no spaces around &&)
-cmd /c "set dataset=%dataset%&& set split=%%s&& run.bat"
+if not exist "out\%dataset%\%%s" mkdir "out\%dataset%\%%s"
 
 python merge_rules.py "out\%dataset%\%%s" > "out\%dataset%\%%s\merge_rules.log"
 
@@ -34,10 +27,3 @@ echo Successfully completed split: %%s
 
 echo.
 )
-
-echo.
-echo ################################################################################
-echo All split methods completed for %dataset%
-echo ################################################################################
-
-endlocal
