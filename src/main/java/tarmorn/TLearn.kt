@@ -486,13 +486,16 @@ object TLearn {
         R2supp[rp] = size
         if (rp != inverseRp) R2supp[inverseRp] = size
 
-        if (size < Settings.MIN_SUPP) return false
-        atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
-        atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
-        R2h2supp[rp] = h2supp
-        R2h2supp[inverseRp] = t2supp
-        R2h2tSet[rp] = h2tSet
-        R2h2tSet[inverseRp] = t2hSet
+        // if (size < Settings.MIN_SUPP) return false
+        // 即使instance数量不足也有效（更长的连接），但不进行原子化
+        if (size >= Settings.MIN_SUPP) {
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+            atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
+            R2h2supp[rp] = h2supp
+            R2h2supp[inverseRp] = t2supp
+            R2h2tSet[rp] = h2tSet
+            R2h2tSet[inverseRp] = t2hSet
+        }
 
         return true
     }
@@ -641,8 +644,8 @@ object TLearn {
         R2supp[rp] = size
         if (rp != inverseRp) R2supp[inverseRp] = size
         
-        if (size < Settings.MIN_SUPP) return false
-        atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+        if (size >= Settings.MIN_SUPP)
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
         return true
     }
 

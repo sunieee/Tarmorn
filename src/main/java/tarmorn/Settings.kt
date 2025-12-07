@@ -8,9 +8,9 @@ import java.io.PrintWriter
 object Settings {
     // Path to the file that contains the triple set used for learning the rules.
     @JvmField
-    var MIN_SUPP: Int = 5
+    var MIN_SUPP: Int = 10
     @JvmField
-    var MIN_ENTITY_SUPP: Int = 2
+    var MIN_ENTITY_SUPP: Int = 1
     @JvmField
     var DATASET: String = "FB15k-237"
     @JvmField
