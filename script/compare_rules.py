@@ -6,7 +6,9 @@
 
 import re
 import os
+import sys
 import csv
+import argparse
 from typing import Set, List, Tuple, Dict, Optional
 from collections import defaultdict
 
@@ -361,7 +363,7 @@ def get_rule_length_type(rule: str) -> str:
                     lengths.append(length)
             
             if not lengths:
-                print('No valid atoms in rule body:', rule)
+                # print('No valid atoms in rule body:', rule)
                 return 'L0'
                 
             # 判断规则长度类型
@@ -436,7 +438,7 @@ def analyze_rule_statistics(rules_dict: Dict[str, List]) -> Dict:
                 length = get_relation_path_length(atom)
                 if length > 0:
                     stats['atom_relation_lengths'][length] += 1
-    
+        # print(stats)
     return stats
 
 def write_rule_section(writer, rules_set: Set, rules_dict: Dict, section_title: str, kg=None):
@@ -683,38 +685,58 @@ def save_statistics_to_csv(stats1: Dict, stats2: Dict, file1_name: str, file2_na
 
     print(f"\n统计结果已保存到: {output_file}")
 
-def main(dataset="FB15k-237", file1_name="rules-100-10", file2_name="rule.txt", target_relation=None):
+def main(file1="rules-100-10", file2="rule.txt", dataset="FB15k-237", target_relation=None):
     """
     主函数
+    
+    Args:
+        file1: 第一个规则文件名（相对于out/{dataset}/的文件名），默认为"rules-100-10"
+        file2: 第二个规则文件名（相对于out/{dataset}/的文件名），默认为"rule.txt"
+        dataset: 数据集名称，默认为"FB15k-237"
+        target_relation: 目标关系，如果为None则分析所有规则
     """
     # 文件路径
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    file1 = os.path.join(base_dir, "out", dataset, file1_name)
-    file2 = os.path.join(base_dir, "out", dataset, file2_name)
+    
+    # 处理路径：如果是完整路径，直接使用；否则认为是相对于out/{dataset}/的文件名
+    if os.path.isabs(file1) or '\\' in file1 or '/' in file1:
+        file1_path = file1
+        file1_name = os.path.basename(file1)
+    else:
+        file1_name = file1
+        file1_path = os.path.join(base_dir, "out", dataset, file1)
+    
+    if os.path.isabs(file2) or '\\' in file2 or '/' in file2:
+        file2_path = file2
+        file2_name = os.path.basename(file2)
+    else:
+        file2_name = file2
+        file2_path = os.path.join(base_dir, "out", dataset, file2)
+    
     dataset_path = os.path.join(base_dir, "data", dataset, "train.txt")
     
     print("=== 规则文件比较工具 ===")
     print(f"比较文件:")
-    print(f"  File 1: {file1}")
-    print(f"  File 2: {file2}")
+    print(f"  File 1: {file1_path}")
+    print(f"  File 2: {file2_path}")
     if target_relation:
         print(f"目标关系: {target_relation}")
     else:
         print("分析模式: 全量规则分析")
     
     # 检查文件是否存在
-    if not os.path.exists(file1):
-        print(f"错误: 文件 {file1} 不存在")
+    if not os.path.exists(file1_path):
+        print(f"错误: 文件 {file1_path} 不存在")
         return
     
-    if not os.path.exists(file2):
-        print(f"错误: 文件 {file2} 不存在")
+    if not os.path.exists(file2_path):
+        print(f"错误: 文件 {file2_path} 不存在")
         return
     
     # 加载规则
     print(f"\n=== 加载规则 ===")
-    rules1 = load_rules_with_target_relation(file1, target_relation)
-    rules2 = load_rules_with_target_relation(file2, target_relation)
+    rules1 = load_rules_with_target_relation(file1_path, target_relation)
+    rules2 = load_rules_with_target_relation(file2_path, target_relation)
     print(f"已加载 {file1_name}: {len(rules1)} 条规则")
     print(f"已加载 {file2_name}: {len(rules2)} 条规则")
     
@@ -745,9 +767,27 @@ def main(dataset="FB15k-237", file1_name="rules-100-10", file2_name="rule.txt", 
     save_statistics_to_csv(stats1, stats2, file1_name, file2_name, set1, set2, rules1, rules2, csv_output_path, kg)
 
 if __name__ == "__main__":
-    # 默认进行特定关系分析
-    # main(target_relation='/film/film/film_art_direction_by')
-    # main(target_relation="/award/award_category/winners./award/award_honor/ceremony")
-
-    # 如果要进行全量分析
-    main()
+    # 命令行参数解析
+    parser = argparse.ArgumentParser(
+        description='规则文件比较工具',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+示例:
+  python script\\compare_rules.py --dataset FB15k-237 --file1 rule.txt --file2 rule_comparison.txt
+  python script\\compare_rules.py --file1 rule.txt --file2 rule_comparison.txt
+  python script\\compare_rules.py
+        ''')
+    
+    parser.add_argument('--dataset', type=str, default='FB15k-237',
+                        help='数据集名称 (默认: FB15k-237)')
+    parser.add_argument('--file1', type=str, default='rules-100-10',
+                        help='第一个规则文件名，相对于out/{dataset}/的文件名 (默认: rules-100-10)')
+    parser.add_argument('--file2', type=str, default='rule.txt',
+                        help='第二个规则文件名，相对于out/{dataset}/的文件名 (默认: rule.txt)')
+    parser.add_argument('--target-relation', type=str, default=None,
+                        help='目标关系，如果不指定则分析所有规则')
+    
+    args = parser.parse_args()
+    
+    # 调用主函数
+    main(file1=args.file1, file2=args.file2, dataset=args.dataset, target_relation=args.target_relation)

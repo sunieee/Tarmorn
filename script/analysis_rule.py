@@ -949,6 +949,37 @@ class RuleSupportCalculator:
         # 实例缓存，存储每个路径的实例集合
         self.instance_cache = {}
     
+    def join_relations(self, r1: str, r2: str) -> str:
+        """
+        连接两个关系，创建复合关系并缓存到KG中
+        
+        Args:
+            r1: 第一个关系
+            r2: 第二个关系
+            
+        Returns:
+            复合关系名称 (r1·r2)
+        """
+        composite_name = f"{r1}·{r2}"
+        
+        # 如果复合关系已经存在，直接返回
+        if composite_name in self.kg.r2h2t:
+            return composite_name
+        
+        # 计算复合关系的实例
+        instances = self._join_two_relations(r1, r2)
+        
+        # 将复合关系添加到KG的r2h2t索引中
+        for head, tail in instances:
+            self.kg.r2h2t[composite_name][head].add(tail)
+        
+        # 添加到关系集合（但不添加到base_relations，因为这是缓存的复合关系）
+        self.kg.relations.add(composite_name)
+        
+        debug(f"    [DEBUG] Created composite relation: {composite_name} with {len(instances)} instances")
+        
+        return composite_name
+    
     def get_binary_instances_join(self, relation_path: List[str]) -> Set[Tuple[str, str]]:
         """
         使用连接算法获取二元规则的实例集合

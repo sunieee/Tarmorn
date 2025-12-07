@@ -10,6 +10,8 @@ object Settings {
     @JvmField
     var MIN_SUPP: Int = 5
     @JvmField
+    var MIN_ENTITY_SUPP: Int = 2
+    @JvmField
     var DATASET: String = "FB15k-237"
     @JvmField
     var PATH_TRAINING: String = "data/{DATASET}/train.txt"
