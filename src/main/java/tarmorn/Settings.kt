@@ -10,7 +10,7 @@ object Settings {
     @JvmField
     var MIN_SUPP: Int = 5
     @JvmField
-    var DATASET: String = "FB15k"
+    var DATASET: String = "FB15k-237"
     @JvmField
     var PATH_TRAINING: String = "data/{DATASET}/train.txt"
     // Path to the file that contains the triple set used for to test the rules.
@@ -367,5 +367,7 @@ object Settings {
         PATH_TEST = PATH_TEST.replace("{DATASET}", DATASET)
         PATH_VALID = PATH_VALID.replace("{DATASET}", DATASET)
         PATH_RULES_BASE = PATH_RULES_BASE.replace("{DATASET}", DATASET)
+        PATH_RULES_JSON = PATH_RULES_JSON.replace("{DATASET}", DATASET)
+        PATH_RULES_TXT = PATH_RULES_TXT.replace("{DATASET}", DATASET)
     }
 }
