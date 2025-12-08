@@ -51,7 +51,7 @@ data class MyAtom(val relationId: Long, val entityId: Int) {
         return when {
             // Binary: r(X,Y)
             entityId == IdManager.getYId() ->
-                TLearn.r2instanceSet[relationId] ?: emptySet()
+                TLearn.R2instanceSet[relationId] ?: emptySet()
             // Unary constant: r(X,c) -> 使用逆关系 r'(c,X) 的 tail 集合
             entityId > 0 -> {
                 val inv = IdManager.getInverseRelation(relationId)
