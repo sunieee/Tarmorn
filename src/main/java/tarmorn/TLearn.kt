@@ -62,13 +62,12 @@ object TLearn {
     // lateinit var r2tripleSet: MutableMap<Long, MutableSet<MyTriple>>
     lateinit var R2supp: ConcurrentHashMap<Long, Int>
     lateinit var R2EntitySupp: ConcurrentHashMap<Long, Int>
-    lateinit var R2instanceSet: MutableMap<Long, MutableSet<Int>>   // 有了采样，每个rp最多instance
-
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
     lateinit var R2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
     lateinit var R2h2supp: MutableMap<Long, MutableMap<Int, Int>>
 
     // 小写的r标识relationL1，并且在初始化后不再修改
+    lateinit var r2instanceSet: MutableMap<Long, MutableSet<Int>>
     lateinit var r2tSet: Map<Long, IntArray>    // 仅保留relationL1到尾实体，使用快照数组以提升遍历性能
     lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
 
@@ -130,7 +129,7 @@ object TLearn {
         R2h2supp = R2h2tSet.mapValues { entry ->
             entry.value.mapValues { it.value.size }.toMutableMap()
         } as MutableMap<Long, MutableMap<Int, Int>>
-        R2instanceSet = R2h2tSet.mapValues { entry ->
+        r2instanceSet = R2h2tSet.mapValues { entry ->
             entry.value.flatMap { (head, tails) ->
                 tails.map { tail -> pairHash32(head, tail) }
             }.toMutableSet()
@@ -184,7 +183,8 @@ object TLearn {
                     
                     if (h2tSet != null && t2hSet != null) {
                         // 处理Binary原子
-                        atomizeBinaryRelationPath(relation, tripleSet.size)
+                        atomizeBinaryRelationPath(relation, tripleSet.size,
+                            r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
                         // 处理Unary原子
                         atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), r2loopSet[relation] ?: mutableSetOf())
                     } else {
@@ -383,7 +383,6 @@ object TLearn {
         val relations = RelationPath.decode(rp)
         val r1 = relations[0]
         val r2 = relations[1]
-        val inverseRp = RelationPath.getInverseRelation(rp)
         
         // Get tail entities of r1 (these become connecting entities)
         val r1TailEntities = r2tSet[r1]!!
@@ -402,15 +401,14 @@ object TLearn {
 
         // Initialize data structures
         val h2tSet = mutableMapOf<Int, MutableSet<Int>>()
-        val t2hSet = if (rp == inverseRp) h2tSet else mutableMapOf()
+        val t2hSet = mutableMapOf<Int, MutableSet<Int>>()
         val h2supp = mutableMapOf<Int, Int>()
         val t2supp = mutableMapOf<Int, Int>()
         val loopSet = mutableSetOf<Int>()
         val instanceSet = mutableSetOf<Int>()
-        val inverseSet = if (rp == inverseRp) instanceSet else mutableSetOf()
+        val inverseSet = mutableSetOf<Int>()
         val random: Random = Random((r1 xor r2).toLong())
-
-
+        
         // 辅助函数：添加一对实体（无返回值）
         fun tryAddPair(r1Head: Int, r2Tail: Int, connectingEntity: Int) {
             if (r1Head == r2Tail) {
@@ -424,11 +422,9 @@ object TLearn {
             
             val pairHash32Value = pairHash32(r1Head, r2Tail)
             if (instanceSet.add(pairHash32Value)) {
+                inverseSet.add(pairHash32(r2Tail, r1Head))
                 h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(r2Tail)
-                if (rp != inverseRp) {
-                    inverseSet.add(pairHash32(r2Tail, r1Head))
-                    t2hSet.getOrPut(r2Tail) { mutableSetOf() }.add(r1Head)
-                }
+                t2hSet.getOrPut(r2Tail) { mutableSetOf() }.add(r1Head)
             }
         }
         
@@ -456,7 +452,6 @@ object TLearn {
         val entitySupp = Math.min(connectingEntities.size, Math.min(h2tSet.size, t2hSet.size))
         
         R2EntitySupp[rp] = entitySupp
-        R2EntitySupp[inverseRp] = entitySupp
         if (entitySupp < Settings.MIN_ENTITY_SUPP) {
             debug1("  Entity supp $entitySupp below threshold for rp=${IdManager.getRelationString(rp)}, returning false")
             return false
@@ -487,16 +482,14 @@ object TLearn {
         val size = instanceSet.size
 
         // 存储支持度
+        val inverseRp = RelationPath.getInverseRelation(rp)
         R2supp[rp] = size
         if (rp != inverseRp) R2supp[inverseRp] = size
 
         // if (size < Settings.MIN_SUPP) return false
         // 即使instance数量不足也有效（更长的连接），但不进行原子化
         if (size >= Settings.MIN_SUPP) {
-            R2instanceSet[rp] = instanceSet
-            if (rp != inverseRp) R2instanceSet[inverseRp] = inverseSet
-
-            atomizeBinaryRelationPath(rp, size)
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
             atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
             R2h2supp[rp] = h2supp
             R2h2supp[inverseRp] = t2supp
@@ -536,10 +529,8 @@ object TLearn {
 
         // 检查两个复合路径是否都存在且有效
         // if ((R2supp[r2r3]?: -1) < Settings.MIN_SUPP || (R2supp[invR2R1]?: -1) < Settings.MIN_SUPP) {
-        // if ((R2EntitySupp[r2r3]?: -1) < Settings.MIN_ENTITY_SUPP || (R2EntitySupp[invR2R1]?: -1) < Settings.MIN_ENTITY_SUPP) {
-        var entitySupp = Math.min(R2EntitySupp[r2r3]?: -1, R2EntitySupp[invR2R1]?: -1)
-        if (entitySupp < Settings.MIN_ENTITY_SUPP) {
-            debug1("  Required paths not valid (r2·r3: ${R2EntitySupp[r2r3]}, INVERSE_r2·INVERSE_r1: ${R2EntitySupp[invR2R1]}), returning false")
+        if ((R2EntitySupp[r2r3]?: -1) < Settings.MIN_ENTITY_SUPP || (R2EntitySupp[invR2R1]?: -1) < Settings.MIN_ENTITY_SUPP) {
+            debug2("  Required paths not valid (r2·r3: ${R2EntitySupp[r2r3]}, INVERSE_r2·INVERSE_r1: ${R2EntitySupp[invR2R1]}), returning false")
             return false
         }
         
@@ -558,7 +549,7 @@ object TLearn {
         
         // 使用方式二进行连接：INVERSE_r3 · (INVERSE_r2·INVERSE_r1)
         val instanceSet = mutableSetOf<Int>()
-        val inverseSet = if (rp == inverseRp) instanceSet else mutableSetOf()
+        val inverseSet = mutableSetOf<Int>()
         val random = Random((r1 xor r2 xor r3).toLong())
         
         // 辅助函数：添加一对实体（无返回值）
@@ -572,7 +563,7 @@ object TLearn {
             // 验证方式一是否也有效
             if (isForwardValid(h, t)) {
                 val instanceHash = pairHash32(h, t)
-                if (instanceSet.add(instanceHash) && rp != inverseRp) {
+                if (instanceSet.add(instanceHash)) {
                     inverseSet.add(pairHash32(t, h))
                 }
                 // 只要有效就返回true
@@ -591,12 +582,8 @@ object TLearn {
             .filter { it in invR2R1HeadEntities }
             .toList()
         
-        entitySupp = Math.min(entitySupp, connectingEntities.size)
-        R2EntitySupp[rp] = entitySupp
-        R2EntitySupp[inverseRp] = entitySupp
-        
         if (connectingEntities.size < Settings.MIN_ENTITY_SUPP) {
-            debug1("  Not enough connecting entities (${connectingEntities.size}) for rp=${IdManager.getRelationString(rp)}, returning false")
+            debug2("  Not enough connecting entities (${connectingEntities.size}) for rp=${IdManager.getRelationString(rp)}, returning false")
             return false
         }
         
@@ -657,12 +644,8 @@ object TLearn {
         R2supp[rp] = size
         if (rp != inverseRp) R2supp[inverseRp] = size
         
-        if (size >= Settings.MIN_SUPP) {
-            R2instanceSet[rp] = instanceSet
-            if (rp != inverseRp) R2instanceSet[inverseRp] = inverseSet
-            atomizeBinaryRelationPath(rp, size)
-        }
-            
+        if (size >= Settings.MIN_SUPP)
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
         return true
     }
 
@@ -670,19 +653,31 @@ object TLearn {
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
      */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int) {
-        debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp")
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
+        debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}, inverseSet.size=${inverseSet.size}")
 
         val inverseRp = RelationPath.getInverseRelation(rp)
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
-        
-        performLSH(binaryAtom, R2instanceSet[rp]!!)
-        if (rp != inverseRp) {
-            val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
-            performLSH(inverseBinaryAtom, R2instanceSet[inverseRp]!!)
-        }
+        val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
+        performLSH(binaryAtom, instanceSet)
+        performLSH(inverseBinaryAtom, inverseSet)
+    }
+    
+    /**
+     * Overload: atomize Binary relation path using primitive arrays to avoid boxing and HashSet creation.
+     */
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceArray: IntArray, inverseArray: IntArray) {
+        debug2("atomizeBinaryRelationPath[primitive]: rp=$rp, supp=$supp, instances=${instanceArray.size}, inverses=${inverseArray.size}")
+        val inverseRp = RelationPath.getInverseRelation(rp)
+        val binaryAtom = MyAtom(rp, IdManager.getYId())
+        val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
+        // Reuse Set-based LSH with lightweight IntArraySet wrappers to avoid boxing-heavy HashSet materialization
+        val instanceView = IntArraySet(instanceArray)
+        val inverseView = IntArraySet(inverseArray)
+        performLSH(binaryAtom, instanceView)
+        performLSH(inverseBinaryAtom, inverseView)
     }
     
     /**

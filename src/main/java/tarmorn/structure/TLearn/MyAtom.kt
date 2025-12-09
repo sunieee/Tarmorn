@@ -44,14 +44,14 @@ data class MyAtom(val relationId: Long, val entityId: Int) {
     val firstRelation: Long
         get() = if (isL1Atom) relationId else RelationPath.getFirstRelation(relationId)
 
-    // 获取当前原子的实例集合（用于精确验证），仅对L2原子有效
+    // 获取当前原子的实例集合（用于精确验证），对unary L2, binary L3原子有效
     fun getInstanceSet(): Set<Int> {
         require(isL1Atom) { "Instance set only available for L1 atoms" }
 
         return when {
             // Binary: r(X,Y)
             entityId == IdManager.getYId() ->
-                TLearn.R2instanceSet[relationId] ?: emptySet()
+                TLearn.r2instanceSet[relationId] ?: emptySet()
             // Unary constant: r(X,c) -> 使用逆关系 r'(c,X) 的 tail 集合
             entityId > 0 -> {
                 val inv = IdManager.getInverseRelation(relationId)
