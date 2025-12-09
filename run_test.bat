@@ -17,6 +17,6 @@ call mvn exec:java -Dexec.mainClass="tarmorn.TLearn" > "out\%dataset%\run.log" 2
 
 call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt > out/%dataset%/eval.log
 
-call python script\compare_rules.py --dataset %dataset%
+@REM call python script\compare_rules.py --dataset %dataset%
 
 endlocal 

@@ -63,8 +63,7 @@ object TLearn {
     lateinit var R2supp: ConcurrentHashMap<Long, Int>
     lateinit var R2EntitySupp: ConcurrentHashMap<Long, Int>
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
-    lateinit var R2h2tSet: MutableMap<Long, MutableMap<Int, MutableSet<Int>>>
-    lateinit var R2h2supp: MutableMap<Long, MutableMap<Int, Int>>
+    lateinit var R2h2tSet: ConcurrentHashMap<Long, MutableMap<Int, MutableSet<Int>>>
 
     // 小写的r标识relationL1，并且在初始化后不再修改
     lateinit var r2instanceSet: MutableMap<Long, MutableSet<Int>>
@@ -121,14 +120,11 @@ object TLearn {
         // r2tripleSet = ts.r2tripleSet
         r2loopSet = ts.r2loopSet
         // 复制一份ts.r2h2tSet，避免直接引用
-        R2h2tSet = ts.r2h2tSet.mapValues { entry ->
+        R2h2tSet = ConcurrentHashMap(ts.r2h2tSet.mapValues { entry ->
             entry.value.mapValues { it.value.toMutableSet() }.toMutableMap()
-        }.toMutableMap()
+        })
         R2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
         R2EntitySupp = ConcurrentHashMap()
-        R2h2supp = R2h2tSet.mapValues { entry ->
-            entry.value.mapValues { it.value.size }.toMutableMap()
-        } as MutableMap<Long, MutableMap<Int, Int>>
         r2instanceSet = R2h2tSet.mapValues { entry ->
             entry.value.flatMap { (head, tails) ->
                 tails.map { tail -> pairHash32(head, tail) }
@@ -198,7 +194,7 @@ object TLearn {
         // 使用不可变快照，避免并发修改影响，并提升遍历效率
         r2tSet = relationL1.associateWith { r ->
             val inv = IdManager.getInverseRelation(r)
-            val keys = R2h2supp[inv]?.keys ?: emptySet()
+            val keys = R2h2tSet[inv]?.keys ?: emptySet()
             // 拷贝为数组，遍历更快，且是稳定快照
             keys.toIntArray()
         }
@@ -387,7 +383,7 @@ object TLearn {
         // Get tail entities of r1 (these become connecting entities)
         val r1TailEntities = r2tSet[r1]!!
         // Get head entities for r2
-        val r2HeadEntities = R2h2supp[r2]?.keys ?: emptySet()
+        val r2HeadEntities = R2h2tSet[r2]?.keys ?: emptySet()
 
         // Find intersection of possible connecting entities (connection nodes)
         val connectingEntities = r1TailEntities.asSequence()
@@ -477,8 +473,6 @@ object TLearn {
         debug2("  L2 relation sampling estimated total instances: $estimatedTotal, sampled: ${sampledSize}, after filling: ${instanceSet.size}")
 
         // Calculate support counts for heads and tails
-        for ((head, tails) in h2tSet) h2supp[head] = tails.size
-        for ((tail, heads) in t2hSet) t2supp[tail] = heads.size
         val size = instanceSet.size
 
         // 存储支持度
@@ -489,12 +483,11 @@ object TLearn {
         // if (size < Settings.MIN_SUPP) return false
         // 即使instance数量不足也有效（更长的连接），但不进行原子化
         if (size >= Settings.MIN_SUPP) {
-            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
-            atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
-            R2h2supp[rp] = h2supp
-            R2h2supp[inverseRp] = t2supp
             R2h2tSet[rp] = h2tSet
             R2h2tSet[inverseRp] = t2hSet
+
+            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+            // atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
         }
 
         return true
@@ -575,7 +568,7 @@ object TLearn {
         // 获取 invR3 的 tail 实体（连接节点）
         val invR3TailEntities = r2tSet[invR3]!!
         // 获取 invR2R1 的 head 实体
-        val invR2R1HeadEntities = R2h2supp[invR2R1]?.keys ?: emptySet()
+        val invR2R1HeadEntities = R2h2tSet[invR2R1]?.keys ?: emptySet()
         
         // 找到连接节点
         val connectingEntities = invR3TailEntities.asSequence()
@@ -666,21 +659,6 @@ object TLearn {
     }
     
     /**
-     * Overload: atomize Binary relation path using primitive arrays to avoid boxing and HashSet creation.
-     */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceArray: IntArray, inverseArray: IntArray) {
-        debug2("atomizeBinaryRelationPath[primitive]: rp=$rp, supp=$supp, instances=${instanceArray.size}, inverses=${inverseArray.size}")
-        val inverseRp = RelationPath.getInverseRelation(rp)
-        val binaryAtom = MyAtom(rp, IdManager.getYId())
-        val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
-        // Reuse Set-based LSH with lightweight IntArraySet wrappers to avoid boxing-heavy HashSet materialization
-        val instanceView = IntArraySet(instanceArray)
-        val inverseView = IntArraySet(inverseArray)
-        performLSH(binaryAtom, instanceView)
-        performLSH(inverseBinaryAtom, inverseView)
-    }
-    
-    /**
      * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
      * 需要动态计算MinHash签名
      */
@@ -688,8 +666,11 @@ object TLearn {
         debug2("atomizeUnaryRelationPath: rp=$rp, h2tSet.size=${h2tSet.size}, t2hSet.size=${t2hSet.size}, loopSet.size=${loopSet.size}")
         val inverseRp = RelationPath.getInverseRelation(rp)
 
+
         // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
-        R2h2supp[inverseRp]?.forEach { (constant, supp) ->
+        // IMPORTANT: 不需要在 Lambda 表达式内部再包裹一层大括号，直接在 Lambda 的代码块内部编写逻辑即可
+        t2hSet.forEach { (constant, unaryInstanceSet) -> 
+            val supp = unaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
                 val unaryAtom = MyAtom(rp, constant)
                 if (RelationPath.isL1Relation(rp)) {
@@ -699,16 +680,12 @@ object TLearn {
                     formula2metric[formula] = metric
                 }
                 // 生成Unary实例集合：所有能到达constant的head实体
-                val unaryInstanceSet = t2hSet[constant]
-                if (unaryInstanceSet != null) {
-                    performLSH(unaryAtom, unaryInstanceSet)
-                }
+                performLSH(unaryAtom, unaryInstanceSet)
             }
         }
         
         // 4. r(X,·): Unary Atom for existence - relation rp has head entities
-        val headEntityCount = R2h2supp[rp]?.size ?: 0
-        if (headEntityCount >= Settings.MIN_SUPP) {
+        if (h2tSet.size >= Settings.MIN_SUPP) {
             val existenceAtom = MyAtom(rp, 0) // 0表示存在性原子"·"
             // 生成Existence实例集合：所有head实体
             val existenceInstanceSet = h2tSet.keys
@@ -716,7 +693,8 @@ object TLearn {
         }
         
         // 5. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
-        R2h2supp[rp]?.forEach { (constant, supp) ->
+        h2tSet.forEach { (constant, inverseUnaryInstanceSet) -> 
+            val supp = inverseUnaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
                 val inverseUnaryAtom = MyAtom(inverseRp, constant)
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
@@ -726,17 +704,12 @@ object TLearn {
                     val formula2metric = atom2formula2metric.getOrPut(inverseUnaryAtom) { ConcurrentHashMap() }
                     formula2metric[formula] = metric
                 }
-                val inverseUnaryInstanceSet = h2tSet[constant]
-                if (inverseUnaryInstanceSet != null) {
-                    // TODO: h2tSet 中可能没有该constant的映射
-                    performLSH(inverseUnaryAtom, inverseUnaryInstanceSet)
-                }
+                performLSH(inverseUnaryAtom, inverseUnaryInstanceSet)
             }
         }
         
         // 6. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
-        val inverseTailEntityCount = R2h2supp[inverseRp]?.size ?: 0
-        if (inverseTailEntityCount >= Settings.MIN_SUPP) {
+        if (t2hSet.size >= Settings.MIN_SUPP) {
             val inverseExistenceAtom = MyAtom(inverseRp, 0)
             // 生成逆Existence实例集合：所有tail实体
             val inverseExistenceInstanceSet = t2hSet.keys
@@ -1294,7 +1267,7 @@ object TLearn {
         
         // 打印规则统计
         println("Total rules: $totalRules")
-        println("Type     L0       L1       L2       L3")
+        println("Type     M0       M1       M2       M3")
         println("-" .repeat(60))
         println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
         println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
