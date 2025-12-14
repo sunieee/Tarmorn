@@ -19,9 +19,12 @@ argparser.add_argument("--rules", type=str, default="", help="rules to use")
 argparser.add_argument("--ranking_file", type=str, default="", help="rules to use")
 argparser.add_argument("--aggregation_function", type=str, default="maxplus", help="aggregation function to use")
 argparser.add_argument("--topk", type=int, default=100, help="topk to use")
-argparser.add_argument("--load_u_d_rules", action="store_true", help="whether to load u_d rules")
-argparser.add_argument("--load_u_xxc_rules", action="store_true", help="whether to load u_xxc rules")
-argparser.add_argument("--load_u_xxd_rules", action="store_true", help="whether to load u_xxd rules")
+argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
+argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
+argparser.add_argument("--disable_u_c", action="store_true", help="whether to disable u_c rules")
+argparser.add_argument("--disable_zero", action="store_true", help="whether to disable zero rules")
+argparser.add_argument("--disable_u_xxc", action="store_true", help="whether to disable u_xxc rules")
+argparser.add_argument("--disable_u_xxd", action="store_true", help="whether to disable u_xxd rules")
 
 
 args = argparser.parse_args()
@@ -37,9 +40,12 @@ ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{data
 options = Options()
 options.set("ranking_handler.aggregation_function", args.aggregation_function)
 options.set("ranking_handler.topk", args.topk)
-options.set("loader.load_u_d_rules", args.load_u_d_rules)
-options.set("loader.load_u_xxc_rules", args.load_u_xxc_rules)
-options.set("loader.load_u_xxd_rules", args.load_u_xxd_rules)
+options.set("loader.load_b_rules", not args.disable_b)
+options.set("loader.load_zero_rules", not args.disable_zero)
+options.set("loader.load_u_d_rules", not args.disable_u_d)
+options.set("loader.load_u_c_rules", not args.disable_u_c)
+options.set("loader.load_u_xxc_rules", not args.disable_u_xxc)
+options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
 
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", -1)  # 指定20个线程

@@ -61,7 +61,6 @@ object TLearn {
     val ts: TripleSet = TripleSet(Settings.PATH_TRAINING, true)
     // lateinit var r2tripleSet: MutableMap<Long, MutableSet<MyTriple>>
     lateinit var R2supp: ConcurrentHashMap<Long, Int>
-    lateinit var R2EntitySupp: ConcurrentHashMap<Long, Int>
     // 仅有2跳及以下的relation path才存储完整的头尾实体对
     lateinit var R2h2tSet: ConcurrentHashMap<Long, MutableMap<Int, MutableSet<Int>>>
 
@@ -80,6 +79,7 @@ object TLearn {
 
     private val POISON = Long.MIN_VALUE
     val processedCount = AtomicInteger(0)
+    val relationL3ThreadCount = AtomicInteger(0)
     val addedCount = AtomicInteger(0)
 
     // 流式计算结构 - 使用线程安全的ConcurrentHashMap
@@ -124,7 +124,6 @@ object TLearn {
             entry.value.mapValues { it.value.toMutableSet() }.toMutableMap()
         })
         R2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
-        R2EntitySupp = ConcurrentHashMap()
         r2instanceSet = R2h2tSet.mapValues { entry ->
             entry.value.flatMap { (head, tails) ->
                 tails.map { tail -> pairHash32(head, tail) }
@@ -193,7 +192,7 @@ object TLearn {
         relationL1 = relationQueue.map { it }.toList()
         // 使用不可变快照，避免并发修改影响，并提升遍历效率
         r2tSet = relationL1.associateWith { r ->
-            val inv = IdManager.getInverseRelation(r)
+            val inv = RelationPath.getInverseRelation(r)
             val keys = R2h2tSet[inv]?.keys ?: emptySet()
             // 拷贝为数组，遍历更快，且是稳定快照
             keys.toIntArray()
@@ -235,8 +234,8 @@ object TLearn {
                 }
                 println("Thread count changed: $activeCount/${Settings.WORKER_THREADS} active")
 
-                if (activeCount < Settings.WORKER_THREADS / 2) {
-                    println("FORCING SHUTDOWN: 1/2 threads have finished")
+                if (activeCount < Settings.WORKER_THREADS / 4) {
+                    println("FORCING SHUTDOWN: 1/4 threads remaining")
                     futures.forEach { it.cancel(true) }
                     threadPool.shutdownNow()
                     break
@@ -270,6 +269,15 @@ object TLearn {
             val length = RelationPath.getLength(item)
             if (length >= MAX_PATH_LENGTH) continue
 
+            // 这里必须确认 relationL3 candidate数量 > = WORKER_THREADS，才能保证不会死锁
+            if (length == 3) {
+                val cnt = relationL3ThreadCount.incrementAndGet()
+                while (cnt!= Settings.WORKER_THREADS) {
+                    // 只有relationL2全部完成，才能继续处理relationL3
+                    Thread.sleep(1)
+                }
+            }
+
             try {
                 runTask(threadId, item)
             }
@@ -293,26 +301,17 @@ object TLearn {
 
         // Step 4: Try connecting with all L1 relations (immediate enqueue per item)
         for (r1 in relationL1) {
-            val connectedPath = attemptConnection(r1, ri)
-            if (connectedPath != null && isValidRelationPath(connectedPath)) {
-                // 检查反向关系对的连接结果
-                val supp = R2supp[connectedPath]
-                val entitySupp = R2EntitySupp[connectedPath]
-                if (IdManager.getInverseRelation(r1) == ri) {
-                    debug1("[runTask] Successfully connected inverse pair: ${IdManager.getRelationString(r1)}, supp: $supp, entitySupp: $entitySupp")
-                }
-                
-                relationQueue.offer(connectedPath)
+            val rp = RelationPath.connectHead(r1, ri)
+            if (createRelationPath(rp) && isValidRelationPath(rp)) {
+                relationQueue.offer(rp)
                 val cnt = addedCount.incrementAndGet()
-                debug1("[path] ${IdManager.getRelationString(connectedPath)} supp: $supp, entitySupp: $entitySupp")
-
                 //  || activeThreadCount.get() < Settings.WORKER_THREADS
                 val remaining = relationQueue.size
                 if (cnt % 100 == 0) {
-                    println("Thread $threadId: Added $cnt new paths; latest supp: $supp, entitySupp: $entitySupp; TODO: $remaining remaining in queue")
+                    println("Thread $threadId: Added $cnt new paths; latest supp: ${R2supp[rp]}; TODO: $remaining remaining in queue")
                 }
                 if (activeThreadCount.get() < Settings.WORKER_THREADS / 4) {
-                    debug2("Thread $threadId: Added $cnt new paths; latest supp: $supp, entitySupp: $entitySupp; TODO: $remaining remaining in queue")
+                    println("Thread $threadId: Added $cnt new paths; latest supp: ${R2supp[rp]}; TODO: $remaining remaining in queue")
                 }
                 
             }
@@ -321,39 +320,26 @@ object TLearn {
 
     /**
      * Step 3 & 4: Attempt to connect (r1: relation, ri: relation path)，增加前缀
-     * Returns the connected path ID if successful, null otherwise
+     * Returns the relation path ID if successful, null otherwise
      */
-    fun attemptConnection(r1: Long, ri: Long): Long? {
-        // Create connected path rp = r1 · ri (reverse order for better performance)
-        val rp = RelationPath.connectHead(r1, ri)
-        val inverseRp = RelationPath.getInverseRelation(rp)
-
-        // 要求长度为3的路径必须包含 R·INVERSE_R 子串
-//       if (ri > RelationPath.MAX_RELATION_ID && !RelationPath.hasInverseRelation(rp)) {
-//           println("[attemptConnection] Skipping L3 path without inverse relation: ${IdManager.getRelationString(rp)}")
-//           return null
-//       }
-
-        // Check if rp or its inverse already exists
-        // if (r2tripleSet.containsKey(rp) || r2tripleSet.containsKey(IdManager.getInverseRelation(rp))) {
-        //     return null // Skip existing paths
-        // }
-        // 原子插入，避免全局同步：只有当 rp 和 inverseRp 都是首次出现时才继续
-        // 特殊处理：如果 rp == inverseRp（自反路径），只检查一次
-        if (rp == inverseRp) {
+    fun createRelationPath(rp: Long): Boolean {
+        val rpInv = RelationPath.getInverseRelation(rp)
+        // 原子插入，避免全局同步：只有当 rp 和 rpInv 都是首次出现时才继续
+        // 特殊处理：如果 rp == rpInv（自反路径），只检查一次
+        if (rp == rpInv) {
             val prevRp = R2supp.putIfAbsent(rp, -1)
             if (prevRp != null) {
-                return null
+                return false
             }
         } else {
             val prevRp = R2supp.putIfAbsent(rp, -1)
-            val prevInv = R2supp.putIfAbsent(inverseRp, -1)
-            if (prevRp != null || prevInv != null) {
-                return null
+            val prevInv = R2supp.putIfAbsent(rpInv, -1)
+            if (prevRp != null && prevInv != null) {
+                return false
             }
         }
 
-        return rp
+        return true
     }
 
     /**
@@ -376,6 +362,7 @@ object TLearn {
      */
     private fun isValidRelationPathL2(rp: Long): Boolean {
         // 分解路径: rp = r1 · r2
+        val rpInv = RelationPath.getInverseRelation(rp)
         val relations = RelationPath.decode(rp)
         val r1 = relations[0]
         val r2 = relations[1]
@@ -390,8 +377,14 @@ object TLearn {
             .filter { it in r2HeadEntities }
             .toList()
 
+        fun setSupp(supp: Int) {
+            R2supp[rp] = supp
+            if (rp != rpInv) R2supp[rpInv] = supp
+        }
+
         if (connectingEntities.size < Settings.MIN_ENTITY_SUPP) {
-            // debug1("  Not enough connecting entities (${connectingEntities.size}) for rp=${IdManager.getRelationString(rp)}, returning false")
+            debug2("[isValidRelationPathL2] Not enough connecting entities (${connectingEntities.size}) for rp=${IdManager.getRelationString(rp)}, returning false")
+            setSupp(0)
             return false
         }
 
@@ -426,11 +419,13 @@ object TLearn {
         
         // 采样阶段：估算总的实例数量，并在估算阶段直接采样以保证多样性
         var estimatedTotal = 0L
+        val t2hSet4r1 = R2h2tSet[RelationPath.getInverseRelation(r1)]!!
+        val h2tSet4r2 = R2h2tSet[r2]!!
         
         for (connectingEntity in connectingEntities) {
             // 在估算阶段直接进行头尾采样，保证多样性
-            val r1HeadEntities = R2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
-            val r2TailEntities = R2h2tSet[r2]?.get(connectingEntity) ?: emptySet()
+            val r1HeadEntities = t2hSet4r1.get(connectingEntity) ?: emptySet()
+            val r2TailEntities = h2tSet4r2.get(connectingEntity) ?: emptySet()
             val estimatedCount = r1HeadEntities.size.toLong() * r2TailEntities.size.toLong()
             estimatedTotal += estimatedCount
             
@@ -443,21 +438,20 @@ object TLearn {
             for (r2Tail in r2TailEntities) 
                 tryAddPair(r1HeadEntities.random(random), r2Tail, connectingEntity)
         }
-        if (instanceSet.size == 0) return false
         val sampledSize = instanceSet.size
         val entitySupp = Math.min(connectingEntities.size, Math.min(h2tSet.size, t2hSet.size))
         
-        R2EntitySupp[rp] = entitySupp
         if (entitySupp < Settings.MIN_ENTITY_SUPP) {
-            debug1("  Entity supp $entitySupp below threshold for rp=${IdManager.getRelationString(rp)}, returning false")
+            debug1("[isValidRelationPathL2] entitySupp $entitySupp below threshold for rp=${IdManager.getRelationString(rp)}, returning false")
+            setSupp(0)
             return false
         }
 
         // 补充阶段：批量添加实体对，直到达到上限
         fun fillToLimit() {
             for (connectingEntity in connectingEntities.shuffled(random)) {
-                val r1HeadEntities = R2h2tSet[IdManager.getInverseRelation(r1)]?.get(connectingEntity) ?: emptySet()
-                val r2TailEntities = R2h2tSet[r2]?.get(connectingEntity) ?: emptySet()
+                val r1HeadEntities = t2hSet4r1.get(connectingEntity) ?: emptySet()
+                val r2TailEntities = h2tSet4r2.get(connectingEntity) ?: emptySet()
                 
                 if (r1HeadEntities.isEmpty() || r2TailEntities.isEmpty()) continue
                 
@@ -470,25 +464,20 @@ object TLearn {
             }
         }
         fillToLimit()
-        debug2("  L2 relation sampling estimated total instances: $estimatedTotal, sampled: ${sampledSize}, after filling: ${instanceSet.size}")
-
         // Calculate support counts for heads and tails
-        val size = instanceSet.size
-
-        // 存储支持度
-        val inverseRp = RelationPath.getInverseRelation(rp)
-        R2supp[rp] = size
-        if (rp != inverseRp) R2supp[inverseRp] = size
+        val supp = instanceSet.size
+        setSupp(supp)
+        R2h2tSet[rp] = h2tSet
+        if (rp != rpInv) R2h2tSet[rpInv] = t2hSet
 
         // if (size < Settings.MIN_SUPP) return false
         // 即使instance数量不足也有效（更长的连接），但不进行原子化
-        if (size >= Settings.MIN_SUPP) {
-            R2h2tSet[rp] = h2tSet
-            R2h2tSet[inverseRp] = t2hSet
-
-            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+        if (supp >= Settings.MIN_SUPP) {
+            atomizeBinaryRelationPath(rp, supp, instanceSet, inverseSet)
             // atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
         }
+
+        debug1("[isValidRelationPathL2] ${IdManager.getRelationString(rp)} supp: $supp, entitySupp: $entitySupp, self-inverse: ${rp == rpInv}, estimated: $estimatedTotal, sampled: $sampledSize")
 
         return true
     }
@@ -505,42 +494,90 @@ object TLearn {
         val r1 = relations[0]
         val r2 = relations[1]
         val r3 = relations[2]
-        
-        // 方式一: r1 · (r2·r3)
-        val r2r3 = RelationPath.connectHead(r2, r3)
-        val invR2r3 = IdManager.getInverseRelation(r2r3)
-        
-        // 方式二: INVERSE_r3 · (INVERSE_r2·INVERSE_r1)
-        val invR3 = IdManager.getInverseRelation(r3)
-        val invR2 = IdManager.getInverseRelation(r2)
-        val invR1 = IdManager.getInverseRelation(r1)
-        val invR2R1 = RelationPath.connectHead(invR2, invR1)
-        
-        val inverseRp = RelationPath.getInverseRelation(rp)
+        val r3Inv = RelationPath.getInverseRelation(r3)
+
+        // 方式一: r1 · (r2·r3) = r1 · r23  通过 isForwardValid 用于验证
+        // 方式二: r3Inv · (r2Inv·r1Inv) = r3Inv · r12Inv  用于构造
+        val r23 = RelationPath.connectHead(r2, r3)
+        val r23Inv = RelationPath.getInverseRelation(r23)
+        val r12 = RelationPath.connectHead(r1, r2)
+        val r12Inv = RelationPath.getInverseRelation(r12)
+        val rpInv = RelationPath.getInverseRelation(rp)
         R2supp[rp] = 0
-        if (rp != inverseRp) R2supp[inverseRp] = 0
+        if (rp != rpInv) R2supp[rpInv] = 0
 
         // 检查两个复合路径是否都存在且有效
-        // if ((R2supp[r2r3]?: -1) < Settings.MIN_SUPP || (R2supp[invR2R1]?: -1) < Settings.MIN_SUPP) {
-        if ((R2EntitySupp[r2r3]?: -1) < Settings.MIN_ENTITY_SUPP || (R2EntitySupp[invR2R1]?: -1) < Settings.MIN_ENTITY_SUPP) {
-            debug2("  Required paths not valid (r2·r3: ${R2EntitySupp[r2r3]}, INVERSE_r2·INVERSE_r1: ${R2EntitySupp[invR2R1]}), returning false")
+        // if ((R2supp[r2r3]?: -1) < Settings.MIN_SUPP || (R2supp[r12Inv]?: -1) < Settings.MIN_SUPP) {
+        // if ((R2EntitySupp[r2r3]?: -1) < Settings.MIN_ENTITY_SUPP || (R2EntitySupp[r12Inv]?: -1) < Settings.MIN_ENTITY_SUPP) {
+
+        fun isValid(rp: Long): Boolean {
+            val suppValue = R2supp[rp]
+            val rpInv = RelationPath.getInverseRelation(rp)
+            require(suppValue != null) {
+                "R2supp missing for rp=${IdManager.getRelationString(rp)}"
+            }
+            require(R2supp[rpInv] == suppValue) {
+                "R2supp inconsistent for rp=${IdManager.getRelationString(rp)} and its inverse"
+            }
+            if (suppValue == -1) {
+                println("[isValidRelationPathL3] Warning: Detected incomplete supp for rp=${IdManager.getRelationString(rp)}, skip")
+                // isValid(rp)
+                return false
+            }
+            if (suppValue == 0) return false
+            if (suppValue > 0) {
+                require(R2h2tSet[rp] != null) {
+                    "R2h2tSet missing for rp=${IdManager.getRelationString(rp)}"
+                }
+                require(R2h2tSet[rpInv] != null) {
+                    "R2h2tSet missing for rpInv=${IdManager.getRelationString(rpInv)}"
+                }
+                return true
+            }
+            throw IllegalStateException("Unexpected supp value for rp=${IdManager.getRelationString(rp)}: $suppValue")
+        }
+
+        fun setSupp(supp: Int) {
+            R2supp[rp] = supp
+            if (rp != rpInv) R2supp[rpInv] = supp
+        }
+
+        // Validate the inverse relations we actually use (r23Inv and r12Inv)
+        val r23Valid = isValid(r23)
+        val r12InvValid = isValid(r12Inv)
+        if (!r23Valid || !r12InvValid) {
+            debug2("[isValidRelationPathL3] Required paths not valid: r23Valid=$r23Valid, r12InvValid=$r12InvValid for rp=${IdManager.getRelationString(rp)}, return false")
+            setSupp(0)
             return false
         }
+
+        // Cache R2h2tSet lookups with safe access to handle race conditions
+        val h2tSet4r1 = R2h2tSet[r1]!!
+        val t2hSet4r23 = R2h2tSet[r23Inv]!!
+        val h2tSet4r12Inv = R2h2tSet[r12Inv]!!
+        val t2hSet4r3Inv = R2h2tSet[r3]!!
+        
+        // Verify all required maps exist (another thread may have modified between isValid and here)
+        // if (h2tSet4r1 == null || t2hSet4r23 == null || h2tSet4r12Inv == null || t2hSet4r3Inv == null) {
+        //     debug2("[isValidRelationPathL3] R2h2tSet entries became null (race condition) for rp=${IdManager.getRelationString(rp)}, return false")
+        //     setSupp(0)
+        //     return false
+        // }
         
         // 判断实例 (h, t) 是否通过方式一有效：r1 · (r2·r3)
         // 需要存在中间节点 y 使得 r1(h, y) 且 (r2·r3)(y, t)
         fun isForwardValid(h: Int, t: Int): Boolean {
-            val r1Tails = R2h2tSet[r1]?.get(h) ?: return false  // r1(h, ?) 的所有尾节点
-            val r2r3Heads = R2h2tSet[invR2r3]?.get(t) ?: return false  // (r2·r3)(?, t) 的所有头节点
+            val r1Tails = h2tSet4r1.get(h) ?: return false  // r1(h, ?) 的所有尾节点
+            val r23Heads = t2hSet4r23.get(t) ?: return false  // (r2·r3)(?, t) 的所有头节点
             
             // 检查是否有交集（存在共同的中间节点）
             for (tail in r1Tails) {
-                if (tail in r2r3Heads) return true
+                if (tail in r23Heads) return true
             }
             return false
         }
         
-        // 使用方式二进行连接：INVERSE_r3 · (INVERSE_r2·INVERSE_r1)
+        // 使用方式二进行连接：r3Inv · (r2Inv·r1Inv)
         val instanceSet = mutableSetOf<Int>()
         val inverseSet = mutableSetOf<Int>()
         val random = Random((r1 xor r2 xor r3).toLong())
@@ -565,63 +602,69 @@ object TLearn {
             return false
         }
         
-        // 获取 invR3 的 tail 实体（连接节点）
-        val invR3TailEntities = r2tSet[invR3]!!
-        // 获取 invR2R1 的 head 实体
-        val invR2R1HeadEntities = R2h2tSet[invR2R1]?.keys ?: emptySet()
+        // 获取 r3Inv 的 tail 实体（连接节点）
+        val r3InvTailEntities = r2tSet[r3Inv]!!
+        // 获取 r12Inv 的 head 实体
+        val r12InvHeadEntities = h2tSet4r12Inv.keys ?: emptySet()
         
         // 找到连接节点
-        val connectingEntities = invR3TailEntities.asSequence()
-            .filter { it in invR2R1HeadEntities }
+        val connectingEntities = r3InvTailEntities.asSequence()
+            .filter { it in r12InvHeadEntities }
             .toList()
         
         if (connectingEntities.size < Settings.MIN_ENTITY_SUPP) {
-            debug2("  Not enough connecting entities (${connectingEntities.size}) for rp=${IdManager.getRelationString(rp)}, returning false")
+            debug2("[isValidRelationPathL3] Not enough connecting entities (${connectingEntities.size}) for rp=${IdManager.getRelationString(rp)}, returning false")
+            setSupp(0)
             return false
         }
         
         // 估算总的实例数量，并在估算阶段直接采样以保证多样性
         var estimatedTotal = 0L
         for (connectingEntity in connectingEntities) {
-            // 获取能通过 invR3 到达 connectingEntity 的 head 实体（即原路径的 tail）
-            val invR3HeadEntities = R2h2tSet[IdManager.getInverseRelation(invR3)]?.get(connectingEntity) ?: emptySet()
+            // 获取能通过 r3Inv 到达 connectingEntity 的 head 实体（即原路径的 tail）
+            val r3InvHeadEntities = t2hSet4r3Inv.get(connectingEntity) ?: emptySet()
             
-            // 获取从 connectingEntity 通过 invR2R1 能到达的 tail 实体（即原路径的 head）
-            val invR2R1TailEntities = R2h2tSet[invR2R1]?.get(connectingEntity) ?: emptySet()
-            estimatedTotal += invR2R1TailEntities.size.toLong() * invR3HeadEntities.size.toLong()
+            // 获取从 connectingEntity 通过 r12Inv 能到达的 tail 实体（即原路径的 head）
+            val r12InvTailEntities = h2tSet4r12Inv.get(connectingEntity) ?: emptySet()
+            estimatedTotal += r12InvTailEntities.size.toLong() * r3InvHeadEntities.size.toLong()
             
             // 在估算阶段直接进行头尾采样，保证多样性
-            if (invR2R1TailEntities.isNotEmpty() && invR3HeadEntities.isNotEmpty()) {
+            if (r12InvTailEntities.isNotEmpty() && r3InvHeadEntities.isNotEmpty()) {
                 // 为每个 h 找一个有效的 randomT
-                for (h in invR2R1TailEntities) {
-                    val shuffledTails = invR3HeadEntities.shuffled(random)
+                for (h in r12InvTailEntities) {
+                    val shuffledTails = r3InvHeadEntities.shuffled(random)
                     for (t in shuffledTails) {
                         if (tryAddPair(h, t, connectingEntity)) break
                     }
                 }
                 
                 // 为每个 t 找一个有效的 randomH
-                for (t in invR3HeadEntities) {
-                    val shuffledHeads = invR2R1TailEntities.shuffled(random)
+                for (t in r3InvHeadEntities) {
+                    val shuffledHeads = r12InvTailEntities.shuffled(random)
                     for (h in shuffledHeads) {
                         if (tryAddPair(h, t, connectingEntity)) break
                     }
                 }
             }
         }
-        if (instanceSet.size == 0) return false
+        if (instanceSet.size == 0) {
+            debug2("[isValidRelationPathL3] No valid instances found for rp=${IdManager.getRelationString(rp)}, returning false")
+            setSupp(0)
+            return false
+        }
         val sampledSize = instanceSet.size
+
         
         // 补充阶段：批量添加实体对，直到达到上限
         fun fillToLimit() {
             for (connectingEntity in connectingEntities.shuffled(random)) {
-                val invR3HeadEntities = R2h2tSet[IdManager.getInverseRelation(invR3)]?.get(connectingEntity) ?: emptySet()
-                val invR2R1TailEntities = R2h2tSet[invR2R1]?.get(connectingEntity) ?: emptySet()
+                val r3InvHeadEntities = t2hSet4r3Inv.get(connectingEntity) ?: emptySet()
+                val r12InvTailEntities = h2tSet4r12Inv.get(connectingEntity) ?: emptySet()
                 
-                if (invR2R1TailEntities.isEmpty() || invR3HeadEntities.isEmpty()) continue
+                if (r12InvTailEntities.isEmpty() || r3InvHeadEntities.isEmpty()) continue
                 
-                for (h in invR2R1TailEntities) {
-                    for (t in invR3HeadEntities) {
+                for (h in r12InvTailEntities) {
+                    for (t in r3InvHeadEntities) {
                         tryAddPair(h, t, connectingEntity)
                         if (instanceSet.size >= MAX_JOIN_INSTANCES_L3) return
                     }
@@ -629,16 +672,14 @@ object TLearn {
             }
         }
         
-        fillToLimit()
-        debug1("  L3 relation sampling estimated total instances: $estimatedTotal, sampled: ${sampledSize}, after filling: ${instanceSet.size}")
+        if (instanceSet.size < MAX_JOIN_INSTANCES_L3 / 10) fillToLimit()
+        val supp = instanceSet.size
+        setSupp(supp)
+        debug1("[isValidRelationPathL3] ${IdManager.getRelationString(rp)} supp: $supp, self-inverse: ${rp == rpInv}, estimated: $estimatedTotal, sampled: $sampledSize")
         
         // atomize 使用 supp 而不是 entity supp作为阈值
-        val size = instanceSet.size
-        R2supp[rp] = size
-        if (rp != inverseRp) R2supp[inverseRp] = size
-        
-        if (size >= Settings.MIN_SUPP)
-            atomizeBinaryRelationPath(rp, size, instanceSet, inverseSet)
+        if (supp >= Settings.MIN_SUPP)
+            atomizeBinaryRelationPath(rp, supp, instanceSet, inverseSet)
         return true
     }
 
@@ -649,11 +690,11 @@ object TLearn {
     fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
         debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}, inverseSet.size=${inverseSet.size}")
 
-        val inverseRp = RelationPath.getInverseRelation(rp)
+        val rpInv = RelationPath.getInverseRelation(rp)
         // 1. r(X,Y): Binary Atom with relation path rp
         val binaryAtom = MyAtom(rp, IdManager.getYId()) // Y表示二元原子
         // 2. r'(X,Y): Binary Atom with inverse relation path
-        val inverseBinaryAtom = MyAtom(inverseRp, IdManager.getYId())
+        val inverseBinaryAtom = MyAtom(rpInv, IdManager.getYId())
         performLSH(binaryAtom, instanceSet)
         performLSH(inverseBinaryAtom, inverseSet)
     }
@@ -663,8 +704,9 @@ object TLearn {
      * 需要动态计算MinHash签名
      */
     fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
+        // return
         debug2("atomizeUnaryRelationPath: rp=$rp, h2tSet.size=${h2tSet.size}, t2hSet.size=${t2hSet.size}, loopSet.size=${loopSet.size}")
-        val inverseRp = RelationPath.getInverseRelation(rp)
+        val rpInv = RelationPath.getInverseRelation(rp)
 
 
         // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
@@ -696,11 +738,11 @@ object TLearn {
         h2tSet.forEach { (constant, inverseUnaryInstanceSet) -> 
             val supp = inverseUnaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
-                val inverseUnaryAtom = MyAtom(inverseRp, constant)
+                val inverseUnaryAtom = MyAtom(rpInv, constant)
                 // 生成逆Unary实例集合：从constant出发能到达的tail实体
                 if (RelationPath.isL1Relation(rp)) {
                     val formula = Formula(inverseUnaryAtom)
-                    val metric = Metric(0.0, supp.toDouble(), supp, R2supp[inverseRp]!!)
+                    val metric = Metric(0.0, supp.toDouble(), supp, R2supp[rpInv]!!)
                     val formula2metric = atom2formula2metric.getOrPut(inverseUnaryAtom) { ConcurrentHashMap() }
                     formula2metric[formula] = metric
                 }
@@ -710,7 +752,7 @@ object TLearn {
         
         // 6. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
         if (t2hSet.size >= Settings.MIN_SUPP) {
-            val inverseExistenceAtom = MyAtom(inverseRp, 0)
+            val inverseExistenceAtom = MyAtom(rpInv, 0)
             // 生成逆Existence实例集合：所有tail实体
             val inverseExistenceInstanceSet = t2hSet.keys
             performLSH(inverseExistenceAtom, inverseExistenceInstanceSet)
@@ -1095,7 +1137,7 @@ object TLearn {
         var newInstances = bodyInstances
         if (!bodyAtom.isL1Atom && !bodyAtom.isBinary) {
             val constant = headAtom.entityId
-            val inverseRelation = IdManager.getInverseRelation(bodyAtom.firstRelation)
+            val inverseRelation = RelationPath.getInverseRelation(bodyAtom.firstRelation)
             val t2hSet = ts.r2h2tSet[inverseRelation]
             if (t2hSet == null) {
                 println("Warning: Missing t2hSet for relation ${IdManager.getRelationString(inverseRelation)}")
