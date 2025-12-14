@@ -4,10 +4,9 @@ import tarmorn.Settings
 import kotlin.math.min
 
 /**
- * Metric describing jaccard/support/coverage/confidence.
+ * Metric describing support/coverage/confidence.
  */
 data class Metric(
-    val jaccard: Double,
     var support: Double,
     val headSize: Int,
     val bodySize: Int,
@@ -25,14 +24,14 @@ data class Metric(
         get() = support < Settings.MIN_SUPP * 2 || support > min(headSize, bodySize).toDouble()
 
     override fun toString(): String {
-        return "{\"jaccard\": $jaccard, \"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
+        return "{\"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
     }
 
-    fun inverse() =  Metric(jaccard, support, bodySize, headSize)
+    fun inverse() =  Metric(support, bodySize, headSize)
 
     fun betterThan(other: Metric) =
-        this.confidence > other.confidence * 1.5 && this.jaccard > other.jaccard
+        this.confidence > other.confidence * 1.5
 
     fun estimateBetterThan(other: Metric) =
-        this.confidence > other.confidence * 1.5 * tarmorn.TLearn.ESTIMATE_RATIO && this.jaccard > other.jaccard * tarmorn.TLearn.ESTIMATE_RATIO
+        this.confidence > other.confidence * 1.5 * tarmorn.TLearn.ESTIMATE_RATIO
 }

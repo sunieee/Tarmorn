@@ -28,6 +28,8 @@ object Settings {
     var PATH_RULES_JSON: String = "out/{DATASET}/atom2formula2metric.json"
     @JvmField
     var PATH_RULES_TXT: String = "out/{DATASET}/rule.txt"
+    @JvmField
+    var PATH_BUCKET_JSON: String = "out/{DATASET}/H2B2bucketCount.json"
     // Path to the file that contains the rules that will be used as base,
     // i.e. this rule set will be added to all other rule sets loaded.
     @JvmField
