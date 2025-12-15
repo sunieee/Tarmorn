@@ -23,7 +23,11 @@ data class Formula(
     }
 
     override fun toString(): String {
-        return listOfNotNull(atom1, atom2, atom3).joinToString(" & ")
+        return listOfNotNull(atom1, atom2, atom3).joinToString("; ")
+    }
+
+    fun getRuleString(): String {
+        return listOfNotNull(atom1, atom2, atom3).joinToString("; ") { it.getRuleString() }
     }
 
     val isBinary: Boolean

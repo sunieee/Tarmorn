@@ -25,11 +25,11 @@ object Settings {
     @JvmField
     var PATH_RULES: String = "out/{DATASET}/rules-100"
     @JvmField
-    var PATH_RULES_JSON: String = "out/{DATASET}/atom2formula2metric.json"
+    var PATH_H2B2metric: String = "out/{DATASET}/H2B2metric.json"
     @JvmField
     var PATH_RULES_TXT: String = "out/{DATASET}/rule.txt"
     @JvmField
-    var PATH_BUCKET_JSON: String = "out/{DATASET}/H2B2bucketCount.json"
+    var PATH_H2F2metric: String = "out/{DATASET}/H2F2metric.json"
     // Path to the file that contains the rules that will be used as base,
     // i.e. this rule set will be added to all other rule sets loaded.
     @JvmField
@@ -371,7 +371,8 @@ object Settings {
         PATH_TEST = PATH_TEST.replace("{DATASET}", DATASET)
         PATH_VALID = PATH_VALID.replace("{DATASET}", DATASET)
         PATH_RULES_BASE = PATH_RULES_BASE.replace("{DATASET}", DATASET)
-        PATH_RULES_JSON = PATH_RULES_JSON.replace("{DATASET}", DATASET)
+        PATH_H2B2metric = PATH_H2B2metric.replace("{DATASET}", DATASET)
         PATH_RULES_TXT = PATH_RULES_TXT.replace("{DATASET}", DATASET)
+        PATH_H2F2metric = PATH_H2F2metric.replace("{DATASET}", DATASET)
     }
 }

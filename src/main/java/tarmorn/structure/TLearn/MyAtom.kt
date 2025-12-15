@@ -16,15 +16,23 @@ import kotlin.math.abs
 class MyAtom(
     val relationId: Long,
     val entityId: Int,
-    val instances: Set<Int> = emptySet()
+    var instances: Set<Int> = emptySet()
 ) {
     init {
-        require(instances.isEmpty() || instances.size >= Settings.MIN_SUPP) {
-            "MyAtom instances size ${instances.size} must be >= MIN_SUPP ${Settings.MIN_SUPP}"
+        if (instances.isNotEmpty()) {
+            require(instances.size >= Settings.MIN_SUPP) {
+                "MyAtom instances size ${instances.size} must be >= MIN_SUPP ${Settings.MIN_SUPP}"
+            }
+        } else {
+            instances = getInstanceSet()
         }
+        // 确保 instances 不为空，否则会出现 metric={"support":0.0, "headSize":19, "bodySize":0, "confidence":NaN}, headInstances=[]..., bodyInstances=[]
     }
     
     val minHashSignature: IntArray = computeMinHashDOPH(instances, entityId == IdManager.getYId(), TLearn.globalHashSeeds)
+
+    val support: Int
+        get() = instances.size
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -161,7 +169,8 @@ class MyAtom(
 
     // Get instance set for this atom
     fun getInstanceSet(): Set<Int> {
-        if (!isL1Atom) return instances
+        // if (!isL1Atom) return instances
+        require(isL1Atom) { "getInstanceSet() only supports L1 atoms" }
         return when {
             // Binary: r(X,Y)
             entityId == IdManager.getYId() -> TLearn.r2instanceSet[relationId] ?: emptySet()

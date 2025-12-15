@@ -12,7 +12,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
-import kotlin.math.abs
 import tarmorn.structure.TLearn.MyAtom
 import tarmorn.structure.TLearn.Formula
 import tarmorn.structure.TLearn.Metric
@@ -40,11 +39,12 @@ object TLearn {
         }
     }
 
-    const val MAX_JOIN_INSTANCES_L2 = 4000
-    const val MAX_JOIN_INSTANCES_L3 = 2000
-    const val MIN_CONF = 0
+    const val MAX_JOIN_INSTANCES_L2 = 6000
+    const val MAX_JOIN_INSTANCES_L3 = 3000
+    const val MIN_CONF = 0.001
     const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.8
+    const val IMPROVE_RATIO = 1.2
     const val MIN_COMMON_BUCKET = 2
     const val MAX_BUCKET_ATTEMPT = 100
     const val MAX_STACK_SIZE = 3
@@ -84,9 +84,9 @@ object TLearn {
     val addedCount = AtomicInteger(0)
 
     // 流式计算结构 - 使用线程安全的ConcurrentHashMap
-    val H2B2bucketCount = ConcurrentHashMap<MyAtom, ConcurrentHashMap<MyAtom, Int>>() // headAtom -> bodyAtom -> bucketCount
+    val H2B2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<MyAtom, Metric>>() // headAtom -> bodyAtom -> metric
     val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
-    val atom2formula2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
+    val H2F2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
 
     // Initialize global hash seeds for MinHash
     private fun initializeGlobalHashSeeds() {
@@ -146,11 +146,11 @@ object TLearn {
         
         println("Atomization phase completed.")
         println("Total relation paths: ${R2supp.size}")
-        println("Total atoms in H2B2bucketCount: ${H2B2bucketCount.size}")
+        println("Total atoms in H2B2metric: ${H2B2metric.size}")
         printLSHBuckets()
         
-        // Save H2B2bucketCount to JSON file
-        saveH2B2BucketCountToJson()
+        // Save H2B2metric to JSON file
+        saveH2B2metricToJson()
         
         println("\n=== Phase 2: Composition ===")
         // Step 3: Composition phase - combine atoms into formulas using Eclat
@@ -162,8 +162,8 @@ object TLearn {
         } finally {
             println("\nTLearn algorithm completed.")
             
-            // 保存atom2formula2metric到JSON文件
-            saveAtom2Formula2MetricToJson()
+            // 保存H2F2metric到JSON文件
+            saveH2F2metricToJson()
         }
     }
 
@@ -289,7 +289,7 @@ object TLearn {
             }
 
             try {
-                runTask(threadId, item)
+                if (runTask(threadId, item)) break
             }
             catch (e: Exception) {
                 println("Error in thread $threadId processing relation $item: ${e.message}")
@@ -306,7 +306,7 @@ object TLearn {
         }
     }
 
-    fun runTask(threadId: Int, ri: Long) {
+    fun runTask(threadId: Int, ri: Long): Boolean {
         processedCount.incrementAndGet()
 
         // Step 4: Try connecting with all L1 relations (immediate enqueue per item)
@@ -322,10 +322,11 @@ object TLearn {
                 }
                 if (activeThreadCount.get() < Settings.WORKER_THREADS / 4) {
                     println("Thread $threadId: Added $cnt new paths; latest supp: ${R2supp[rp]}; TODO: $remaining remaining in queue")
+                    return true
                 }
-                
             }
         }
+        return false
     }
 
     /**
@@ -719,7 +720,7 @@ object TLearn {
                 val unaryAtom = MyAtom(rp, constant, unaryInstanceSet)
                 performLSH(unaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    setAtom2formula2metric(unaryAtom, Formula(), Metric(supp.toDouble(), supp, supp))
+                    setH2F2metric(unaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rp]!!))
                 }
             }
         }
@@ -735,7 +736,7 @@ object TLearn {
                 val inverseUnaryAtom = MyAtom(rpInv, constant, inverseUnaryInstanceSet)
                 performLSH(inverseUnaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    setAtom2formula2metric(inverseUnaryAtom, Formula(), Metric(supp.toDouble(), supp, supp))
+                    setH2F2metric(inverseUnaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
                 }
             }
         }
@@ -758,16 +759,21 @@ object TLearn {
     /**
      * Helper function to set formula metric for an atom
      */
-    fun setAtom2formula2metric(atom: MyAtom, formula: Formula, metric: Metric) {
-        val formula2metric = atom2formula2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
-        formula2metric[formula] = metric
+    fun setH2F2metric(atom: MyAtom, formula: Formula, metric: Metric) {
+        val F2metric = H2F2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
+        F2metric[formula] = metric
+    }
+
+    fun setH2B2metric(headAtom: MyAtom, bodyAtom: MyAtom, metric: Metric) {
+        val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
+        B2metric[bodyAtom] = metric
     }
 
     /**
-     * LSH bucketing - add atom to key2atoms buckets and update H2B2bucketCount
+     * LSH bucketing - add atom to key2atoms buckets and update H2B2metric
      */
     fun performLSH(currentAtom: MyAtom) {
-        debug2("performLSH: Atom=$currentAtom, instances.size=${currentAtom.instances.size}")
+        debug2("performLSH: Atom=$currentAtom, support=${currentAtom.support}")
         if (currentAtom.minHashSignature.isEmpty()) {
             debug2("performLSH: Empty signature for atom $currentAtom, skipping")
             return
@@ -775,47 +781,118 @@ object TLearn {
         
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()
         
-        // Divide into BANDS bands, each with R=1 row, use MinHash value as key
+        // Step 1: Update relevantAtom2BucketCount by scanning existing buckets
         for (bandIndex in 0 until BANDS) {
             val key = currentAtom.minHashSignature[bandIndex]
             val bucket = key2atoms[key]
             if (bucket != null) {
                 synchronized(bucket) {
                     bucket.forEach { existingAtom ->
+                        if (existingAtom.isHeadAtom)
                         relevantAtom2BucketCount[existingAtom] = relevantAtom2BucketCount.getOrDefault(existingAtom, 0) + 1
                     }
                 }
             }
-            
-            val atomBucket = key2atoms.computeIfAbsent(key) { java.util.Collections.synchronizedList(mutableListOf()) }
-            synchronized(atomBucket) { atomBucket.add(currentAtom) }
         }
         
-        // Update H2B2bucketCount - directly set the entire map
-        if (relevantAtom2BucketCount.isNotEmpty()) {
-            H2B2bucketCount[currentAtom] = ConcurrentHashMap(relevantAtom2BucketCount.filter { it.key != currentAtom })
-            // If relevantAtom is also a headAtom, record bidirectionally
-            relevantAtom2BucketCount.forEach { (existingAtom, bucketCount) ->
-                if (existingAtom != currentAtom && existingAtom.isHeadAtom) {
-                    H2B2bucketCount.computeIfAbsent(existingAtom) { ConcurrentHashMap() }[currentAtom] = bucketCount
-                }
+        // Step 2: Filter relevantAtom2BucketCount and only add to key2atoms if valid candidates exist
+        var cnt = 0
+        relevantAtom2BucketCount.forEach { (bucketAtom, bucketCount) ->
+            // if (!bucketAtom.isHeadAtom) return@forEach // 只考虑headAtom进行组合
+            if (bucketCount < MIN_COMMON_BUCKET) return@forEach // 跳过碰撞次数过少的，避免噪声
+            require(bucketAtom != currentAtom) {
+                "performLSH: Self-collision detected for atom $currentAtom in bucket"
             }
+
+            // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
+            val jaccard = bucketCount.toDouble() / BANDS
+            // 估计交集大小 (head=currentAtom, body=bucketAtom)
+            var intersectionSize = estimateIntersectionSize(jaccard, currentAtom.support, bucketAtom.support)
+            if (intersectionSize >= Settings.MIN_SUPP * ESTIMATE_RATIO && validateH2B(bucketAtom, currentAtom)) cnt++
+        }
+
+        if (!currentAtom.isHeadAtom && cnt == 0) {
+            // No valid candidates and not a head atom - skip adding this atom to buckets
+            // currentAtom will be garbage collected as it's not referenced anywhere
+            return
+        }
+        
+        // Add currentAtom to key2atoms buckets only if there are valid relevant atoms
+        for (bandIndex in 0 until BANDS) {
+            val key = currentAtom.minHashSignature[bandIndex]
+            val atomBucket = key2atoms.computeIfAbsent(key) { java.util.Collections.synchronizedList(mutableListOf()) }
+            synchronized(atomBucket) { atomBucket.add(currentAtom) }
         }
     }
 
     /**
+     * 估计交集大小：I_est = J_est * (size_a1 + size_a2) / (1 + J_est)
+     */
+    private fun estimateIntersectionSize(jaccardSimilarity: Double, size1: Int, size2: Int): Double {
+        val ret = jaccardSimilarity * (size1 + size2) / (1 + jaccardSimilarity)
+//        return min(ret, min(size1, size2).toDouble()) // 交集大小不应超过较小集合的大小
+        return ret
+    }
+
+    private fun validateH2B(headAtom: MyAtom, bodyAtom: MyAtom): Boolean {
+        // debug2("validateH2B: headAtom=$headAtom, bodyAtom=$bodyAtom")
+        
+        // 自证式一元规则（entity-anchored unary rules）问题
+        // if (myAtom.isL2Atom && !myAtom.isBinary) {  这种写法有问题，会漏掉L1Atom的情况
+        val bodyInstances = if (!bodyAtom.isL1Atom && !bodyAtom.isBinary) {
+            val constant = headAtom.entityId
+            val inverseRelation = RelationPath.getInverseRelation(bodyAtom.firstRelation)
+            val t2hSet = ts.r2h2tSet[inverseRelation]
+            
+            if (t2hSet != null && t2hSet[constant] != null) {
+                bodyAtom.instances.filter { !t2hSet[constant]!!.contains(it) }.toSet()
+            } else {
+                bodyAtom.instances
+            }
+        } else {
+            bodyAtom.instances
+        }
+
+        var intersectionSet = bodyInstances.intersect(headAtom.instances)
+        var intersectionSize = intersectionSet.size.toDouble()
+        // 二元/一般情况：headAtom 左侧 (head)，bodyAtom 右侧 (body)
+        // Note: bodyInstances.size may differ from bodyAtom.support due to filtering
+        var metric = Metric(intersectionSize, headAtom.support, bodyInstances.size)
+        // debug1("validateH2B: headAtom=$headAtom, bodyAtom=$bodyAtom, metric=$metric")
+        
+        if (metric.valid) {
+            setH2B2metric(headAtom, bodyAtom, metric)
+            return true
+        }
+        
+        val metricInv = metric.inverse()
+        if (metricInv.valid) {
+            if (bodyAtom.isHeadAtom) {
+                setH2B2metric(bodyAtom, headAtom, metricInv)
+                return true
+            } 
+            // TODO: else if (bodyAtom.isL1Atom && bodyAtom.isBinary) {
+            //     // 注意这里不能只验证 headAtom，因为 currentAtom 可能是 Binary & L1Atom: current'(X,Y) <= bucket(X,Y)
+            //     setH2B2metric(bodyAtom.inverse(), headAtom.inverse(), metricInv)
+            //     return true
+            // }
+        }
+        return false
+    }
+
+    /**
      * Composition Phase - combine frequent atom sets using Eclat algorithm
-     * Called after Atomization completes, builds rules based on H2B2bucketCount
+     * Called after Atomization completes, builds rules based on H2B2metric
      */
     fun compositionPhase() {
         println("Starting Composition Phase with Eclat algorithm...")
         
         val processedHeads = AtomicInteger(0)
-        val totalHeads = H2B2bucketCount.size
+        val totalHeads = H2B2metric.size
         val threadPool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
         
         try {
-            val futures = H2B2bucketCount.entries.map { (headAtom, bodyMap) ->
+            val futures = H2B2metric.entries.map { (headAtom, bodyMap) ->
                 threadPool.submit {
                     processHeadAtom(headAtom, bodyMap)
                     val cnt = processedHeads.incrementAndGet()
@@ -833,78 +910,45 @@ object TLearn {
             threadPool.awaitTermination(1, TimeUnit.HOURS)
         }
         
-        println("Composition Phase completed. Total rules: ${atom2formula2metric.values.sumOf { it.size }}")
+        println("Composition Phase completed. Total rules: ${H2F2metric.values.sumOf { it.size }}")
     }
     
     /**
      * Process single headAtom, build BQueue and perform Eclat depth-first search
      */
-    private fun processHeadAtom(headAtom: MyAtom, bodyMap: ConcurrentHashMap<MyAtom, Int>) {
-        // Sort by bucketCount in descending order
+    private fun processHeadAtom(headAtom: MyAtom, bodyMap: ConcurrentHashMap<MyAtom, Metric>) {
+        // Sort by confidence in descending order (Metric implements Comparable)
         val sortedBodies = bodyMap.entries
-            .sortedByDescending { it.value }
+            .sortedBy { it.value }  // Metric.compareTo sorts by confidence descending
             .toList()
         
         if (sortedBodies.isEmpty()) return
         
-        // Determine threshold: max(MIN_COMMON_BUCKET, bucketCount of MAX_BUCKET_ATTEMPT-th body)
-        val threshold = if (sortedBodies.size > MAX_BUCKET_ATTEMPT) {
-            Math.max(MIN_COMMON_BUCKET, sortedBodies[MAX_BUCKET_ATTEMPT - 1].value)
+        // Take top MAX_BUCKET_ATTEMPT candidates
+        val bQueue = if (sortedBodies.size > MAX_BUCKET_ATTEMPT) {
+            sortedBodies.take(MAX_BUCKET_ATTEMPT)
         } else {
-            MIN_COMMON_BUCKET
+            sortedBodies
         }
         
-        // Filter to get BQueue
-        val bQueue = sortedBodies
-            .filter { it.value >= threshold }
-            .map { it.key }
+        debug2("processHeadAtom: $headAtom, BQueue size=${bQueue.size}")
         
-        if (bQueue.isEmpty()) return
-        
-        debug2("processHeadAtom: $headAtom, BQueue size=${bQueue.size}, threshold=$threshold")
-        
-        // Compute frequent 1-AtomSet
-        val frequent1 = mutableListOf<FrequentAtomSet>()
-        
-        for (bodyAtom in bQueue) {
-            // Handle entity-anchored unary rules problem
-            val bodyInstances = if (!bodyAtom.isL1Atom && !bodyAtom.isBinary) {
-                val constant = headAtom.entityId
-                val inverseRelation = RelationPath.getInverseRelation(bodyAtom.firstRelation)
-                val t2hSet = ts.r2h2tSet[inverseRelation]
-                
-                if (t2hSet != null && t2hSet[constant] != null) {
-                    bodyAtom.instances.filter { !t2hSet[constant]!!.contains(it) }.toSet()
-                } else {
-                    bodyAtom.instances
-                }
-            } else {
-                bodyAtom.instances
-            }
+        // bodyMap already contains validated metrics, use it directly as frequent1
+        val frequent1 = bQueue.map { (bodyAtom, metric) ->
+            // Store L1 Formula
+            // val formula = Formula(bodyAtom)
+            // setH2F2metric(headAtom, formula, metric)
             
-            val intersectInstances = headAtom.instances.intersect(bodyInstances)
-            val intersectionSize = intersectInstances.size
+            debug2("Frequent-1: $headAtom <= $bodyAtom, conf=${metric.confidence}, supp=${metric.support}")
             
-            if (intersectionSize >= Settings.MIN_SUPP) {
-                val conf = intersectionSize.toDouble() / bodyInstances.size
-                frequent1.add(FrequentAtomSet(
-                    atoms = listOf(bodyAtom),
-                    intersectInstances = intersectInstances,
-                    bodyInstances = bodyInstances,
-                    confidence = conf
-                ))
-                
-                // Store L1 Formula
-                val formula = Formula(bodyAtom)
-                val metric = Metric(
-                    support = intersectionSize.toDouble(),
-                    headSize = headAtom.instances.size,
-                    bodySize = bodyInstances.size
-                )
-                setAtom2formula2metric(headAtom, formula, metric)
-                
-                debug2("Frequent-1: $headAtom <= $bodyAtom, conf=$conf, supp=$intersectionSize")
-            }
+            // Build FrequentAtomSet for Eclat DFS
+            // Note: bodyAtom.instances already filtered in performLSH for entity-anchored unary rules
+            FrequentAtomSet(
+                atoms = listOf(bodyAtom),
+                intersectInstances = headAtom.instances.intersect(bodyAtom.instances),
+                bodyInstances = bodyAtom.instances,
+                confidence = metric.confidence
+            )
         }
         
         // Eclat depth-first search
@@ -953,7 +997,7 @@ object TLearn {
             val newBodyInstances = bodyInstances.intersect(nextAtom.instances)
             val newConf = newIntersectionSize.toDouble() / newBodyInstances.size
             
-            if (newConf > currentConf) {
+            if (newConf > currentConf * IMPROVE_RATIO && newConf > H2B2metric[headAtom]!!.[nextAtom]!!.confidence * IMPROVE_RATIO) {
                 // Add nextAtom to stack
                 stack.add(nextAtom)
                 
@@ -970,7 +1014,7 @@ object TLearn {
                         headSize = headAtom.instances.size,
                         bodySize = newBodyInstances.size
                     )
-                    setAtom2formula2metric(headAtom, formula, metric)
+                    setH2F2metric(headAtom, formula, metric)
                     
                     debug2("Frequent-${stack.size}: $headAtom <= ${stack.joinToString(" & ")}, conf=$newConf, supp=$newIntersectionSize")
                 }
@@ -1020,7 +1064,7 @@ object TLearn {
         
         val allBuckets = key2atomsSnapshot.values
         println("Total buckets: ${allBuckets.size}")
-        println("Total head atoms in H2B2bucketCount: ${H2B2bucketCount.size}")
+        println("Total head atoms in H2B2metric: ${H2B2metric.size}")
 
         // Bucket size distribution statistics
         val bucketSizes = allBuckets.map { it.size }
@@ -1061,58 +1105,69 @@ object TLearn {
     }
 
     /**
-     * Save H2B2bucketCount to JSON file - streaming output to avoid memory overflow
+     * Save H2B2metric to JSON file - streaming output to avoid memory overflow
      */
-    private fun saveH2B2BucketCountToJson() {
-        val outputFile = File(Settings.PATH_BUCKET_JSON)
+    private fun saveH2B2metricToJson() {
+        val outputFile = File(Settings.PATH_H2B2metric)
+        val outputRule = File(Settings.PATH_H2B_RULES_TXT)
         outputFile.parentFile?.mkdirs() // Ensure output directory exists
+        outputRule.parentFile?.mkdirs()
         
-        println("Saving H2B2bucketCount to ${outputFile.absolutePath}...")
+        println("Saving H2B2metric to ${outputFile.absolutePath}...")
         
         BufferedWriter(FileWriter(outputFile)).use { writer ->
-            writer.write("{\n")
-            val headAtomEntries = H2B2bucketCount.entries.toList()
+            BufferedWriter(FileWriter(outputRule)).use { ruleWriter ->
+                writer.write("{\n")
+                val headAtomEntries = H2B2metric.entries.toList()
 
-            headAtomEntries.forEachIndexed { headIndex, (headAtom, bodyMap) ->
-                // Escape special characters in JSON string
-                val headAtomString = headAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
-                writer.write("  \"$headAtomString\": {\n")
+                headAtomEntries.forEachIndexed { headIndex, (headAtom, bodyMap) ->
+                    // Escape special characters in JSON string
+                    val headAtomString = headAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                    writer.write("  \"$headAtomString\": {\n")
 
-                val bodyEntries = bodyMap.entries.toList()
-                    .sortedByDescending { it.value } // Sort by bucketCount descending
-                
-                bodyEntries.forEachIndexed { bodyIndex, (bodyAtom, bucketCount) ->
-                    val bodyAtomString = bodyAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
-                    writer.write("    \"$bodyAtomString\": $bucketCount")
-                    if (bodyIndex < bodyEntries.size - 1) writer.write(",")
+                    val bodyEntries = bodyMap.entries.toList()
+                        .sortedByDescending { it.value } // Sort by metric descending
+                    
+                    bodyEntries.forEachIndexed { bodyIndex, (bodyAtom, metric) ->
+                        val bodyAtomString = bodyAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                        writer.write("    \"$bodyAtomString\": $metric")
+                        if (bodyIndex < bodyEntries.size - 1) writer.write(",")
+                        writer.write("\n")
+                        
+                        // Write rule to text file
+                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${headAtom.getRuleString()} <= ${bodyAtom.getRuleString()}"
+                        ruleWriter.write(ruleLine)
+                        ruleWriter.write("\n")
+                    }
+
+                    writer.write("  }")
+                    if (headIndex < headAtomEntries.size - 1) writer.write(",")
                     writer.write("\n")
-                }
 
-                writer.write("  }")
-                if (headIndex < headAtomEntries.size - 1) writer.write(",")
-                writer.write("\n")
-
-                // Flush every 100 atoms to avoid memory accumulation
-                if (headIndex % 100 == 0) {
-                    writer.flush()
-                    println("Processed ${headIndex + 1}/${headAtomEntries.size} head atoms...")
+                    // Flush every 100 atoms to avoid memory accumulation
+                    if (headIndex % 100 == 0) {
+                        writer.flush()
+                        ruleWriter.flush()
+                        println("Processed ${headIndex + 1}/${headAtomEntries.size} head atoms...")
+                    }
                 }
+                writer.write("}\n")
             }
-            writer.write("}\n")
         }
 
-        println("Successfully saved H2B2bucketCount to ${outputFile.absolutePath}")
-        println("Total head atoms: ${H2B2bucketCount.size}")
-        println("Total bucket connections: ${H2B2bucketCount.values.sumOf { it.size }}")
+        println("Successfully saved H2B2metric to ${outputFile.absolutePath}")
+        println("Successfully saved H2B rules to ${outputRule.absolutePath}")
+        println("Total head atoms: ${H2B2metric.size}")
+        println("Total bucket connections: ${H2B2metric.values.sumOf { it.size }}")
     }
 
     /**
-     * Save atom2formula2metric to JSON file - streaming output to avoid memory overflow
+     * Save H2F2metric to JSON file - streaming output to avoid memory overflow
      */
-    private fun saveAtom2Formula2MetricToJson() {
+    private fun saveH2F2metricToJson() {
         // val outDir = File("out/" + Settings.DATASET)
         // outDir.mkdirs() // 确保out目录存在
-        val outputFile = File(Settings.PATH_RULES_JSON)
+        val outputFile = File(Settings.PATH_H2F2metric)
         val outputRule = File(Settings.PATH_RULES_TXT)
         
         // Statistics variables
@@ -1124,7 +1179,7 @@ object TLearn {
             // Write rules in parallel while streaming JSON
             BufferedWriter(FileWriter(outputRule)).use { ruleWriter ->
             writer.write("{\n")
-            val atomEntries = atom2formula2metric.entries.toList()
+            val atomEntries = H2F2metric.entries.toList()
 
             atomEntries.forEachIndexed { atomIndex, (atom, formula2Metric) ->
                 // Escape special characters in JSON string
@@ -1144,24 +1199,20 @@ object TLearn {
                     //     }
                     // }
                 formulaEntries.forEachIndexed { formulaIndex, (formula, metric) ->
-                    // 输出规则：仅当formula包含恰好两个原子时
-                    val atomsInFormula = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
-                    val otherAtoms = atomsInFormula.filter { it != atom }
-                    // if (otherAtoms.isEmpty()) println("Found Z rule: ${atom.getRuleString()} <=")
-                    val formulaString = otherAtoms.joinToString(",") { it.toString() }
+                    val formulaString = formula.toString()
                         .replace("\"", "\\\"").replace("\n", "\\n")
                     writer.write("    \"$formulaString\": $metric")
                     if (formulaIndex < formulaEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
-                    val ruleBody = otherAtoms.joinToString(",") { atom -> atom.getRuleString() }
-                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${ruleBody}"
+                    val formulaRuleString = formula.getRuleString()
+                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= $formulaRuleString"
                     ruleWriter.write(ruleLine)
                     ruleWriter.write("\n")
                     
                     // Statistics for rules
                     totalRules++
-                    val bodyLength = otherAtoms.size
+                    val bodyLength = formula.size
                     if (bodyLength <= MAX_PATH_LENGTH) {
                         if (atom.isBinary) {
                             binaryStats[bodyLength]++
@@ -1186,10 +1237,10 @@ object TLearn {
             }
         }
 
-        println("Successfully saved atom2formula2metric to ${outputFile.absolutePath}")
+        println("Successfully saved H2F2metric to ${outputFile.absolutePath}")
         println("Successfully saved rules to ${outputRule.absolutePath}")
-        println("Total atoms: ${atom2formula2metric.size}")
-        println("Total formulas: ${atom2formula2metric.values.sumOf { it.size }}")
+        println("Total atoms: ${H2F2metric.size}")
+        println("Total formulas: ${H2F2metric.values.sumOf { it.size }}")
         
         // Print rule statistics
         println("Total rules: $totalRules")
