@@ -41,7 +41,7 @@ object TLearn {
 
     const val MAX_JOIN_INSTANCES_L2 = 6000
     const val MAX_JOIN_INSTANCES_L3 = 3000
-    const val MIN_CONF = 0.001
+    const val MIN_CONF = 0.003
     const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.8
     const val IMPROVE_RATIO = 1.2
@@ -799,7 +799,7 @@ object TLearn {
         var cnt = 0
         relevantAtom2BucketCount.forEach { (bucketAtom, bucketCount) ->
             // if (!bucketAtom.isHeadAtom) return@forEach // 只考虑headAtom进行组合
-            if (bucketCount < MIN_COMMON_BUCKET) return@forEach // 跳过碰撞次数过少的，避免噪声
+            // if (bucketCount < MIN_COMMON_BUCKET) return@forEach // 跳过碰撞次数过少的，避免噪声
             require(bucketAtom != currentAtom) {
                 "performLSH: Self-collision detected for atom $currentAtom in bucket"
             }
@@ -997,7 +997,7 @@ object TLearn {
             val newBodyInstances = bodyInstances.intersect(nextAtom.instances)
             val newConf = newIntersectionSize.toDouble() / newBodyInstances.size
             
-            if (newConf > currentConf * IMPROVE_RATIO && newConf > H2B2metric[headAtom]!!.[nextAtom]!!.confidence * IMPROVE_RATIO) {
+            if (newConf > currentConf * IMPROVE_RATIO && newConf > H2B2metric[headAtom]!![nextAtom]!!.confidence * IMPROVE_RATIO) {
                 // Add nextAtom to stack
                 stack.add(nextAtom)
                 
@@ -1109,14 +1109,15 @@ object TLearn {
      */
     private fun saveH2B2metricToJson() {
         val outputFile = File(Settings.PATH_H2B2metric)
-        val outputRule = File(Settings.PATH_H2B_RULES_TXT)
+        val outputRule = File(Settings.PATH_RULES_TXT)
         outputFile.parentFile?.mkdirs() // Ensure output directory exists
         outputRule.parentFile?.mkdirs()
         
         println("Saving H2B2metric to ${outputFile.absolutePath}...")
         
         BufferedWriter(FileWriter(outputFile)).use { writer ->
-            BufferedWriter(FileWriter(outputRule)).use { ruleWriter ->
+            // FileWriter with false (default) = overwrite mode, clear existing content
+            BufferedWriter(FileWriter(outputRule, false)).use { ruleWriter ->
                 writer.write("{\n")
                 val headAtomEntries = H2B2metric.entries.toList()
 
@@ -1126,7 +1127,7 @@ object TLearn {
                     writer.write("  \"$headAtomString\": {\n")
 
                     val bodyEntries = bodyMap.entries.toList()
-                        .sortedByDescending { it.value } // Sort by metric descending
+                        .sortedByDescending { it.value.confidence } // Sort by metric descending
                     
                     bodyEntries.forEachIndexed { bodyIndex, (bodyAtom, metric) ->
                         val bodyAtomString = bodyAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
@@ -1176,8 +1177,8 @@ object TLearn {
         val binaryStats = IntArray(MAX_PATH_LENGTH + 1) // L0, L1, L2, L3
         
         BufferedWriter(FileWriter(outputFile)).use { writer ->
-            // Write rules in parallel while streaming JSON
-            BufferedWriter(FileWriter(outputRule)).use { ruleWriter ->
+            // FileWriter with true = append mode, preserve H2B rules written by saveH2B2metricToJson
+            BufferedWriter(FileWriter(outputRule, true)).use { ruleWriter ->
             writer.write("{\n")
             val atomEntries = H2F2metric.entries.toList()
 
