@@ -41,7 +41,7 @@ object TLearn {
 
     const val MAX_JOIN_INSTANCES_L2 = 6000
     const val MAX_JOIN_INSTANCES_L3 = 3000
-    const val MIN_CONF = 0.003
+    const val MIN_CONF = 0.001
     const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.8
     const val IMPROVE_RATIO = 1.2
@@ -155,7 +155,7 @@ object TLearn {
         println("\n=== Phase 2: Composition ===")
         // Step 3: Composition phase - combine atoms into formulas using Eclat
         try {
-            compositionPhase()
+            // compositionPhase()
         } catch (e: Exception) {
             println("Error during composition phase: ${e.message}")
             e.printStackTrace()
@@ -774,9 +774,8 @@ object TLearn {
      */
     fun performLSH(currentAtom: MyAtom) {
         debug2("performLSH: Atom=$currentAtom, support=${currentAtom.support}")
-        if (currentAtom.minHashSignature.isEmpty()) {
-            debug2("performLSH: Empty signature for atom $currentAtom, skipping")
-            return
+        require(!currentAtom.minHashSignature.isEmpty()) {
+            "performLSH: Empty MinHash signature for atom $currentAtom"
         }
         
         val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()
@@ -1188,6 +1187,7 @@ object TLearn {
                 writer.write("  \"$atomString\": {\n")
 
                 val formulaEntries = formula2Metric.entries.toList()
+                    .filter { it.value.bodySize > 0 && it.value.confidence.isFinite() }  // 过滤无效的metric
                     .sortedByDescending { it.value.confidence }  // 按confidence降序排序
                     // 不截取，直接输出！
                     // .let { sorted ->

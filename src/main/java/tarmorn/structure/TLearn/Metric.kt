@@ -11,8 +11,8 @@ data class Metric(
     val headSize: Int,
     val bodySize: Int,
 ) : Comparable<Metric> {
-    val coverage: Double = support / headSize
-    val confidence: Double = support / bodySize
+    val coverage: Double = if (headSize > 0) support / headSize else 0.0
+    val confidence: Double = if (bodySize > 0) support / bodySize else 0.0
 
     val valid: Boolean
         get() = support >= Settings.MIN_SUPP && confidence > tarmorn.TLearn.MIN_CONF // && coverage > 0.1
