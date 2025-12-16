@@ -870,11 +870,11 @@ object TLearn {
                 setH2B2metric(bodyAtom, headAtom, metricInv)
                 return true
             } 
-            // TODO: else if (bodyAtom.isL1Atom && bodyAtom.isBinary) {
-            //     // 注意这里不能只验证 headAtom，因为 currentAtom 可能是 Binary & L1Atom: current'(X,Y) <= bucket(X,Y)
-            //     setH2B2metric(bodyAtom.inverse(), headAtom.inverse(), metricInv)
-            //     return true
-            // }
+            else if (bodyAtom.isL1Atom && bodyAtom.isBinary) {
+                // TODO: 注意这里不能只验证 headAtom，因为 currentAtom 可能是 Binary & L1Atom: current'(X,Y) <= bucket(X,Y)
+                setH2B2metric(bodyAtom.inverse(), headAtom.inverse(), metricInv)
+                return true
+            }
         }
         return false
     }
