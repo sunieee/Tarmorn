@@ -27,9 +27,12 @@ class MyAtom(
             instances = getInstanceSet()
         }
         // 确保 instances 不为空，否则会出现 metric={"support":0.0, "headSize":19, "bodySize":0, "confidence":NaN}, headInstances=[]..., bodyInstances=[]
+        require(instances.isNotEmpty()) {
+            "MyAtom instances cannot be empty after initialization for relationId=$relationId, entityId=$entityId"
+        }
     }
     
-    val minHashSignature: IntArray = computeMinHashDOPH(instances, entityId == IdManager.getYId(), TLearn.globalHashSeeds)
+    val minHashSignature: IntArray = computeMinHashDOPH(instances, isBinary)
 
     val support: Int
         get() = instances.size
@@ -47,6 +50,7 @@ class MyAtom(
     }
 
     override fun toString(): String {
+        if (entityId == IdManager.getZId()) return ""
         val relationStr = IdManager.getRelationString(relationId)
         return when {
             entityId == IdManager.getYId() -> "$relationStr(X,Y)"
@@ -59,7 +63,7 @@ class MyAtom(
         }
     }
 
-    fun getRuleString(): String = IdManager.getAtomString(relationId, entityId)
+    fun getRuleString(): String = if (entityId == IdManager.getZId()) "" else IdManager.getAtomString(relationId, entityId)
 
     fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId)
 
@@ -122,7 +126,7 @@ class MyAtom(
         /**
          * Compute MinHash signature using OPH + DOPH algorithm
          */
-        fun computeMinHashDOPH(instanceSet: Set<Int>, isBinary: Boolean, globalHashSeeds: IntArray): IntArray {
+        fun computeMinHashDOPH(instanceSet: Set<Int>, isBinary: Boolean): IntArray {
             if (instanceSet.isEmpty()) {
                 throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
             }
@@ -172,6 +176,7 @@ class MyAtom(
         // if (!isL1Atom) return instances
         require(isL1Atom) { "getInstanceSet() only supports L1 atoms" }
         return when {
+            entityId == IdManager.getZId() -> setOf(0)
             // Binary: r(X,Y)
             entityId == IdManager.getYId() -> TLearn.r2instanceSet[relationId] ?: emptySet()
             // Unary constant: r(X,c)

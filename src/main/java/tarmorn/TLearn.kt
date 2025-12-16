@@ -12,6 +12,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
+import kotlin.math.abs
 import tarmorn.structure.TLearn.MyAtom
 import tarmorn.structure.TLearn.Formula
 import tarmorn.structure.TLearn.Metric
@@ -53,10 +54,6 @@ object TLearn {
     const val MH_DIM = 256
     const val R = 1  // 每band维度
     const val BANDS = MH_DIM / R
-
-    // 全局随机种子数组，在程序启动时初始化
-    lateinit var globalHashSeeds: IntArray
-
     // Core data structures
     val config = Settings.load()    // 加载配置
     val ts: TripleSet = TripleSet(Settings.PATH_TRAINING, true)
@@ -88,23 +85,6 @@ object TLearn {
     val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
     val H2F2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
 
-    // Initialize global hash seeds for MinHash
-    private fun initializeGlobalHashSeeds() {
-        val random = java.util.Random(42) // 固定主种子以确保可重现性
-        val seedSet = mutableSetOf<Int>()
-        
-        // 生成MH_DIM个不重复的随机种子
-        while (seedSet.size < MH_DIM) {
-            val seed = random.nextInt(Int.MAX_VALUE)
-            seedSet.add(seed)
-        }
-        
-        globalHashSeeds = seedSet.toIntArray()
-        println("Initialized ${globalHashSeeds.size} unique global hash seeds")
-    }
-
-    // RelationPathItem moved to structure.TLearn
-
     /**
      * Main entry point - can be run directly
      */
@@ -113,10 +93,9 @@ object TLearn {
         Settings.load()
         println("TLearn - Top-down relation path learning algorithm")
         println("Loading triple set...")
-        // Initialize global hash seeds first
-        initializeGlobalHashSeeds()
 
         // Initialize data structures
+        // r2tripleSet = ts.r2tripleSet
         r2loopSet = ts.r2loopSet
         // 复制一份ts.r2h2tSet，避免直接引用
         R2h2tSet = ConcurrentHashMap(ts.r2h2tSet.mapValues { entry ->
@@ -132,11 +111,10 @@ object TLearn {
         println("Starting TLearn algorithm...")
         println("Settings.MIN_SUPP: ${Settings.MIN_SUPP}, MAX_PATH_LENGTH: $MAX_PATH_LENGTH")
 
-        println("\n=== Phase 1: Atomization ===")
-        // Step 1: Initialize with L=1 relations and atomize them
+        // Step 1: Initialize with L=1 relations
         initializeL1Relations()
 
-        // Step 2: Connect relations to form longer paths and atomize them
+        // Step 2: Connect relations using multiple threads
         try {
            connectRelations()
         } catch (e: Exception) {
@@ -148,7 +126,7 @@ object TLearn {
         println("Total relation paths: ${R2supp.size}")
         println("Total atoms in H2B2metric: ${H2B2metric.size}")
         printLSHBuckets()
-        
+
         // Save H2B2metric to JSON file
         saveH2B2metricToJson()
         
@@ -695,7 +673,8 @@ object TLearn {
     }
 
     /**
-     * Binary atomization: r(X,Y) and r'(X,Y)
+     * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
+     * 直接使用预计算的MinHash签名
      */
     fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
         debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}, inverseSet.size=${inverseSet.size}")
@@ -707,7 +686,8 @@ object TLearn {
     }
     
     /**
-     * Unary atomization: r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
+     * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
+     * 需要动态计算MinHash签名
      */
     fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
         debug2("atomizeUnaryRelationPath: rp=$rp, h2tSet.size=${h2tSet.size}, t2hSet.size=${t2hSet.size}, loopSet.size=${loopSet.size}")
@@ -720,7 +700,7 @@ object TLearn {
                 val unaryAtom = MyAtom(rp, constant, unaryInstanceSet)
                 performLSH(unaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    setH2F2metric(unaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rp]!!))
+                    setH2B2metric(unaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rp]!!))
                 }
             }
         }
@@ -736,7 +716,7 @@ object TLearn {
                 val inverseUnaryAtom = MyAtom(rpInv, constant, inverseUnaryInstanceSet)
                 performLSH(inverseUnaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    setH2F2metric(inverseUnaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
+                    setH2B2metric(inverseUnaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
                 }
             }
         }
@@ -807,7 +787,16 @@ object TLearn {
             val jaccard = bucketCount.toDouble() / BANDS
             // 估计交集大小 (head=currentAtom, body=bucketAtom)
             var intersectionSize = estimateIntersectionSize(jaccard, currentAtom.support, bucketAtom.support)
-            if (intersectionSize >= Settings.MIN_SUPP * ESTIMATE_RATIO && validateH2B(bucketAtom, currentAtom)) cnt++
+            if (intersectionSize >= Settings.MIN_SUPP * ESTIMATE_RATIO) {
+                if (validateH2B(bucketAtom, currentAtom)) cnt++
+                
+                if (currentAtom.isHeadAtom) {
+                    if (validateH2B(currentAtom, bucketAtom)) cnt++
+                } else if (currentAtom.isL1Atom && currentAtom.isBinary) {
+                    // 注意这里不能只验证 headAtom，因为 currentAtom 可能是 Binary & L1Atom: current'(X,Y) <= bucket(X,Y)
+                    if (validateH2B(currentAtom.inverse(), bucketAtom.inverse())) cnt++
+                }
+            }
         }
 
         if (!currentAtom.isHeadAtom && cnt == 0) {
@@ -823,7 +812,7 @@ object TLearn {
             synchronized(atomBucket) { atomBucket.add(currentAtom) }
         }
     }
-
+    
     /**
      * 估计交集大小：I_est = J_est * (size_a1 + size_a2) / (1 + J_est)
      */
@@ -862,19 +851,6 @@ object TLearn {
         if (metric.valid) {
             setH2B2metric(headAtom, bodyAtom, metric)
             return true
-        }
-        
-        val metricInv = metric.inverse()
-        if (metricInv.valid) {
-            if (bodyAtom.isHeadAtom) {
-                setH2B2metric(bodyAtom, headAtom, metricInv)
-                return true
-            } 
-            else if (bodyAtom.isL1Atom && bodyAtom.isBinary) {
-                // TODO: 注意这里不能只验证 headAtom，因为 currentAtom 可能是 Binary & L1Atom: current'(X,Y) <= bucket(X,Y)
-                setH2B2metric(bodyAtom.inverse(), headAtom.inverse(), metricInv)
-                return true
-            }
         }
         return false
     }
