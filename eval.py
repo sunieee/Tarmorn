@@ -20,11 +20,13 @@ argparser.add_argument("--ranking_file", type=str, default="", help="rules to us
 argparser.add_argument("--aggregation_function", type=str, default="maxplus", help="aggregation function to use")
 argparser.add_argument("--topk", type=int, default=100, help="topk to use")
 argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
+argparser.add_argument("--disable_combo", action="store_true", help="whether to disable combo rules")
 argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
 argparser.add_argument("--disable_u_c", action="store_true", help="whether to disable u_c rules")
 argparser.add_argument("--disable_zero", action="store_true", help="whether to disable zero rules")
 argparser.add_argument("--disable_u_xxc", action="store_true", help="whether to disable u_xxc rules")
 argparser.add_argument("--disable_u_xxd", action="store_true", help="whether to disable u_xxd rules")
+argparser.add_argument("--combo_debug", action="store_true", help="whether to disable u_xxd rules")
 
 
 args = argparser.parse_args()
@@ -41,15 +43,17 @@ options = Options()
 options.set("ranking_handler.aggregation_function", args.aggregation_function)
 options.set("ranking_handler.topk", args.topk)
 options.set("loader.load_b_rules", not args.disable_b)
+options.set("loader.load_combo", not args.disable_combo)
 options.set("loader.load_zero_rules", not args.disable_zero)
 options.set("loader.load_u_d_rules", not args.disable_u_d)
 options.set("loader.load_u_c_rules", not args.disable_u_c)
 options.set("loader.load_u_xxc_rules", not args.disable_u_xxc)
 options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
+options.set("loader.combo_debug", args.combo_debug)
 
 # *** 关键：设置线程数 ***
-options.set("ranking_handler.num_threads", -1)  # 指定20个线程
-options.set("loader.num_threads", 4)           # 指定4个线程用于规则加载
+options.set("ranking_handler.num_threads", -1)  
+options.set("loader.num_threads", 20)           # 指定4个线程用于规则加载
 
 
 #### Calculate a ranking

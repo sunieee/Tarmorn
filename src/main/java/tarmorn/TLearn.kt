@@ -85,6 +85,11 @@ object TLearn {
     val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
     val H2F2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
 
+    // Statistics variables
+    var totalRules = 0
+    val unaryStats = IntArray(MAX_PATH_LENGTH + 1) // M0, M1, M2, M3
+    val binaryStats = IntArray(MAX_PATH_LENGTH + 1) // M0, M1, M2, M3
+
     /**
      * Main entry point - can be run directly
      */
@@ -133,7 +138,7 @@ object TLearn {
         println("\n=== Phase 2: Composition ===")
         // Step 3: Composition phase - combine atoms into formulas using Eclat
         try {
-            // compositionPhase()
+            compositionPhase()
         } catch (e: Exception) {
             println("Error during composition phase: ${e.message}")
             e.printStackTrace()
@@ -143,6 +148,13 @@ object TLearn {
             // 保存H2F2metric到JSON文件
             saveH2F2metricToJson()
         }
+
+        // Print rule statistics
+        println("Total rules: $totalRules")
+        println("Type     M0       M1       M2       M3")
+        println("-" .repeat(60))
+        println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
+        println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
     }
 
     /**
@@ -664,7 +676,7 @@ object TLearn {
         if (instanceSet.size < MAX_JOIN_INSTANCES_L3 / 10) fillToLimit()
         val supp = instanceSet.size
         setSupp(supp)
-        debug1("[isValidRelationPathL3] ${IdManager.getRelationString(rp)} supp: $supp, self-inverse: ${rp == rpInv}, estimated: $estimatedTotal, sampled: $sampledSize")
+        debug2("[isValidRelationPathL3] ${IdManager.getRelationString(rp)} supp: $supp, self-inverse: ${rp == rpInv}, estimated: $estimatedTotal, sampled: $sampledSize")
         
         // atomize 使用 supp 而不是 entity supp作为阈值
         if (supp >= Settings.MIN_SUPP)
@@ -700,7 +712,8 @@ object TLearn {
                 val unaryAtom = MyAtom(rp, constant, unaryInstanceSet)
                 performLSH(unaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    setH2B2metric(unaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rp]!!))
+                    // setH2B2metric(unaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rp]!!))
+                    setH2F2metric(unaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rp]!!))
                 }
             }
         }
@@ -716,7 +729,8 @@ object TLearn {
                 val inverseUnaryAtom = MyAtom(rpInv, constant, inverseUnaryInstanceSet)
                 performLSH(inverseUnaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    setH2B2metric(inverseUnaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
+                    // setH2B2metric(inverseUnaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
+                    setH2F2metric(inverseUnaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
                 }
             }
         }
@@ -1094,37 +1108,45 @@ object TLearn {
             // FileWriter with false (default) = overwrite mode, clear existing content
             BufferedWriter(FileWriter(outputRule, false)).use { ruleWriter ->
                 writer.write("{\n")
-                val headAtomEntries = H2B2metric.entries.toList()
+                val atomEntries = H2B2metric.entries.toList()
 
-                headAtomEntries.forEachIndexed { headIndex, (headAtom, bodyMap) ->
+                atomEntries.forEachIndexed { atomIndex, (atom, bodyMap) ->
                     // Escape special characters in JSON string
-                    val headAtomString = headAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                    val headAtomString = atom.toString().replace("\"", "\\\"").replace("\n", "\\n")
                     writer.write("  \"$headAtomString\": {\n")
 
                     val bodyEntries = bodyMap.entries.toList()
                         .sortedByDescending { it.value.confidence } // Sort by metric descending
                     
                     bodyEntries.forEachIndexed { bodyIndex, (bodyAtom, metric) ->
-                        val bodyAtomString = bodyAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
-                        writer.write("    \"$bodyAtomString\": $metric")
+                        val bodyString = bodyAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                        writer.write("    \"$bodyString\": $metric")
                         if (bodyIndex < bodyEntries.size - 1) writer.write(",")
                         writer.write("\n")
                         
                         // Write rule to text file
-                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${headAtom.getRuleString()} <= ${bodyAtom.getRuleString()}"
+                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${bodyAtom.getRuleString()}"
                         ruleWriter.write(ruleLine)
                         ruleWriter.write("\n")
+
+                        // Statistics for rules
+                        totalRules++
+                        if (atom.isBinary) {
+                            binaryStats[1]++
+                        } else {
+                            unaryStats[1]++
+                        }
                     }
 
                     writer.write("  }")
-                    if (headIndex < headAtomEntries.size - 1) writer.write(",")
+                    if (atomIndex < atomEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
                     // Flush every 100 atoms to avoid memory accumulation
-                    if (headIndex % 100 == 0) {
+                    if (atomIndex % 100 == 0) {
                         writer.flush()
                         ruleWriter.flush()
-                        println("Processed ${headIndex + 1}/${headAtomEntries.size} head atoms...")
+                        println("[saveH2B2metricToJson] Processed ${atomIndex + 1}/${atomEntries.size} head atoms...")
                     }
                 }
                 writer.write("}\n")
@@ -1134,7 +1156,7 @@ object TLearn {
         println("Successfully saved H2B2metric to ${outputFile.absolutePath}")
         println("Successfully saved H2B rules to ${outputRule.absolutePath}")
         println("Total head atoms: ${H2B2metric.size}")
-        println("Total bucket connections: ${H2B2metric.values.sumOf { it.size }}")
+        println("Total body atoms: ${H2B2metric.values.sumOf { it.size }}")
     }
 
     /**
@@ -1146,10 +1168,7 @@ object TLearn {
         val outputFile = File(Settings.PATH_H2F2metric)
         val outputRule = File(Settings.PATH_RULES_TXT)
         
-        // Statistics variables
-        var totalRules = 0
-        val unaryStats = IntArray(MAX_PATH_LENGTH + 1) // L0, L1, L2, L3
-        val binaryStats = IntArray(MAX_PATH_LENGTH + 1) // L0, L1, L2, L3
+        println("Saving H2F2metric to ${outputFile.absolutePath}...")
         
         BufferedWriter(FileWriter(outputFile)).use { writer ->
             // FileWriter with true = append mode, preserve H2B rules written by saveH2B2metricToJson
@@ -1162,28 +1181,17 @@ object TLearn {
                 val atomString = atom.toString().replace("\"", "\\\"").replace("\n", "\\n")
                 writer.write("  \"$atomString\": {\n")
 
-                val formulaEntries = formula2Metric.entries.toList()
-                    .filter { it.value.bodySize > 0 && it.value.confidence.isFinite() }  // 过滤无效的metric
-                    .sortedByDescending { it.value.confidence }  // 按confidence降序排序
-                    // 不截取，直接输出！
-                    // .let { sorted ->
-                    //     // 保留confidence >= 0.6的formula，或者前20个（取较多者）
-                    //     val highConfidenceFormulas = sorted.filter { it.value.confidence >= 0.6 }
-                    //     if (highConfidenceFormulas.size >= 20) {
-                    //         highConfidenceFormulas
-                    //     } else {
-                    //         sorted.take(20)
-                    //     }
-                    // }
-                formulaEntries.forEachIndexed { formulaIndex, (formula, metric) ->
-                    val formulaString = formula.toString()
+                val bodyEntries = formula2Metric.entries.toList()
+                    .sortedByDescending { it.value.confidence } // Sort by metric descending
+
+                bodyEntries.forEachIndexed { bodyIndex, (formula, metric) ->
+                    val bodyString = formula.toString()
                         .replace("\"", "\\\"").replace("\n", "\\n")
-                    writer.write("    \"$formulaString\": $metric")
-                    if (formulaIndex < formulaEntries.size - 1) writer.write(",")
+                    writer.write("    \"$bodyString\": $metric")
+                    if (bodyIndex < bodyEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
-                    val formulaRuleString = formula.getRuleString()
-                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= $formulaRuleString"
+                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${formula.getRuleString()}"
                     ruleWriter.write(ruleLine)
                     ruleWriter.write("\n")
                     
@@ -1207,7 +1215,7 @@ object TLearn {
                 if (atomIndex % 100 == 0) {
                     writer.flush()
                     ruleWriter.flush()
-                    println("Processed ${atomIndex + 1}/${atomEntries.size} atoms...")
+                    println("[saveH2F2metricToJson] Processed ${atomIndex + 1}/${atomEntries.size} atoms...")
                 }
             }
             writer.write("}\n")
@@ -1216,14 +1224,7 @@ object TLearn {
 
         println("Successfully saved H2F2metric to ${outputFile.absolutePath}")
         println("Successfully saved rules to ${outputRule.absolutePath}")
-        println("Total atoms: ${H2F2metric.size}")
-        println("Total formulas: ${H2F2metric.values.sumOf { it.size }}")
-        
-        // Print rule statistics
-        println("Total rules: $totalRules")
-        println("Type     M0       M1       M2       M3")
-        println("-" .repeat(60))
-        println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
-        println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
+        println("Total head atoms: ${H2F2metric.size}")
+        println("Total body formulas: ${H2F2metric.values.sumOf { it.size }}")
     }
 }
