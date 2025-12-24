@@ -42,33 +42,77 @@ class KnowledgeGraph:
     """知识图谱类，用于存储和查询三元组，基于r2h2t索引"""
     
     def __init__(self):
-        # r2h2t索引: relation -> {head: set of tails}
+        # r2h2t索引: relation -> {head_id: set of tail_ids}
         self.r2h2t = defaultdict(lambda: defaultdict(set))
-        # 所有三元组
+        # 所有三元组 (使用实体ID)
         self.triples = set()
-        # 所有实体
-        self.entities = set()
+        # 实体编码: entity_str -> entity_id
+        self.entity2id = {}
+        # 实体解码: entity_id -> entity_str
+        self.id2entity = {}
+        # 下一个可用的实体ID
+        self._next_entity_id = 0
         # 所有关系（包括原始关系和inverse关系）
         self.relations = set()
         # 原始关系集合（用于区分基础关系和缓存的复合关系）
         self.base_relations = set()
+        # 实体数量上限检查
+        self.MAX_ENTITIES = 2**16
+    
+    def _get_or_create_entity_id(self, entity: str) -> int:
+        """获取或创建实体的ID编码"""
+        if entity not in self.entity2id:
+            if self._next_entity_id >= self.MAX_ENTITIES:
+                raise ValueError(f"实体数量超过上限 {self.MAX_ENTITIES}！当前实体: {entity}")
+            self.entity2id[entity] = self._next_entity_id
+            self.id2entity[self._next_entity_id] = entity
+            self._next_entity_id += 1
+        return self.entity2id[entity]
+    
+    @property
+    def entities(self) -> Set[int]:
+        """返回所有实体ID的集合"""
+        return set(range(self._next_entity_id))
+    
+    def get_entity_str(self, entity_id: int) -> str:
+        """获取实体ID对应的字符串"""
+        return self.id2entity.get(entity_id, f"<UNKNOWN_ID_{entity_id}>")
+    
+    def get_entity_id(self, entity_str: str) -> Optional[int]:
+        """获取实体字符串对应的ID"""
+        return self.entity2id.get(entity_str)
+    
+    @staticmethod
+    def encode_pair(head: int, tail: int) -> int:
+        """将(head, tail)对编码为单个整数：head << 16 | tail"""
+        return (head << 16) | tail
+    
+    @staticmethod
+    def decode_pair(encoded: int) -> Tuple[int, int]:
+        """将编码的整数解码为(head, tail)对"""
+        head = encoded >> 16
+        tail = encoded & 0xFFFF
+        return head, tail
     
     def add_triple(self, head: str, relation: str, tail: str):
         """添加三元组到知识图谱"""
-        self.triples.add((head, relation, tail))
-        self.entities.add(head)
-        self.entities.add(tail)
+        # 获取实体ID
+        head_id = self._get_or_create_entity_id(head)
+        tail_id = self._get_or_create_entity_id(tail)
+        
+        # 存储三元组（使用编码的配对）
+        self.triples.add(self.encode_pair(head_id, tail_id))
         self.relations.add(relation)
-        self.base_relations.add(relation)  # 标记为基础关系
+        self.base_relations.add(relation)
         
         # 建立r2h2t索引
-        self.r2h2t[relation][head].add(tail)
+        self.r2h2t[relation][head_id].add(tail_id)
         
         # 建立inverse关系索引
         inverse_relation = f"INVERSE_{relation}"
         self.relations.add(inverse_relation)
-        self.base_relations.add(inverse_relation)  # 逆关系也是基础关系
-        self.r2h2t[inverse_relation][tail].add(head)
+        self.base_relations.add(inverse_relation)
+        self.r2h2t[inverse_relation][tail_id].add(head_id)
     
     def clear_cached_relations(self):
         """清除缓存的复合关系，保留基础关系"""
@@ -81,13 +125,13 @@ class KnowledgeGraph:
                 del self.r2h2t[relation]
             self.relations.discard(relation)
     
-    def get_relation_pairs(self, relation: str) -> Set[Tuple[str, str]]:
-        """获取某个关系的所有(head, tail)对"""
+    def get_relation_pairs(self, relation: str) -> Set[int]:
+        """获取某个关系的所有编码配对集合"""
         pairs = set()
         if relation in self.r2h2t:
             for head, tails in self.r2h2t[relation].items():
                 for tail in tails:
-                    pairs.add((head, tail))
+                    pairs.add(self.encode_pair(head, tail))
         return pairs
     
     def get_relation_instances_count(self, relation: str) -> int:
@@ -980,7 +1024,7 @@ class RuleSupportCalculator:
         
         return composite_name
     
-    def get_binary_instances_join(self, relation_path: List[str]) -> Set[Tuple[str, str]]:
+    def get_binary_instances_join(self, relation_path: List[str]) -> Set[int]:
         """
         使用连接算法获取二元规则的实例集合
         
@@ -988,7 +1032,7 @@ class RuleSupportCalculator:
             relation_path: 关系路径列表
         
         Returns:
-            (X, Y) 对的集合
+            编码的(X, Y)配对集合
         """
         debug(f"    [DEBUG] get_binary_instances_join: relation_path={relation_path}")
         
@@ -1001,20 +1045,15 @@ class RuleSupportCalculator:
         debug(f"    [DEBUG] Final result has {len(result)} instances")
         return result
     
-    def compute_supp(self, relation_path: List[str]) -> Set[Tuple[str, str]]:
+    def compute_supp(self, relation_path: List[str]) -> Set[int]:
         """
         计算关系路径的实例集合，确保路径上所有实体都不相等
-        
-        对于长度为3的路径 r1·r2·r3，同时考虑两种拆分：
-        1. (r1·r2)·r3：确保 A!=B!=D
-        2. r1·(r2·r3)：确保 A!=C!=D
-        两种拆分的交集才是最终结果，这样能确保 A!=B!=C!=D
         
         Args:
             relation_path: 关系路径列表
             
         Returns:
-            满足所有约束的 (X, Y) 对集合
+            满足所有约束的编码配对集合
         """
         path_str = '·'.join(relation_path)
         
@@ -1082,7 +1121,7 @@ class RuleSupportCalculator:
         self.instance_cache[path_str] = result
         return result
     
-    def _join_two_relations(self, r1: str, r2: str) -> Set[Tuple[str, str]]:
+    def _join_two_relations(self, r1: str, r2: str) -> Set[int]:
         """连接两个关系，确保 X != A != Y"""
         debug(f"      [DEBUG] Joining two relations: {r1} · {r2}")
         
@@ -1106,30 +1145,31 @@ class RuleSupportCalculator:
                 for t in r2_tails:
                     # 确保 h != node != t 且 h != t
                     if h != node and node != t and h != t:
-                        result.add((h, t))
+                        result.add(self.kg.encode_pair(h, t))
         
         debug(f"      [DEBUG] Join result: {len(result)} instances")
         return result
     
-    def _join_instances_with_relation(self, instances: Set[Tuple[str, str]], relation: str) -> Set[Tuple[str, str]]:
+    def _join_instances_with_relation(self, instances: Set[int], relation: str) -> Set[int]:
         """将实例集合与关系连接：instances · relation"""
         debug(f"      [DEBUG] Joining {len(instances)} instances with relation {relation}")
         
         r_h2t = self.kg.r2h2t.get(relation, {})
         result = set()
         
-        for (x, y) in instances:
+        for encoded in instances:
+            x, y = self.kg.decode_pair(encoded)
             # y 作为关系 relation 的 head
             if y in r_h2t:
                 for z in r_h2t[y]:
                     # 确保 x != y != z 且 x != z
                     if x != y and y != z and x != z:
-                        result.add((x, z))
+                        result.add(self.kg.encode_pair(x, z))
         
         debug(f"      [DEBUG] Result: {len(result)} instances")
         return result
     
-    def _join_relation_with_instances(self, relation: str, instances: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+    def _join_relation_with_instances(self, relation: str, instances: Set[int]) -> Set[int]:
         """将关系与实例集合连接：relation · instances"""
         debug(f"      [DEBUG] Joining relation {relation} with {len(instances)} instances")
         
@@ -1139,31 +1179,34 @@ class RuleSupportCalculator:
         
         result = set()
         
-        for (y, z) in instances:
+        for encoded in instances:
+            y, z = self.kg.decode_pair(encoded)
             # y 作为关系 relation 的 tail，找到所有能到达 y 的 head
             if y in inv_h2t:
                 for x in inv_h2t[y]:
                     # 确保 x != y != z 且 x != z
                     if x != y and y != z and x != z:
-                        result.add((x, z))
+                        result.add(self.kg.encode_pair(x, z))
         
         debug(f"      [DEBUG] Result: {len(result)} instances")
         return result
     
-    def _join_two_instance_sets(self, left: Set[Tuple[str, str]], right: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+    def _join_two_instance_sets(self, left: Set[int], right: Set[int]) -> Set[int]:
         """连接两个实例集合"""
         # 建立 right 的索引: head -> set of tails
         right_index = defaultdict(set)
-        for (y2, z) in right:
+        for encoded in right:
+            y2, z = self.kg.decode_pair(encoded)
             right_index[y2].add(z)
         
         result = set()
-        for (x, y) in left:
+        for encoded in left:
+            x, y = self.kg.decode_pair(encoded)
             if y in right_index:
                 # 对于所有能连接的 z，检查 x != z
                 for z in right_index[y]:
                     if x != z:
-                        result.add((x, z))
+                        result.add(self.kg.encode_pair(x, z))
         
         return result
     
@@ -1321,37 +1364,40 @@ class RuleSupportCalculator:
         variable_count = rule_info.get('variable_count', 0)
         
         if variable_count == 1:
-            # 一元规则：返回变量的所有可能值
+            # 一元规则：返回变量的所有可能值（实体ID集合）
             head_constant = rule_info.get('head_constant')
+            head_constant_id = self.kg.get_entity_id(head_constant)
             
-            debug(f"  [DEBUG] Head relation: {head_relation}, constant: {head_constant}")
+            if head_constant_id is None:
+                debug(f"  [DEBUG] Head constant not found: {head_constant}")
+                return set()
+            
+            debug(f"  [DEBUG] Head relation: {head_relation}, constant: {head_constant} (id={head_constant_id})")
             
             if head_relation.startswith('INVERSE_'):
                 # INVERSE_relation(constant) 表示 relation(constant, X)
-                # 要获取X的值，查找 relation[constant]
-                original_relation = head_relation[8:]  # 去掉INVERSE_前缀
-                debug(f"  [DEBUG] Looking for {original_relation}[{head_constant}]")
-                if original_relation in self.kg.r2h2t and head_constant in self.kg.r2h2t[original_relation]:
-                    result = set(self.kg.r2h2t[original_relation][head_constant])
+                original_relation = head_relation[8:]
+                debug(f"  [DEBUG] Looking for {original_relation}[{head_constant_id}]")
+                if original_relation in self.kg.r2h2t and head_constant_id in self.kg.r2h2t[original_relation]:
+                    result = set(self.kg.r2h2t[original_relation][head_constant_id])
                     debug(f"  [DEBUG] Found {len(result)} head instances")
                     return result
                 else:
-                    debug(f"  [DEBUG] No instances found for {original_relation}[{head_constant}]")
+                    debug(f"  [DEBUG] No instances found")
             else:
                 # relation(constant) 表示 relation(X, constant)
-                # 要获取X的值，查找 INVERSE_relation[constant]
                 inverse_relation = self.kg.get_inverse_relation(head_relation)
-                debug(f"  [DEBUG] Looking for {inverse_relation}[{head_constant}]")
-                if inverse_relation in self.kg.r2h2t and head_constant in self.kg.r2h2t[inverse_relation]:
-                    result = set(self.kg.r2h2t[inverse_relation][head_constant])
+                debug(f"  [DEBUG] Looking for {inverse_relation}[{head_constant_id}]")
+                if inverse_relation in self.kg.r2h2t and head_constant_id in self.kg.r2h2t[inverse_relation]:
+                    result = set(self.kg.r2h2t[inverse_relation][head_constant_id])
                     debug(f"  [DEBUG] Found {len(result)} head instances")
                     return result
                 else:
-                    debug(f"  [DEBUG] No instances found for {inverse_relation}[{head_constant}]")
+                    debug(f"  [DEBUG] No instances found")
             
             return set()
         else:
-            # 二元规则：返回(X,Y)对的集合
+            # 二元规则：返回编码的配对集合
             return self.kg.get_relation_pairs(head_relation)
     
     def _get_body_instances(self, rule_info: Dict) -> Set:
@@ -1380,30 +1426,32 @@ class RuleSupportCalculator:
             
             # 获取实例
             if body_constant is not None:
-                # 有常量的情况：查询特定的实例
-                # 对于简写格式，body_constant通常在tail位置
-                # 所以需要使用逆关系来查询：INVERSE_connected_relation[body_constant]
+                body_constant_id = self.kg.get_entity_id(body_constant)
+                if body_constant_id is None:
+                    debug(f"  [DEBUG] Body constant not found: {body_constant}")
+                    return set()
+                
                 inverse_connected_relation = self.kg.get_inverse_relation(connected_relation)
                 debug(f"  [DEBUG] Using inverse relation: {inverse_connected_relation}")
                 
-                if inverse_connected_relation in self.kg.r2h2t and body_constant in self.kg.r2h2t[inverse_connected_relation]:
-                    result = set(self.kg.r2h2t[inverse_connected_relation][body_constant])
-                    debug(f"  [DEBUG] Body instances from {inverse_connected_relation}[{body_constant}]: {len(result)}")
+                if inverse_connected_relation in self.kg.r2h2t and body_constant_id in self.kg.r2h2t[inverse_connected_relation]:
+                    result = set(self.kg.r2h2t[inverse_connected_relation][body_constant_id])
+                    debug(f"  [DEBUG] Body instances: {len(result)}")
                     return result
                 else:
-                    debug(f"  [DEBUG] No instances found for {inverse_connected_relation}[{body_constant}]")
+                    debug(f"  [DEBUG] No instances found")
                     return set()
             else:
-                # 没有常量的情况：获取整个关系的所有head实体
+                # 没有常量：获取整个关系的所有head实体
                 if connected_relation in self.kg.r2h2t:
                     result = set(self.kg.r2h2t[connected_relation].keys())
-                    debug(f"  [DEBUG] Body instances from {connected_relation} (all heads): {len(result)}")
+                    debug(f"  [DEBUG] Body instances (all heads): {len(result)}")
                     return result
                 else:
-                    debug(f"  [DEBUG] No instances found for relation {connected_relation}")
+                    debug(f"  [DEBUG] No instances found")
                     return set()
         else:
-            # 二元规则
+            # 二元规则：返回编码的配对集合
             body_relations = rule_info.get('body_relations', [])
             return self.get_binary_instances_join(body_relations)
     
@@ -1890,8 +1938,8 @@ class RuleSupportCalculator:
         
         return current_pairs
     
-    def get_path_instances(self, relation_path: List[str]) -> Set[Tuple[str, str]]:
-        """获取路径的实际实例集合（用于计算交集）"""
+    def get_path_instances(self, relation_path: List[str]) -> Set[int]:
+        """获取路径的实际实例集合（编码配对）"""
         if not relation_path:
             return set()
         
@@ -1943,7 +1991,7 @@ def load_dataset(filepath: str) -> KnowledgeGraph:
     
     debug(f"数据集加载完成:")
     debug(f"  三元组数量: {len(kg.triples):,}")
-    debug(f"  实体数量: {len(kg.entities):,}")
+    debug(f"  实体数量: {kg._next_entity_id:,}")
     debug(f"  原始关系数量: {len([r for r in kg.relations if not r.startswith('INVERSE_')]):,}")
     debug(f"  总关系数量（含逆关系）: {len(kg.relations):,}")
     
@@ -2048,16 +2096,14 @@ if __name__ == "__main__":
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/category_of(X,A), /time/event/instance_of_recurring_event(Y,A)",
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_winner/awards_won./award/award_honor/award_winner(B,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)",
 
-        "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)"
-    ]
+        "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)",
 
-    test_rules = [
         "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(·)",
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency · INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency · /education/university/local_tuition./measurement_unit/dated_money_value/currency"
     ]
 
     # 下面这些rules理论上supp都应该是0，因为 currency 都是多对一关系，所以后半段 INVERSE_currency·currency 不可能有实例
-    test_rules = {
+    test_rules4 = {
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/statistical_region/gdp_real./measurement_unit/adjusted_money_value/adjustment_currency(B,Y)",
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /business/business_operation/operating_income./measurement_unit/dated_money_value/currency(B,A), /organization/endowed_organization/endowment./measurement_unit/dated_money_value/currency(B,Y)",
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(B,A), /business/business_operation/operating_income./measurement_unit/dated_money_value/currency(B,Y)",
