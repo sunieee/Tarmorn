@@ -27,6 +27,7 @@ import os
 import json
 import re
 from collections import defaultdict, Counter
+import sys
 from typing import Set, Tuple, Dict, List, Optional
 from itertools import product
 
@@ -205,6 +206,7 @@ class RuleParser:
         统一规则格式为简写模式：
         - 一元规则：/rel(/m/const) <= /rel1·/rel2(/m/const2)
         - 二元规则：/rel <= /rel1·INVERSE_/rel2
+        - 复杂规则（Complex Rule）：body包含分号，表示多个branch
         
         Args:
             rule_str: 规则字符串
@@ -218,6 +220,11 @@ class RuleParser:
         head_part, body_part = rule_str.split('<=', 1)
         head_part = head_part.strip()
         body_part = body_part.strip()
+        
+        # 检测是否是complex rule（body包含分号）
+        if ';' in body_part:
+            debug(f"[DEBUG] 检测到Complex Rule（包含分号）")
+            return RuleParser._parse_complex_rule(head_part, body_part, rule_str)
         
         # 首先检测规则类型和转换为简写模式
         normalized_rule = RuleParser._normalize_to_simplified(head_part, body_part)
@@ -234,6 +241,185 @@ class RuleParser:
         norm_body = norm_body.strip()
         
         return RuleParser._parse_simplified_rule(norm_head, norm_body, rule_info)
+    
+    @staticmethod
+    def _parse_complex_rule(head_part: str, body_part: str, rule_str: str) -> Tuple[str, List[str], int, Dict]:
+        """
+        解析Complex Rule（body包含分号的规则）
+        
+        Complex Rule分为两种：
+        1. Complex Binary Rule: head是二元关系，body有多个branch（用分号分隔）
+           例如：/location/country/form_of_government(X,Y) <= branch1; branch2; branch3
+           
+        2. Complex Unary Rule: head是一元关系，body有多个branch（用分号分隔）
+           例如：INVERSE_/government/legislative_session/members./government/government_position_held/legislative_sessions(/m/01gsvb) 
+                 <= branch1; branch2
+        
+        处理方式：
+        - 将每个branch转换为简写形式（如果尚未简写）
+        - 保存所有branches信息到rule_info中，用于后续计算
+        - body instances = branch1_instances ∩ branch2_instances ∩ ...
+        
+        Args:
+            head_part: 头部字符串
+            body_part: 身体字符串（包含分号）
+            rule_str: 原始规则字符串
+            
+        Returns:
+            (head_relation, body_relations_list, variable_count, rule_info)
+        """
+        debug(f"[DEBUG] 解析Complex Rule:")
+        debug(f"[DEBUG]   Head: {head_part}")
+        debug(f"[DEBUG]   Body: {body_part}")
+        
+        # 将body按分号分割成多个branches
+        branches = [branch.strip() for branch in body_part.split(';')]
+        debug(f"[DEBUG]   发现 {len(branches)} 个branches")
+        
+        # 确定规则类型（一元或二元）
+        # 检查head是否包含变量
+        is_unary = False
+        if '(' in head_part and ')' in head_part:
+            paren_content = head_part.split('(')[1].split(')')[0]
+            # 如果括号中只有一个参数，是一元规则
+            if ',' not in paren_content:
+                is_unary = True
+            else:
+                # 有逗号，检查是否有两个变量（二元）还是一个变量一个常量（一元）
+                args = [arg.strip() for arg in paren_content.split(',')]
+                # 统计单字母变量（真正的变量）的数量
+                var_count = sum(1 for arg in args if len(arg) == 1)
+                is_unary = (var_count == 1)
+        else:
+            # 没有括号，是简写的二元规则
+            is_unary = False
+        
+        debug(f"[DEBUG]   规则类型: {'一元' if is_unary else '二元'}")
+        
+        # 解析head部分
+        if is_unary:
+            # 一元规则 - 需要转换为简写形式
+            # 例如: /rel(/m/const, X) 或 /rel(X, /m/const) 或已经是简写形式 /rel(/m/const) 或 INVERSE_/rel(/m/const)
+            if ',' in head_part:
+                # 完整格式，需要转换为简写
+                head_relation_base = head_part.split('(')[0].strip()
+                args = [arg.strip() for arg in head_part.split('(')[1].split(')')[0].split(',')]
+                # 找到常量和变量的位置
+                if len(args[0]) > 1:  # 第一个参数是常量
+                    fixed_entity = args[0]
+                    head_relation = f"INVERSE_{head_relation_base}"
+                    var_pos = 'tail'
+                else:  # 第二个参数是常量
+                    fixed_entity = args[1]
+                    head_relation = head_relation_base
+                    var_pos = 'head'
+            else:
+                # 已经是简写格式
+                head_relation, fixed_entity, var_pos = RuleParser._parse_simplified_head(head_part)
+            variable_count = 1
+        else:
+            # 二元规则
+            # 提取head relation（去掉可能的括号和参数）
+            if '(' in head_part:
+                head_relation = head_part.split('(')[0].strip()
+            else:
+                head_relation = head_part.strip()
+            fixed_entity = None
+            variable_count = 2
+        
+        # 处理每个branch，将其转换为简写形式
+        simplified_branches = []
+        branch_info_list = []
+        
+        for i, branch in enumerate(branches):
+            debug(f"[DEBUG]   处理Branch {i+1}: {branch}")
+            
+            # 检查branch是否已经是简写格式
+            if '(' not in branch or ',' not in branch:
+                # 已经是简写格式
+                simplified_branch = branch
+                branch_relations, branch_constant = RuleParser._parse_simplified_body(simplified_branch)
+            else:
+                # 完整格式，需要转换为简写格式
+                # 对于complex rule的每个branch，需要进行转换
+                # 例如：/rel1(X,A), /rel2(A,/m/const) -> /rel1·/rel2(/m/const)
+                # 或者：/rel1(X,A), /rel2(Y,A) -> /rel1·INVERSE_/rel2
+                
+                # 解析branch中的原子
+                branch_atoms = RuleParser._parse_body_atoms(branch)
+                debug(f"[DEBUG]     Branch原子数: {len(branch_atoms)}")
+                
+                # 根据规则类型转换branch
+                if is_unary:
+                    # 一元规则的branch转换
+                    # 需要找到自由变量（这里假设是X）
+                    free_var = 'X'
+                    simplified_branch, branch_constant = RuleParser._convert_branch_to_simplified_unary(branch_atoms, free_var)
+                    branch_relations, _ = RuleParser._parse_simplified_body(simplified_branch)
+                else:
+                    # 二元规则的branch转换
+                    # 头部的两个变量是X和Y
+                    free_vars = ['X', 'Y']
+                    simplified_branch = RuleParser._convert_branch_to_simplified_binary(branch_atoms, free_vars)
+                    branch_relations, branch_constant = RuleParser._parse_simplified_body(simplified_branch)
+                    
+                debug(f"[DEBUG]     完整格式branch: {branch}")
+            
+            simplified_branches.append(simplified_branch)
+            branch_info_list.append({
+                'branch_text': simplified_branch,
+                'relations': branch_relations,
+                'constant': branch_constant
+            })
+            
+            debug(f"[DEBUG]     简写形式: {simplified_branch}")
+            debug(f"[DEBUG]     关系路径: {branch_relations}")
+            debug(f"[DEBUG]     常量: {branch_constant}")
+        
+        # 构建rule_info
+        rule_info = {
+            'original_rule': rule_str,
+            'normalized_rule': f"{head_part} <= {'; '.join(simplified_branches)}",
+            'is_simplified': True,
+            'is_complex': True,
+            'branch_count': len(branches),
+            'branches': branch_info_list,
+            'head_relation': head_relation,
+            'is_unary': is_unary,
+            'variable_count': variable_count
+        }
+        
+        if is_unary:
+            rule_info['head_constant'] = fixed_entity
+            rule_info['free_variable'] = 'X'
+            rule_info['head_atom'] = {
+                'relation': head_relation,
+                'args': ['X', fixed_entity] if not head_relation.startswith('INVERSE_') else [fixed_entity, 'X']
+            }
+            rule_info['head_variables'] = ['X', fixed_entity] if not head_relation.startswith('INVERSE_') else [fixed_entity, 'X']
+            rule_info['free_variables'] = ['X']
+        else:
+            rule_info['head_constant'] = None
+            rule_info['body_constant'] = None
+            rule_info['free_variables'] = ['X', 'Y']
+            rule_info['head_atom'] = {
+                'relation': head_relation,
+                'args': ['X', 'Y']
+            }
+            rule_info['head_variables'] = ['X', 'Y']
+        
+        # 返回值：head_relation, body_relations（所有branches的关系列表），variable_count, rule_info
+        # 对于complex rule，body_relations是一个包含所有branches的列表
+        all_body_relations = []
+        for branch_info in branch_info_list:
+            all_body_relations.extend(branch_info['relations'])
+        
+        debug(f"[DEBUG] Complex Rule解析完成:")
+        debug(f"[DEBUG]   Head relation: {head_relation}")
+        debug(f"[DEBUG]   Variable count: {variable_count}")
+        debug(f"[DEBUG]   Branch count: {len(branches)}")
+        
+        return head_relation, all_body_relations, variable_count, rule_info
     
     @staticmethod
     def _normalize_to_simplified(head_part: str, body_part: str) -> str:
@@ -665,6 +851,77 @@ class RuleParser:
         return final_path
 
     @staticmethod
+    def _convert_branch_to_simplified_unary(branch_atoms: List[str], free_var: str) -> Tuple[str, Optional[str]]:
+        """
+        将一元规则的branch从完整格式转换为简写格式
+        
+        例如：/rel1(X,A), /rel2(A,/m/const) -> /rel1·/rel2(/m/const)
+        
+        Args:
+            branch_atoms: branch的原子列表
+            free_var: 自由变量（通常是'X'）
+            
+        Returns:
+            (simplified_branch, branch_constant)
+        """
+        # 构建body路径和常量
+        body_path, body_constant = RuleParser._build_unary_body_path(branch_atoms, free_var)
+        
+        # 构建简写形式
+        if body_constant:
+            simplified_branch = f"{body_path}({body_constant})"
+        else:
+            # 检查是否有中间变量
+            has_intermediate_var = len(branch_atoms) > 1
+            if not has_intermediate_var and len(branch_atoms) == 1:
+                atom = branch_atoms[0]
+                args = RuleParser._extract_variables(atom)
+                has_intermediate_var = len(args) == 2 and all(len(arg) == 1 for arg in args)
+            
+            if has_intermediate_var:
+                simplified_branch = f"{body_path}(·)"
+            else:
+                simplified_branch = body_path
+        
+        return simplified_branch, body_constant
+    
+    @staticmethod
+    def _convert_branch_to_simplified_binary(branch_atoms: List[str], free_vars: List[str]) -> str:
+        """
+        将二元规则的branch从完整格式转换为简写格式
+        
+        例如：/rel1(X,A), /rel2(Y,A) -> /rel1·INVERSE_/rel2
+        
+        Args:
+            branch_atoms: branch的原子列表
+            free_vars: 自由变量列表（通常是['X', 'Y']）
+            
+        Returns:
+            simplified_branch
+        """
+        # 构建body路径
+        body_path = RuleParser._convert_binary_to_simplified_body_path(branch_atoms, free_vars)
+        return body_path
+    
+    @staticmethod
+    def _convert_binary_to_simplified_body_path(branch_atoms: List[str], free_vars: List[str]) -> str:
+        """
+        将二元规则的body原子列表转换为简写的关系路径
+        
+        Args:
+            branch_atoms: body原子列表
+            free_vars: 自由变量列表
+            
+        Returns:
+            简写的关系路径
+        """
+        if not branch_atoms:
+            return ""
+        
+        # 直接使用_build_binary_body_path方法
+        return RuleParser._build_binary_body_path(branch_atoms, free_vars)
+
+    @staticmethod
     def _parse_simplified_rule(head_part: str, body_part: str, rule_info: Dict) -> Tuple[str, List[str], int, Dict]:
         """解析简写格式规则，使用统一的数据结构"""
         # 提取头部关系和可能的固定实体
@@ -725,8 +982,15 @@ class RuleParser:
         
         特殊情况：/rel(·) 表示"任意实体"，不是常量约束
         返回：(["/rel"], None)
+        
+        U0规则（空body）：返回空列表
+        返回：([], None)
         """
         body_constant = None
+        
+        # 检查是否是U0规则（空body）
+        if not body_part or body_part.strip() == '':
+            return [], None
         
         # 检查是否有括号约束
         if '(' in body_part and ')' in body_part:
@@ -1326,25 +1590,57 @@ class RuleSupportCalculator:
         debug(f"[DEBUG] variable_count: {rule_info.get('variable_count', 'NOT_SET')}")
         
         variable_count = rule_info.get('variable_count', 0)
+        body_relations = rule_info.get('body_relations', [])
+        is_complex = rule_info.get('is_complex', False)
         
         # 统一计算head和body实例集合
         head_instances = self._get_head_instances(rule_info)
-        body_instances = self._get_body_instances(rule_info)
-        
         head_size = len(head_instances)
-        body_size = len(body_instances)
         
         debug(f"  [DEBUG] Head instances: {head_size}")
         if head_instances:
             head_sample = list(head_instances)[:5]
             debug(f"  [DEBUG] Head sample: {head_sample}")
+        
+        # 检查是否是U0规则（body为空且不是complex rule）
+        if not body_relations and not is_complex:
+            # U0规则：bodySize是该关系的所有事实数量
+            head_relation = rule_info.get('head_relation')
+            
+            if variable_count == 1:
+                # 一元规则：需要获取原始关系的事实数量
+                if head_relation.startswith('INVERSE_'):
+                    original_relation = head_relation[8:]
+                    body_size = self.kg.get_relation_instances_count(original_relation)
+                else:
+                    body_size = self.kg.get_relation_instances_count(head_relation)
+            else:
+                # 二元规则：获取关系的事实数量
+                body_size = self.kg.get_relation_instances_count(head_relation)
+            
+            debug(f"  [DEBUG] U0规则：bodySize（关系事实数量）= {body_size}")
+            support = head_size
+            confidence = support / body_size if body_size > 0 else 0
+            
+            debug(f"  [DEBUG] Support: {support}, Confidence: {confidence}")
+            
+            return {
+                'headSize': head_size,
+                'bodySize': body_size,
+                'support': support,
+                'confidence': confidence
+            }
+        
+        # 正常规则：计算body实例
+        body_instances = self._get_body_instances(rule_info)
+        body_size = len(body_instances)
             
         debug(f"  [DEBUG] Body instances: {body_size}")
         if body_instances:
             body_sample = list(body_instances)[:5]
             debug(f"  [DEBUG] Body sample: {body_sample}")
         
-        # 计算支持度
+        # 正常规则：计算交集
         support_instances = head_instances.intersection(body_instances)
         support = len(support_instances)
         confidence = support / body_size if body_size > 0 else 0
@@ -1402,6 +1698,11 @@ class RuleSupportCalculator:
     
     def _get_body_instances(self, rule_info: Dict) -> Set:
         """获取身体实例集合 - 使用统一的简写格式处理"""
+        # 检查是否是complex rule
+        if rule_info.get('is_complex', False):
+            debug(f"  [DEBUG] 处理Complex Rule的body instances")
+            return self._get_complex_body_instances(rule_info)
+        
         variable_count = rule_info.get('variable_count', 0)
         
         if variable_count == 1:
@@ -1409,8 +1710,9 @@ class RuleSupportCalculator:
             body_relations = rule_info.get('body_relations', [])
             body_constant = rule_info.get('body_constant')
             
+            # U0规则不应该到达这里（已在calculate_rule_support_join中处理）
             if not body_relations:
-                debug(f"  [ERROR] No body relations found!")
+                debug(f"  [WARNING] U0规则不应该调用_get_body_instances")
                 return set()
             
             # 连接所有body关系
@@ -1453,7 +1755,141 @@ class RuleSupportCalculator:
         else:
             # 二元规则：返回编码的配对集合
             body_relations = rule_info.get('body_relations', [])
+            
+            # U0规则不应该到达这里（已在calculate_rule_support_join中处理）
+            if not body_relations:
+                debug(f"  [WARNING] U0规则不应该调用_get_body_instances")
+                return set()
+            
             return self.get_binary_instances_join(body_relations)
+    
+    def _get_complex_body_instances(self, rule_info: Dict) -> Set:
+        """
+        获取Complex Rule的body instances
+        
+        对于complex rule，body有多个branches（用分号分隔）：
+        - 分别计算每个branch的instances
+        - body instances = branch1_instances ∩ branch2_instances ∩ ...
+        
+        Args:
+            rule_info: 规则信息字典，包含branches列表
+            
+        Returns:
+            body instances集合（一元规则返回实体ID集合，二元规则返回编码的配对集合）
+        """
+        branches = rule_info.get('branches', [])
+        is_unary = rule_info.get('is_unary', False)
+        
+        debug(f"  [DEBUG] 计算Complex Rule的body instances")
+        debug(f"  [DEBUG] Branch数量: {len(branches)}")
+        debug(f"  [DEBUG] 规则类型: {'一元' if is_unary else '二元'}")
+        
+        if not branches:
+            debug(f"  [ERROR] No branches found in complex rule!")
+            return set()
+        
+        # 存储每个branch的instances
+        branch_instances_list = []
+        
+        # 计算每个branch的instances
+        for i, branch_info in enumerate(branches):
+            debug(f"  [DEBUG] 计算Branch {i+1}: {branch_info['branch_text']}")
+            
+            branch_relations = branch_info['relations']
+            branch_constant = branch_info['constant']
+            
+            # 根据规则类型计算branch的instances
+            if is_unary:
+                # 一元规则
+                branch_instances = self._get_branch_instances_unary(branch_relations, branch_constant)
+            else:
+                # 二元规则
+                branch_instances = self._get_branch_instances_binary(branch_relations)
+            
+            debug(f"  [DEBUG] Branch {i+1} instances: {len(branch_instances)}")
+            if branch_instances:
+                sample = list(branch_instances)[:3]
+                if is_unary:
+                    debug(f"  [DEBUG] Branch {i+1} sample: {[self.kg.get_entity_str(e) for e in sample]}")
+                else:
+                    debug(f"  [DEBUG] Branch {i+1} sample: {[(self.kg.get_entity_str(h), self.kg.get_entity_str(t)) for h, t in [self.kg.decode_pair(p) for p in sample]]}")
+            
+            branch_instances_list.append(branch_instances)
+        
+        # 计算所有branches的交集
+        if not branch_instances_list:
+            return set()
+        
+        result = branch_instances_list[0]
+        for i in range(1, len(branch_instances_list)):
+            result = result.intersection(branch_instances_list[i])
+            debug(f"  [DEBUG] 前{i+1}个branches的交集: {len(result)} instances")
+        
+        debug(f"  [DEBUG] Complex Rule最终body instances: {len(result)}")
+        return result
+    
+    def _get_branch_instances_unary(self, relations: List[str], constant: Optional[str]) -> Set[int]:
+        """
+        计算一元规则的单个branch的instances
+        
+        Args:
+            relations: 关系路径列表
+            constant: 常量（如果有）
+            
+        Returns:
+            实体ID集合
+        """
+        if not relations:
+            return set()
+        
+        # 连接所有关系
+        if len(relations) == 1:
+            connected_relation = relations[0]
+        else:
+            connected_relation = relations[0]
+            for i in range(1, len(relations)):
+                connected_relation = self.join_relations(connected_relation, relations[i])
+        
+        debug(f"    [DEBUG] Branch连接后的关系: {connected_relation}")
+        debug(f"    [DEBUG] Branch常量: {constant}")
+        
+        # 获取实例
+        if constant is not None:
+            constant_id = self.kg.get_entity_id(constant)
+            if constant_id is None:
+                debug(f"    [DEBUG] 常量未找到: {constant}")
+                return set()
+            
+            inverse_connected_relation = self.kg.get_inverse_relation(connected_relation)
+            debug(f"    [DEBUG] 使用逆关系: {inverse_connected_relation}")
+            
+            if inverse_connected_relation in self.kg.r2h2t and constant_id in self.kg.r2h2t[inverse_connected_relation]:
+                result = set(self.kg.r2h2t[inverse_connected_relation][constant_id])
+                return result
+            else:
+                return set()
+        else:
+            # 没有常量：获取整个关系的所有head实体
+            if connected_relation in self.kg.r2h2t:
+                result = set(self.kg.r2h2t[connected_relation].keys())
+                return result
+            else:
+                return set()
+    
+    def _get_branch_instances_binary(self, relations: List[str]) -> Set[int]:
+        """
+        计算二元规则的单个branch的instances
+        
+        Args:
+            relations: 关系路径列表
+            
+        Returns:
+            编码的配对集合
+        """
+        if not relations:
+            return set()
+        
+        return self.get_binary_instances_join(relations)
     
     def _extract_unary_body_info(self, rule_info: Dict) -> Tuple[str, int]:
         """
@@ -1510,19 +1946,40 @@ class RuleSupportCalculator:
     def _calculate_unary_rule_bruteforce(self, rule_info: Dict) -> Dict:
         """计算一元规则支持度 - 暴力算法"""
         head_atom = rule_info['head_atom']
+        body_relations = rule_info.get('body_relations', [])
         
         # 计算head实例集合
         head_instances = self._get_atom_instances_bruteforce(head_atom, rule_info['free_variables'])
         head_size = len(head_instances)
         
-        # 计算body实例集合
-        body_instances = self.get_unary_instances_bruteforce(rule_info)
-        body_size = len(body_instances)
-        
-        # 计算支持度
-        support_instances = head_instances.intersection(body_instances)
-        support = len(support_instances)
-        confidence = support / body_size if body_size > 0 else 0
+        # 检查是否是U0规则（空body）
+        if not body_relations:
+            # U0规则：body为空
+            # support = headSize（所有head实例都被支持）
+            # bodySize = 该关系的所有三元组数量
+            head_relation = head_atom['relation']
+            
+            if head_relation.startswith('INVERSE_'):
+                original_relation = head_relation[8:]
+                # INVERSE关系的总数 = 原关系的总数
+                body_size = self.kg.get_relation_instances_count(original_relation)
+            else:
+                body_size = self.kg.get_relation_instances_count(head_relation)
+            
+            support = head_size  # U0规则：support = headSize
+            confidence = support / body_size if body_size > 0 else 0
+            
+            debug(f"  [DEBUG] U0规则: headSize={head_size}, bodySize={body_size}, support={support}")
+        else:
+            # 普通一元规则：有body
+            # 计算body实例集合
+            body_instances = self.get_unary_instances_bruteforce(rule_info)
+            body_size = len(body_instances)
+            
+            # 计算支持度
+            support_instances = head_instances.intersection(body_instances)
+            support = len(support_instances)
+            confidence = support / body_size if body_size > 0 else 0
         
         return {
             'headSize': head_size,
@@ -1534,19 +1991,39 @@ class RuleSupportCalculator:
     def _calculate_binary_rule_bruteforce(self, rule_info: Dict) -> Dict:
         """计算二元规则支持度 - 暴力算法"""
         head_atom = rule_info['head_atom']
+        body_relations = rule_info.get('body_relations', [])
         
         # 计算head实例集合
         head_instances = self._get_atom_instances_bruteforce(head_atom, rule_info['free_variables'])
         head_size = len(head_instances)
         
-        # 计算body实例集合
-        body_instances = self.get_binary_instances_bruteforce(rule_info)
-        body_size = len(body_instances)
-        
-        # 计算支持度
-        support_instances = head_instances.intersection(body_instances)
-        support = len(support_instances)
-        confidence = support / body_size if body_size > 0 else 0
+        # 检查是否是U0规则（空body）
+        if not body_relations:
+            # U0规则：body为空
+            # support = headSize（所有head实例都被支持）
+            # bodySize = 该关系的所有三元组数量
+            head_relation = head_atom['relation']
+            
+            if head_relation.startswith('INVERSE_'):
+                original_relation = head_relation[8:]
+                body_size = self.kg.get_relation_instances_count(original_relation)
+            else:
+                body_size = self.kg.get_relation_instances_count(head_relation)
+            
+            support = head_size  # U0规则：support = headSize
+            confidence = support / body_size if body_size > 0 else 0
+            
+            debug(f"  [DEBUG] U0规则（二元）: headSize={head_size}, bodySize={body_size}, support={support}")
+        else:
+            # 普通二元规则：有body
+            # 计算body实例集合
+            body_instances = self.get_binary_instances_bruteforce(rule_info)
+            body_size = len(body_instances)
+            
+            # 计算支持度
+            support_instances = head_instances.intersection(body_instances)
+            support = len(support_instances)
+            confidence = support / body_size if body_size > 0 else 0
         
         return {
             'headSize': head_size,
@@ -2100,6 +2577,24 @@ if __name__ == "__main__":
 
         "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(·)",
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency · INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency · /education/university/local_tuition./measurement_unit/dated_money_value/currency"
+    
+        "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_winner/awards_won./award/award_honor/award_winner(B,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)",
+
+        "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)",
+
+        "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(·)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency · INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency · /education/university/local_tuition./measurement_unit/dated_money_value/currency"
+    ]
+    
+    # 用户提供的Complex Rules测试用例
+    test_rules = [
+        # 典型Complex Binary rule（M3 binary rule）：
+        # body有3个branch（由2个分号隔开）
+        "/location/country/form_of_government(X,Y) <= /government/politician/government_positions_held./government/government_position_held/jurisdiction_of_office(A,X), /people/person/nationality(A,B), /location/country/form_of_government(B,Y); /location/country/form_of_government(X,A), /location/country/form_of_government(B,A), /location/country/form_of_government(B,Y); /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/country/form_of_government(B,Y)",
+        
+        # 典型Complex Unary rule（M2 unary rule）：
+        # body有2个branch（由1个分号隔开）
+        "INVERSE_/government/legislative_session/members./government/government_position_held/legislative_sessions(/m/01gsvb) <= /government/legislative_session/members./government/government_position_held/district_represented(/m/05kkh); /government/legislative_session/members./government/government_position_held/district_represented(/m/07_f2)"
     ]
 
     # 下面这些rules理论上supp都应该是0，因为 currency 都是多对一关系，所以后半段 INVERSE_currency·currency 不可能有实例
@@ -2117,6 +2612,9 @@ if __name__ == "__main__":
     # test_rules = ["INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency·/education/university/local_tuition./measurement_unit/dated_money_value/currency·INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency"]
 
     # test_rules = ["/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  /location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency·INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency·/education/university/local_tuition./measurement_unit/dated_money_value/currency"]
+
+    if len(sys.argv) > 1:
+        test_rules = sys.argv[1:]
 
     try:
         # 加载数据集

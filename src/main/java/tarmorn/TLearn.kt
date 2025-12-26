@@ -40,12 +40,12 @@ object TLearn {
         }
     }
 
-    const val MAX_JOIN_INSTANCES_L2 = 6000
-    const val MAX_JOIN_INSTANCES_L3 = 3000
+    const val MAX_JOIN_INSTANCES_L2 = 10000
+    const val MAX_JOIN_INSTANCES_L3 = 10000
     const val MIN_CONF = 0.001
     const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.8
-    const val IMPROVE_RATIO = 1.2
+    const val MIN_LIFT = 1.2
     const val MIN_COMMON_BUCKET = 2
     const val MAX_BUCKET_ATTEMPT = 100
     const val MAX_STACK_SIZE = 3
@@ -359,7 +359,7 @@ object TLearn {
 
     /**
      * 计算长度为2的路径支持度
-     * 使用原有的连接算法，当预估超过阈值时进行全局均匀采样
+     * 使用分层比例随机采样，确保每个CE按比例贡献instances
      */
     private fun isValidRelationPathL2(rp: Long): Boolean {
         // 分解路径: rp = r1 · r2
@@ -397,13 +397,16 @@ object TLearn {
         val loopSet = mutableSetOf<Int>()
         val instanceSet = mutableSetOf<Int>()
         val inverseSet = mutableSetOf<Int>()
-        val random: Random = Random((r1 xor r2).toLong())
+        val random = Random((r1 xor r2).toLong())
         
-        // 辅助函数：添加一对实体（无返回值）
-        fun tryAddPair(r1Head: Int, r2Tail: Int, connectingEntity: Int) {
+        val t2hSet4r1 = R2h2tSet[RelationPath.getInverseRelation(r1)]!!
+        val h2tSet4r2 = R2h2tSet[r2]!!
+        
+        // 辅助函数：添加一对实体
+        fun tryAddPair(r1Head: Int, r2Tail: Int, connectingEntity: Int): Boolean {
             if (r1Head == r2Tail) {
                 loopSet.add(r1Head)
-                return
+                return false  // Object Entity Constraint: X != Y
             }
             
             require(r1Head != connectingEntity && connectingEntity != r2Tail) {
@@ -415,70 +418,94 @@ object TLearn {
                 inverseSet.add(pairHash32(r2Tail, r1Head))
                 h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(r2Tail)
                 t2hSet.getOrPut(r2Tail) { mutableSetOf() }.add(r1Head)
+                return true
+            }
+            return false
+        }
+        
+        // === 分层比例随机采样 ===
+        
+        // 1. 收集每个CE的统计信息
+        data class CEInfo(
+            val ce: Int,
+            val heads: List<Int>,
+            val tails: List<Int>,
+            val pairCount: Int
+        )
+        
+        val ceInfos = connectingEntities.mapNotNull { ce ->
+            val heads = (t2hSet4r1[ce] ?: emptySet()).toList()
+            val tails = (h2tSet4r2[ce] ?: emptySet()).toList()
+            if (heads.isEmpty() || tails.isEmpty()) {
+                null
+            } else {
+                CEInfo(ce, heads, tails, heads.size * tails.size)
             }
         }
         
-        // 采样阶段：估算总的实例数量，并在估算阶段直接采样以保证多样性
-        var estimatedTotal = 0L
-        val t2hSet4r1 = R2h2tSet[RelationPath.getInverseRelation(r1)]!!
-        val h2tSet4r2 = R2h2tSet[r2]!!
-        
-        for (connectingEntity in connectingEntities) {
-            // 在估算阶段直接进行头尾采样，保证多样性
-            val r1HeadEntities = t2hSet4r1.get(connectingEntity) ?: emptySet()
-            val r2TailEntities = h2tSet4r2.get(connectingEntity) ?: emptySet()
-            val estimatedCount = r1HeadEntities.size.toLong() * r2TailEntities.size.toLong()
-            estimatedTotal += estimatedCount
-            
-            if (estimatedCount == 0L) continue
-            // 为每个头实体添加一个随机尾实体样本
-            for (r1Head in r1HeadEntities) 
-                tryAddPair(r1Head, r2TailEntities.random(random), connectingEntity)
-            
-            // 为每个尾实体添加一个随机头实体样本
-            for (r2Tail in r2TailEntities) 
-                tryAddPair(r1HeadEntities.random(random), r2Tail, connectingEntity)
+        if (ceInfos.isEmpty()) {
+            setSupp(0)
+            return false
         }
-        val sampledSize = instanceSet.size
-        val entitySupp = Math.min(connectingEntities.size, Math.min(h2tSet.size, t2hSet.size))
         
+        val totalPairs = ceInfos.sumOf { it.pairCount }
+        val targetTotal = minOf(MAX_JOIN_INSTANCES_L2, totalPairs.toInt())
+        
+        // 2. 为每个CE按比例分配配额并随机采样（打乱顺序避免前面CE占满）
+        for (ceInfo in ceInfos.shuffled(random)) {
+            // 计算该CE的理想配额（按比例）
+            val ceQuota = (targetTotal * ceInfo.pairCount / totalPairs.toDouble()).toInt()
+            var added = 0
+            
+            // 判断是否需要随机采样
+            if (ceInfo.pairCount <= ceQuota * 2) {
+                // 总量不大，全部遍历（随机顺序）
+                val allPairs = ceInfo.heads.flatMap { h ->
+                    ceInfo.tails.map { t -> Pair(h, t) }
+                }.shuffled(random)
+                
+                for ((h, t) in allPairs) {
+                    if (tryAddPair(h, t, ceInfo.ce)) {
+                        added++
+                        if (added >= ceQuota) break  // 达到配额，退出
+                    }
+                }
+            } else {
+                // 总量很大，随机采样
+                var attempts = 0
+                val maxAttempts = ceQuota * 10  // 允许碰撞重试
+                
+                while (added < ceQuota && attempts < maxAttempts) {
+                    val h = ceInfo.heads.random(random)
+                    val t = ceInfo.tails.random(random)
+                    if (tryAddPair(h, t, ceInfo.ce)) {
+                        added++
+                    }
+                    attempts++
+                }
+            }
+        }
+        
+        // 3. 验证最小实体支持度
+        val entitySupp = minOf(connectingEntities.size, minOf(h2tSet.size, t2hSet.size))
         if (entitySupp < Settings.MIN_ENTITY_SUPP) {
             debug1("[isValidRelationPathL2] entitySupp $entitySupp below threshold for rp=${IdManager.getRelationString(rp)}, returning false")
             setSupp(0)
             return false
         }
-
-        // 补充阶段：批量添加实体对，直到达到上限
-        fun fillToLimit() {
-            for (connectingEntity in connectingEntities.shuffled(random)) {
-                val r1HeadEntities = t2hSet4r1.get(connectingEntity) ?: emptySet()
-                val r2TailEntities = h2tSet4r2.get(connectingEntity) ?: emptySet()
-                
-                if (r1HeadEntities.isEmpty() || r2TailEntities.isEmpty()) continue
-                
-                for (r1Head in r1HeadEntities) {
-                    for (r2Tail in r2TailEntities) {
-                        tryAddPair(r1Head, r2Tail, connectingEntity)
-                        if (instanceSet.size >= MAX_JOIN_INSTANCES_L2) return
-                    }
-                }
-            }
-        }
-        fillToLimit()
-        // Calculate support counts for heads and tails
+        
         val supp = instanceSet.size
         setSupp(supp)
         R2h2tSet[rp] = h2tSet
         if (rp != rpInv) R2h2tSet[rpInv] = t2hSet
 
-        // if (size < Settings.MIN_SUPP) return false
         // 即使instance数量不足也有效（更长的连接），但不进行原子化
         if (supp >= Settings.MIN_SUPP) {
             atomizeBinaryRelationPath(rp, supp, instanceSet, inverseSet)
             // atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
         }
 
-        debug1("[isValidRelationPathL2] ${IdManager.getRelationString(rp)} supp: $supp, entitySupp: $entitySupp, self-inverse: ${rp == rpInv}, estimated: $estimatedTotal, sampled: $sampledSize")
+        debug1("[isValidRelationPathL2] ${IdManager.getRelationString(rp)} supp: $supp, entitySupp: $entitySupp, self-inverse: ${rp == rpInv}, estimated: $totalPairs, sampled: $supp")
 
         return true
     }
@@ -619,64 +646,74 @@ object TLearn {
             return false
         }
         
-        // 估算总的实例数量，并在估算阶段直接采样以保证多样性
-        var estimatedTotal = 0L
-        for (connectingEntity in connectingEntities) {
-            // 获取能通过 r3Inv 到达 connectingEntity 的 head 实体（即原路径的 tail）
-            val r3InvHeadEntities = t2hSet4r3Inv.get(connectingEntity) ?: emptySet()
-            
-            // 获取从 connectingEntity 通过 r12Inv 能到达的 tail 实体（即原路径的 head）
-            val r12InvTailEntities = h2tSet4r12Inv.get(connectingEntity) ?: emptySet()
-            estimatedTotal += r12InvTailEntities.size.toLong() * r3InvHeadEntities.size.toLong()
-            
-            // 在估算阶段直接进行头尾采样，保证多样性
-            if (r12InvTailEntities.isNotEmpty() && r3InvHeadEntities.isNotEmpty()) {
-                // 为每个 h 找一个有效的 randomT
-                for (h in r12InvTailEntities) {
-                    val shuffledTails = r3InvHeadEntities.shuffled(random)
-                    for (t in shuffledTails) {
-                        if (tryAddPair(h, t, connectingEntity)) break
-                    }
-                }
-                
-                // 为每个 t 找一个有效的 randomH
-                for (t in r3InvHeadEntities) {
-                    val shuffledHeads = r12InvTailEntities.shuffled(random)
-                    for (h in shuffledHeads) {
-                        if (tryAddPair(h, t, connectingEntity)) break
-                    }
-                }
+        // === 分层比例随机采样 ===
+        
+        // 1. 收集每个CE的统计信息
+        data class CEInfo(
+            val ce: Int,
+            val heads: List<Int>,
+            val tails: List<Int>,
+            val pairCount: Int
+        )
+        
+        val ceInfos = connectingEntities.mapNotNull { ce ->
+            val heads = (h2tSet4r12Inv[ce] ?: emptySet()).toList()
+            val tails = (t2hSet4r3Inv[ce] ?: emptySet()).toList()
+            if (heads.isEmpty() || tails.isEmpty()) {
+                null
+            } else {
+                CEInfo(ce, heads, tails, heads.size * tails.size)
             }
         }
-        if (instanceSet.size == 0) {
-            debug2("[isValidRelationPathL3] No valid instances found for rp=${IdManager.getRelationString(rp)}, returning false")
+        
+        if (ceInfos.isEmpty()) {
             setSupp(0)
             return false
         }
-        val sampledSize = instanceSet.size
-
         
-        // 补充阶段：批量添加实体对，直到达到上限
-        fun fillToLimit() {
-            for (connectingEntity in connectingEntities.shuffled(random)) {
-                val r3InvHeadEntities = t2hSet4r3Inv.get(connectingEntity) ?: emptySet()
-                val r12InvTailEntities = h2tSet4r12Inv.get(connectingEntity) ?: emptySet()
+        val totalPairs = ceInfos.sumOf { it.pairCount }
+        val targetTotal = minOf(MAX_JOIN_INSTANCES_L3, totalPairs.toInt())
+        
+        // 2. 为每个CE按比例分配配额并随机采样（打乱顺序避免前面CE占满）
+        for (ceInfo in ceInfos.shuffled(random)) {
+            // 计算该CE的配额（按比例）
+            val ceQuota = (targetTotal * ceInfo.pairCount / totalPairs.toDouble()).toInt()
+            
+            if (ceQuota == 0) continue
+            
+            var added = 0
+            
+            // 判断是否需要随机采样
+            if (ceInfo.pairCount <= ceQuota * 2) {
+                // 总量不大，全部遍历（随机顺序）
+                val allPairs = ceInfo.heads.flatMap { h ->
+                    ceInfo.tails.map { t -> Pair(h, t) }
+                }.shuffled(random)
                 
-                if (r12InvTailEntities.isEmpty() || r3InvHeadEntities.isEmpty()) continue
-                
-                for (h in r12InvTailEntities) {
-                    for (t in r3InvHeadEntities) {
-                        tryAddPair(h, t, connectingEntity)
-                        if (instanceSet.size >= MAX_JOIN_INSTANCES_L3) return
+                for ((h, t) in allPairs) {
+                    if (tryAddPair(h, t, ceInfo.ce)) {
+                        added++
+                        if (added >= ceQuota) break  // 达到配额，退出
                     }
+                }
+            } else {
+                // 总量很大，随机采样
+                var attempts = 0
+                val maxAttempts = ceQuota * 10  // 允许碰撞重试
+                
+                while (added < ceQuota && attempts < maxAttempts) {
+                    val h = ceInfo.heads.random(random)
+                    val t = ceInfo.tails.random(random)
+                    if (tryAddPair(h, t, ceInfo.ce)) {
+                        added++
+                    }
+                    attempts++
                 }
             }
         }
-        
-        if (instanceSet.size < MAX_JOIN_INSTANCES_L3 / 10) fillToLimit()
         val supp = instanceSet.size
         setSupp(supp)
-        debug2("[isValidRelationPathL3] ${IdManager.getRelationString(rp)} supp: $supp, self-inverse: ${rp == rpInv}, estimated: $estimatedTotal, sampled: $sampledSize")
+        debug2("[isValidRelationPathL3] ${IdManager.getRelationString(rp)} supp: $supp, self-inverse: ${rp == rpInv}, estimated: $totalPairs, sampled: $supp")
         
         // atomize 使用 supp 而不是 entity supp作为阈值
         if (supp >= Settings.MIN_SUPP)
@@ -986,7 +1023,7 @@ object TLearn {
             val newBodyInstances = bodyInstances.intersect(nextAtom.instances)
             val newConf = newIntersectionSize.toDouble() / newBodyInstances.size
             
-            if (newConf > currentConf * IMPROVE_RATIO && newConf > H2B2metric[headAtom]!![nextAtom]!!.confidence * IMPROVE_RATIO) {
+            if (newConf > currentConf * MIN_LIFT && newConf > H2B2metric[headAtom]!![nextAtom]!!.confidence * MIN_LIFT) {
                 // Add nextAtom to stack
                 stack.add(nextAtom)
                 
