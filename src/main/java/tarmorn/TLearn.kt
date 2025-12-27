@@ -434,8 +434,8 @@ object TLearn {
         )
         
         val ceInfos = connectingEntities.mapNotNull { ce ->
-            val heads = (t2hSet4r1[ce] ?: emptySet()).toList()
-            val tails = (h2tSet4r2[ce] ?: emptySet()).toList()
+            val heads = (t2hSet4r1[ce] ?: emptySet()).toList().filter { h -> h != ce }
+            val tails = (h2tSet4r2[ce] ?: emptySet()).toList().filter { t -> t != ce }
             if (heads.isEmpty() || tails.isEmpty()) {
                 null
             } else {
@@ -600,7 +600,7 @@ object TLearn {
             
             // 检查是否有交集（存在共同的中间节点）
             for (tail in r1Tails) {
-                if (tail in r23Heads) return true
+                if (tail in r23Heads && tail != h && tail != t) return true
             }
             return false
         }
@@ -657,8 +657,8 @@ object TLearn {
         )
         
         val ceInfos = connectingEntities.mapNotNull { ce ->
-            val heads = (h2tSet4r12Inv[ce] ?: emptySet()).toList()
-            val tails = (t2hSet4r3Inv[ce] ?: emptySet()).toList()
+            val heads = (h2tSet4r12Inv[ce] ?: emptySet()).toList().filter { h -> h != ce }
+            val tails = (t2hSet4r3Inv[ce] ?: emptySet()).toList().filter { t -> t != ce }
             if (heads.isEmpty() || tails.isEmpty()) {
                 null
             } else {

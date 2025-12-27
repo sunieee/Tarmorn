@@ -128,10 +128,10 @@ class TripleSet(
         val (h, r, t) = triple
 
         if (h==t) {
-            // 注意：我们不把自环事实放入索引中！而是放入r2selfloop中
+            // 注意：我们放入r2selfloop中
             // println("Warning: Triple with head equals tail detected: $triple")
             r2loopSet.getOrPut(r) { mutableSetOf() }.add(h)
-            return
+            // return
         }
         
         // 统一的实体索引：每个实体都索引以它为头的三元组
