@@ -8,15 +8,16 @@ import kotlin.math.abs
 
 /**
  * MyAtom - represents an atom in formulas.
+ * @param T Instance type: Int for UnaryAtom, Long for BinaryAtom
  * relationId: relation or relation-path id
  * entityId: Y for binary, X for loop, 0 for existence, >0 for constant entity id
  * instances: set of entity instances covered by this atom (only for non-L1 atoms)
  * minHashSignature: computed MinHash signature for LSH
  */
-class MyAtom(
+class MyAtom<T>(
     val relationId: Long,
     val entityId: Int,
-    var instances: Set<Int> = emptySet()
+    var instances: Set<T> = emptySet()
 ) {
     init {
         if (instances.isNotEmpty()) {
@@ -24,7 +25,8 @@ class MyAtom(
                 "MyAtom instances size ${instances.size} must be >= MIN_SUPP ${Settings.MIN_SUPP}"
             }
         } else {
-            instances = getInstanceSet()
+            @Suppress("UNCHECKED_CAST")
+            instances = getInstanceSet() as Set<T>
         }
         // 确保 instances 不为空，否则会出现 metric={"support":0.0, "headSize":19, "bodySize":0, "confidence":NaN}, headInstances=[]..., bodyInstances=[]
         require(instances.isNotEmpty()) {
@@ -39,7 +41,7 @@ class MyAtom(
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other !is MyAtom) return false
+        if (other !is MyAtom<*>) return false
         return relationId == other.relationId && entityId == other.entityId
     }
 
@@ -65,7 +67,24 @@ class MyAtom(
 
     fun getRuleString(): String = if (entityId == IdManager.getZId()) "" else IdManager.getAtomString(relationId, entityId)
 
-    fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId)
+    fun inverse(): MyAtom<T> {
+        val inverseRelation = RelationPath.getInverseRelation(relationId)
+        
+        // 对于 BinaryAtom (Long)，需要交换高低32位
+        @Suppress("UNCHECKED_CAST")
+        val inverseInstances = if (isBinary && instances.firstOrNull() is Long) {
+            instances.map { pair ->
+                val longPair = pair as Long
+                val h = (longPair ushr 32).toInt()
+                val t = longPair.toInt()
+                (t.toLong() shl 32) or (h.toLong() and 0xFFFFFFFFL)
+            }.toSet() as Set<T>
+        } else {
+            instances
+        }
+        
+        return MyAtom(inverseRelation, entityId, inverseInstances)
+    }
 
     val isBinary: Boolean
         get() = entityId == IdManager.getYId()
@@ -83,6 +102,66 @@ class MyAtom(
 
     val firstRelation: Long
         get() = if (isL1Atom) relationId else RelationPath.getFirstRelation(relationId)
+
+    /**
+     * Check if this atom contains the given instance
+     * For UnaryAtom: directly check if e is in instances
+     * For BinaryAtom: 
+     *   - If L1: directly check if e is in instances
+     *   - Otherwise: decompose relationId to r1, r2 and check if R2h2t[r1][h] intersects with R2h2t[r2'][t]
+     */
+    fun hasInstance(e: Any): Boolean {
+        return when {
+            // UnaryAtom: instances is Set<Int>
+            !isBinary -> {
+                @Suppress("UNCHECKED_CAST")
+                (instances as Set<Int>).contains(e as Int)
+            }
+            // BinaryAtom: instances is Set<Long>
+            else -> {
+                val longE = e as Long
+                if (isL1Atom) {
+                    @Suppress("UNCHECKED_CAST")
+                    (instances as Set<Long>).contains(longE)
+                } else {
+                    // 分解 Long 为 h, t
+                    val h = (longE ushr 32).toInt()
+                    val t = longE.toInt()
+                    
+                    // 分解 relationId 为 r1, r2（其中 r2 长度为1）
+                    val relations = RelationPath.decode(relationId)
+                    require(relations.size >= 2) { "L2+ atom should have at least 2 relations" }
+                    
+                    // r2 是最后一个关系（长度为1）
+                    val r2 = relations.last()
+                    // r1 是前面所有关系的连接
+                    val r1 = if (relations.size == 2) {
+                        relations[0]
+                    } else {
+                        // 连接前 n-1 个关系
+                        var rp = relations[0]
+                        for (i in 1 until relations.size - 1) {
+                            rp = RelationPath.connectHead(rp, relations[i])
+                        }
+                        rp
+                    }
+                    
+                    val r2Inv = RelationPath.getInverseRelation(r2)
+                    
+                    // 检查 R2h2t[r1][h] 与 R2h2t[r2'][t] 是否有交集
+                    val r1Tails = TLearn.R2h2tSet[r1]?.get(h)
+                    val r2InvTails = TLearn.R2h2tSet[r2Inv]?.get(t)
+                    
+                    if (r1Tails != null && r2InvTails != null) {
+                        // 检查是否有交集
+                        r1Tails.any { it in r2InvTails }
+                    } else {
+                        false
+                    }
+                }
+            }
+        }
+    }
 
     companion object {
         // OPH + DOPH constants
@@ -124,9 +203,18 @@ class MyAtom(
         }
 
         /**
+         * Compute hash for a pair (h, t) - used for Long type
+         */
+        fun pairHash32(h: Int, t: Int): Int {
+            val uH = h * -0x61c88647     // 0x9E3779B9 的补码（黄金比例常数）
+            val uT = t * 0x85ebca6b.toInt()
+            return uH xor Integer.rotateLeft(uT, 16)
+        }
+
+        /**
          * Compute MinHash signature using OPH + DOPH algorithm
          */
-        fun computeMinHashDOPH(instanceSet: Set<Int>, isBinary: Boolean): IntArray {
+        fun <T> computeMinHashDOPH(instanceSet: Set<T>, isBinary: Boolean): IntArray {
             if (instanceSet.isEmpty()) {
                 throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
             }
@@ -138,10 +226,21 @@ class MyAtom(
 
             // One pass: compute two 32-bit hashes for each element
             for (e in instanceSet) {
-                val hBin = computeUnaryHash(e, OPH_SEED_BIN)
+                // 对于 Int 类型，直接使用；对于 Long 类型，分解为 h 和 t 两部分
+                val baseHash = when (e) {
+                    is Int -> e
+                    is Long -> {
+                        val h = (e ushr 32).toInt()  // high 32 bits
+                        val t = e.toInt()             // low 32 bits
+                        pairHash32(h, t)
+                    }
+                    else -> e.hashCode()
+                }
+                
+                val hBin = computeUnaryHash(baseHash, OPH_SEED_BIN)
                 val binId = pos32(hBin) and mask
 
-                val hRank = computeUnaryHash(e, OPH_SEED_RANK) xor (binId * DOPH_SALT)
+                val hRank = computeUnaryHash(baseHash, OPH_SEED_RANK) xor (binId * DOPH_SALT)
                 val rank = pos32(mix32(hRank))
 
                 if (rank < sig[binId]) sig[binId] = rank
@@ -172,7 +271,7 @@ class MyAtom(
     }
 
     // Get instance set for this atom
-    fun getInstanceSet(): Set<Int> {
+    fun getInstanceSet(): Set<*> {
         // if (!isL1Atom) return instances
         require(isL1Atom) { "getInstanceSet() only supports L1 atoms" }
         return when {
@@ -192,3 +291,7 @@ class MyAtom(
         }
     }
 }
+
+// Type aliases for convenience
+typealias UnaryAtom = MyAtom<Int>
+typealias BinaryAtom = MyAtom<Long>

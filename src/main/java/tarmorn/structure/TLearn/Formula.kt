@@ -4,9 +4,9 @@ package tarmorn.structure.TLearn
  * Formula as a set-like container of up to three atoms; order-insensitive equality/hash.
  */
 data class Formula(
-    val atom1: MyAtom? = null,
-    val atom2: MyAtom? = null,
-    val atom3: MyAtom? = null
+    val atom1: MyAtom<*>? = null,
+    val atom2: MyAtom<*>? = null,
+    val atom3: MyAtom<*>? = null
 ) {
     override fun hashCode(): Int {
         val atoms = listOfNotNull(atom1, atom2, atom3).sortedBy { it.hashCode() }

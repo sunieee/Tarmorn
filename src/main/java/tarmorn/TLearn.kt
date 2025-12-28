@@ -14,6 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.collections.iterator
 import kotlin.math.abs
 import tarmorn.structure.TLearn.MyAtom
+import tarmorn.structure.TLearn.UnaryAtom
+import tarmorn.structure.TLearn.BinaryAtom
 import tarmorn.structure.TLearn.Formula
 import tarmorn.structure.TLearn.Metric
 import kotlin.random.Random
@@ -63,7 +65,7 @@ object TLearn {
     lateinit var R2h2tSet: ConcurrentHashMap<Long, MutableMap<Int, MutableSet<Int>>>
 
     // 小写的r标识relationL1，并且在初始化后不再修改
-    lateinit var r2instanceSet: MutableMap<Long, MutableSet<Int>>
+    lateinit var r2instanceSet: MutableMap<Long, MutableSet<Long>>
     lateinit var r2tSet: Map<Long, IntArray>    // 仅保留relationL1到尾实体，使用快照数组以提升遍历性能
     lateinit var r2loopSet: MutableMap<Long, MutableSet<Int>>
 
@@ -81,9 +83,9 @@ object TLearn {
     val addedCount = AtomicInteger(0)
 
     // 流式计算结构 - 使用线程安全的ConcurrentHashMap
-    val H2B2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<MyAtom, Metric>>() // headAtom -> bodyAtom -> metric
-    val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
-    val H2F2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
+    val H2B2metric = ConcurrentHashMap<MyAtom<*>, ConcurrentHashMap<MyAtom<*>, Metric>>() // headAtom -> bodyAtom -> metric
+    val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom<*>>>() // 一级LSH桶：key -> atoms
+    val H2F2metric = ConcurrentHashMap<MyAtom<*>, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
 
     // Statistics variables
     var totalRules = 0
@@ -109,7 +111,7 @@ object TLearn {
         R2supp = ConcurrentHashMap(ts.r2tripleSet.mapValues { it.value.size })
         r2instanceSet = R2h2tSet.mapValues { entry ->
             entry.value.flatMap { (head, tails) ->
-                tails.map { tail -> pairHash32(head, tail) }
+                tails.map { tail -> (head.toLong() shl 32) or (tail.toLong() and 0xFFFFFFFFL) }
             }.toMutableSet()
         }.toMutableMap()
 
@@ -178,8 +180,7 @@ object TLearn {
                     
                     if (h2tSet != null && t2hSet != null) {
                         // 处理Binary原子
-                        atomizeBinaryRelationPath(relation, tripleSet.size,
-                            r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
+                        atomizeBinaryRelationPath(relation, tripleSet.size, r2instanceSet[relation]!!)
                         // 处理Unary原子
                         atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), r2loopSet[relation] ?: mutableSetOf())
                     } else {
@@ -395,8 +396,7 @@ object TLearn {
         val h2supp = mutableMapOf<Int, Int>()
         val t2supp = mutableMapOf<Int, Int>()
         val loopSet = mutableSetOf<Int>()
-        val instanceSet = mutableSetOf<Int>()
-        val inverseSet = mutableSetOf<Int>()
+        val instanceSet = mutableSetOf<Long>()
         val random = Random((r1 xor r2).toLong())
         
         val t2hSet4r1 = R2h2tSet[RelationPath.getInverseRelation(r1)]!!
@@ -413,9 +413,9 @@ object TLearn {
                 "Connection node $connectingEntity should not equal head $r1Head or tail $r2Tail"
             }
             
-            val pairHash32Value = pairHash32(r1Head, r2Tail)
-            if (instanceSet.add(pairHash32Value)) {
-                inverseSet.add(pairHash32(r2Tail, r1Head))
+            // 使用位操作将两个 Int 组合成一个 Long
+            val pairValue = (r1Head.toLong() shl 32) or (r2Tail.toLong() and 0xFFFFFFFFL)
+            if (instanceSet.add(pairValue)) {
                 h2tSet.getOrPut(r1Head) { mutableSetOf() }.add(r2Tail)
                 t2hSet.getOrPut(r2Tail) { mutableSetOf() }.add(r1Head)
                 return true
@@ -501,7 +501,7 @@ object TLearn {
 
         // 即使instance数量不足也有效（更长的连接），但不进行原子化
         if (supp >= Settings.MIN_SUPP) {
-            atomizeBinaryRelationPath(rp, supp, instanceSet, inverseSet)
+            atomizeBinaryRelationPath(rp, supp, instanceSet)
             // atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
         }
 
@@ -606,8 +606,7 @@ object TLearn {
         }
         
         // 使用方式二进行连接：r3Inv · (r2Inv·r1Inv)
-        val instanceSet = mutableSetOf<Int>()
-        val inverseSet = mutableSetOf<Int>()
+        val instanceSet = mutableSetOf<Long>()
         val random = Random((r1 xor r2 xor r3).toLong())
         
         // 辅助函数：添加一对实体（无返回值）
@@ -620,12 +619,12 @@ object TLearn {
             
             // 验证方式一是否也有效
             if (isForwardValid(h, t)) {
-                val instanceHash = pairHash32(h, t)
-                if (instanceSet.add(instanceHash)) {
-                    inverseSet.add(pairHash32(t, h))
-                }
-                // 只要有效就返回true
-                return true
+                // 使用位操作将两个 Int 组合成一个 Long
+                val pairValue = (h.toLong() shl 32) or (t.toLong() and 0xFFFFFFFFL)
+                if (instanceSet.add(pairValue)) return true
+
+                // 注意并非有效就返回true，而是真的添加了才返回true
+                
             }
             return false
         }
@@ -717,7 +716,7 @@ object TLearn {
         
         // atomize 使用 supp 而不是 entity supp作为阈值
         if (supp >= Settings.MIN_SUPP)
-            atomizeBinaryRelationPath(rp, supp, instanceSet, inverseSet)
+            atomizeBinaryRelationPath(rp, supp, instanceSet)
         return true
     }
 
@@ -725,13 +724,21 @@ object TLearn {
      * 处理Binary原子化：r(X,Y) 和 r'(X,Y)
      * 直接使用预计算的MinHash签名
      */
-    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
-        debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}, inverseSet.size=${inverseSet.size}")
+    fun atomizeBinaryRelationPath(rp: Long, supp: Int, instanceSet: MutableSet<Long>) {
+        debug2("atomizeBinaryRelationPath: rp=$rp, supp=$supp, instanceSet.size=${instanceSet.size}")
         val rpInv = RelationPath.getInverseRelation(rp)
+        
+        // 创建反向实例集合：交换每个 Long 的高32位和低32位
+        val inverseSet = instanceSet.map { pair ->
+            val h = (pair ushr 32).toInt()
+            val t = pair.toInt()
+            (t.toLong() shl 32) or (h.toLong() and 0xFFFFFFFFL)
+        }.toMutableSet()
+        
         // 1. r(X,Y): Binary Atom with relation path rp
-        performLSH(MyAtom(rp, IdManager.getYId(), instanceSet))
+        performLSH(BinaryAtom(rp, IdManager.getYId(), instanceSet))
         // 2. r'(X,Y): Binary Atom with inverse relation path
-        performLSH(MyAtom(rpInv, IdManager.getYId(), inverseSet))
+        performLSH(BinaryAtom(rpInv, IdManager.getYId(), inverseSet))
     }
     
     /**
@@ -746,10 +753,10 @@ object TLearn {
         t2hSet.forEach { (constant, unaryInstanceSet) -> 
             val supp = unaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
-                val unaryAtom = MyAtom(rp, constant, unaryInstanceSet)
+                val unaryAtom = UnaryAtom(rp, constant, unaryInstanceSet)
                 performLSH(unaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    // setH2B2metric(unaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rp]!!))
+                    // setH2B2metric(unaryAtom, UnaryAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rp]!!))
                     setH2F2metric(unaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rp]!!))
                 }
             }
@@ -757,16 +764,16 @@ object TLearn {
         
         // 4. r(X,·): Unary Atom for existence - relation rp has head entities
         if (h2tSet.size >= Settings.MIN_SUPP)
-            performLSH(MyAtom(rp, 0, h2tSet.keys))
+            performLSH(UnaryAtom(rp, 0, h2tSet.keys))
         
         // 5. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
         h2tSet.forEach { (constant, inverseUnaryInstanceSet) -> 
             val supp = inverseUnaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
-                val inverseUnaryAtom = MyAtom(rpInv, constant, inverseUnaryInstanceSet)
+                val inverseUnaryAtom = UnaryAtom(rpInv, constant, inverseUnaryInstanceSet)
                 performLSH(inverseUnaryAtom)
                 if (RelationPath.isL1Relation(rp)) {
-                    // setH2B2metric(inverseUnaryAtom, MyAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
+                    // setH2B2metric(inverseUnaryAtom, UnaryAtom(0, IdManager.getZId()), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
                     setH2F2metric(inverseUnaryAtom, Formula(), Metric(supp.toDouble(), supp, R2supp[rpInv]!!))
                 }
             }
@@ -774,11 +781,11 @@ object TLearn {
         
         // 6. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
         if (t2hSet.size >= Settings.MIN_SUPP)
-            performLSH(MyAtom(rpInv, 0, t2hSet.keys))
+            performLSH(UnaryAtom(rpInv, 0, t2hSet.keys))
 
         // 7. r(X,X): Unary Atom for loops - r(X,X) exists
         if (loopSet.size >= Settings.MIN_SUPP)
-            performLSH(MyAtom(rp, IdManager.getXId(), loopSet))
+            performLSH(UnaryAtom(rp, IdManager.getXId(), loopSet))
     }
 
     fun pairHash32(h: Int, t: Int): Int {
@@ -790,12 +797,12 @@ object TLearn {
     /**
      * Helper function to set formula metric for an atom
      */
-    fun setH2F2metric(atom: MyAtom, formula: Formula, metric: Metric) {
+    fun setH2F2metric(atom: MyAtom<*>, formula: Formula, metric: Metric) {
         val F2metric = H2F2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
         F2metric[formula] = metric
     }
 
-    fun setH2B2metric(headAtom: MyAtom, bodyAtom: MyAtom, metric: Metric) {
+    fun setH2B2metric(headAtom: MyAtom<*>, bodyAtom: MyAtom<*>, metric: Metric) {
         val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
         B2metric[bodyAtom] = metric
     }
@@ -803,13 +810,13 @@ object TLearn {
     /**
      * LSH bucketing - add atom to key2atoms buckets and update H2B2metric
      */
-    fun performLSH(currentAtom: MyAtom) {
+    fun performLSH(currentAtom: MyAtom<*>) {
         debug2("performLSH: Atom=$currentAtom, support=${currentAtom.support}")
         require(!currentAtom.minHashSignature.isEmpty()) {
             "performLSH: Empty MinHash signature for atom $currentAtom"
         }
         
-        val relevantAtom2BucketCount = mutableMapOf<MyAtom, Int>()
+        val relevantAtom2BucketCount = mutableMapOf<MyAtom<*>, Int>()
         
         // Step 1: Update relevantAtom2BucketCount by scanning existing buckets
         for (bandIndex in 0 until BANDS) {
@@ -873,7 +880,7 @@ object TLearn {
         return ret
     }
 
-    private fun validateH2B(headAtom: MyAtom, bodyAtom: MyAtom): Boolean {
+    private fun validateH2B(headAtom: MyAtom<*>, bodyAtom: MyAtom<*>): Boolean {
         // debug2("validateH2B: headAtom=$headAtom, bodyAtom=$bodyAtom")
         
         // 自证式一元规则（entity-anchored unary rules）问题
@@ -916,21 +923,61 @@ object TLearn {
         val processedHeads = AtomicInteger(0)
         val totalHeads = H2B2metric.size
         val threadPool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
+        val compositionActiveThreadCount = AtomicInteger(0)
+        val compositionThreadMonitorLock = Object()
         
         try {
             val futures = H2B2metric.entries.map { (headAtom, bodyMap) ->
                 threadPool.submit {
-                    processHeadAtom(headAtom, bodyMap)
-                    val cnt = processedHeads.incrementAndGet()
-                    if (cnt % 100 == 0) {
-                        println("Processed $cnt/$totalHeads head atoms...")
+                    compositionActiveThreadCount.incrementAndGet()
+                    try {
+                        processHeadAtom(headAtom, bodyMap)
+                        val cnt = processedHeads.incrementAndGet()
+                        if (cnt % 100 == 0) {
+                            println("Processed $cnt/$totalHeads head atoms...")
+                        }
+                    } finally {
+                        val activeCount = compositionActiveThreadCount.decrementAndGet()
+                        synchronized(compositionThreadMonitorLock) {
+                            compositionThreadMonitorLock.notifyAll()
+                        }
                     }
                 }
             }
             
-            // Wait for all tasks to complete
-            futures.forEach { it.get() }
+            // Monitor thread activity
+            var lastActiveCount = 0
+            while (true) {
+                val activeCount: Int
+                synchronized(compositionThreadMonitorLock) {
+                    // Wait for thread count changes
+                    while (compositionActiveThreadCount.get() == lastActiveCount && !futures.all { it.isDone }) {
+                        compositionThreadMonitorLock.wait(1000)
+                    }
+                    activeCount = compositionActiveThreadCount.get()
+                    lastActiveCount = activeCount
+                }
+                
+                if (futures.all { it.isDone }) {
+                    println("All composition tasks completed")
+                    break
+                }
+                
+                if (activeCount > 0) {
+                    println("Composition thread count: $activeCount/${Settings.WORKER_THREADS} active")
+                }
+                
+                if (activeCount < Settings.WORKER_THREADS / 4 && activeCount > 0) {
+                    println("FORCING SHUTDOWN: Less than 1/4 threads remaining in composition phase")
+                    futures.forEach { it.cancel(true) }
+                    threadPool.shutdownNow()
+                    break
+                }
+            }
             
+        } catch (e: Exception) {
+            println("Error in composition phase monitoring: ${e.message}")
+            threadPool.shutdownNow()
         } finally {
             threadPool.shutdown()
             threadPool.awaitTermination(1, TimeUnit.HOURS)
@@ -942,7 +989,7 @@ object TLearn {
     /**
      * Process single headAtom, build BQueue and perform Eclat depth-first search
      */
-    private fun processHeadAtom(headAtom: MyAtom, bodyMap: ConcurrentHashMap<MyAtom, Metric>) {
+    private fun processHeadAtom(headAtom: MyAtom<*>, bodyMap: ConcurrentHashMap<MyAtom<*>, Metric>) {
         // Sort by confidence in descending order (Metric implements Comparable)
         val sortedBodies = bodyMap.entries
             .sortedBy { it.value }  // Metric.compareTo sorts by confidence descending
@@ -1000,11 +1047,11 @@ object TLearn {
      * Eclat depth-first search - recursively try combining more bodyAtoms
      */
     private fun tryBodyAtoms(
-        headAtom: MyAtom,
-        stack: MutableList<MyAtom>,
-        candidateAtoms: List<MyAtom>,
-        intersectInstances: Set<Int>,
-        bodyInstances: Set<Int>,
+        headAtom: MyAtom<*>,
+        stack: MutableList<MyAtom<*>>,
+        candidateAtoms: List<MyAtom<*>>,
+        intersectInstances: Set<*>,
+        bodyInstances: Set<*>,
         currentConf: Double
     ) {
         if (stack.size >= MAX_STACK_SIZE) return
@@ -1013,14 +1060,27 @@ object TLearn {
         for (i in candidateAtoms.indices) {
             val nextAtom = candidateAtoms[i]
             
-            val newIntersectInstances = intersectInstances.intersect(nextAtom.instances)
+            // 动态扩容功能：仅对 binary atom 生效，避免 sampling confidence 导致的置信度偏差
+            val newIntersectInstances = if (headAtom.isBinary) {
+                // 对于 binary atom，使用 hasInstance 动态检查每个实例
+                intersectInstances.filter { e -> nextAtom.hasInstance(e!!) }.toSet()
+            } else {
+                // 对于 unary atom，使用原来的 intersect 方法
+                intersectInstances.intersect(nextAtom.instances)
+            }
             val newIntersectionSize = newIntersectInstances.size
             
             if (newIntersectionSize < Settings.MIN_SUPP) {
                 continue // Does not meet minimum support, prune
             }
             
-            val newBodyInstances = bodyInstances.intersect(nextAtom.instances)
+            val newBodyInstances = if (headAtom.isBinary) {
+                // 对于 binary atom，使用 hasInstance 动态检查每个实例
+                bodyInstances.filter { e -> nextAtom.hasInstance(e!!) }.toSet()
+            } else {
+                // 对于 unary atom，使用原来的 intersect 方法
+                bodyInstances.intersect(nextAtom.instances)
+            }
             val newConf = newIntersectionSize.toDouble() / newBodyInstances.size
             
             if (newConf > currentConf * MIN_LIFT && newConf > H2B2metric[headAtom]!![nextAtom]!!.confidence * MIN_LIFT) {
@@ -1068,9 +1128,9 @@ object TLearn {
      * Data class: frequent atom set
      */
     private data class FrequentAtomSet(
-        val atoms: List<MyAtom>,
-        val intersectInstances: Set<Int>,
-        val bodyInstances: Set<Int>,
+        val atoms: List<MyAtom<*>>,
+        val intersectInstances: Set<*>,
+        val bodyInstances: Set<*>,
         val confidence: Double
     )
 
@@ -1105,7 +1165,7 @@ object TLearn {
         }
         
         // Define filter function to avoid code duplication
-        fun isBinaryBucket(atoms: List<MyAtom>) = atoms.first().entityId == IdManager.getYId()
+        fun isBinaryBucket(atoms: List<MyAtom<*>>) = atoms.first().entityId == IdManager.getYId()
         
         // Separate Binary and Unary buckets and display uniformly
         val bucketTypes = listOf("Binary", "Unary")
