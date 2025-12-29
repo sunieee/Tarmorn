@@ -27,6 +27,9 @@ argparser.add_argument("--disable_zero", action="store_true", help="whether to d
 argparser.add_argument("--disable_u_xxc", action="store_true", help="whether to disable u_xxc rules")
 argparser.add_argument("--disable_u_xxd", action="store_true", help="whether to disable u_xxd rules")
 argparser.add_argument("--combo_debug", action="store_true", help="whether to disable u_xxd rules")
+argparser.add_argument("--combo_max_depth", type=int, default=-1, help="whether to disable u_xxd rules")
+argparser.add_argument("--combo_max_branch", type=int, default=-1, help="whether to disable u_xxd rules")
+argparser.add_argument("--b_max_length", type=int, default=-1, help="whether to disable u_xxd rules")
 
 
 args = argparser.parse_args()
@@ -50,6 +53,9 @@ options.set("loader.load_u_c_rules", not args.disable_u_c)
 options.set("loader.load_u_xxc_rules", not args.disable_u_xxc)
 options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
 options.set("loader.combo_debug", args.combo_debug)
+options.set("loader.combo_max_depth", args.combo_max_depth)
+options.set("loader.combo_max_branch", args.combo_max_branch)
+options.set("loader.b_max_length", args.b_max_length)
 
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", -1)  

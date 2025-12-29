@@ -40,11 +40,8 @@ object TLearn {
         }
     }
 
-    const val MAX_JOIN_INSTANCES_L2 = 10000
-    const val MAX_JOIN_INSTANCES_L3 = 10000
-    const val MIN_CONF = 0.001
-    const val MAX_PATH_LENGTH = 3
-    const val ESTIMATE_RATIO = 0.8
+    const val MAX_PATH_LENGTH = 2
+    const val ESTIMATE_RATIO = 0.6
     const val MIN_LIFT = 1.2
     const val MIN_COMMON_BUCKET = 2
     const val MAX_BUCKET_ATTEMPT = 100
@@ -87,8 +84,8 @@ object TLearn {
 
     // Statistics variables
     var totalRules = 0
-    val unaryStats = IntArray(MAX_PATH_LENGTH + 1) // M0, M1, M2, M3
-    val binaryStats = IntArray(MAX_PATH_LENGTH + 1) // M0, M1, M2, M3
+    val unaryStats = IntArray(4) // M0, M1, M2, M3
+    val binaryStats = IntArray(4) // M0, M1, M2, M3
 
     /**
      * Main entry point - can be run directly
@@ -138,7 +135,7 @@ object TLearn {
         println("\n=== Phase 2: Composition ===")
         // Step 3: Composition phase - combine atoms into formulas using Eclat
         try {
-            compositionPhase()
+            // compositionPhase()
         } catch (e: Exception) {
             println("Error during composition phase: ${e.message}")
             e.printStackTrace()
@@ -449,7 +446,7 @@ object TLearn {
         }
         
         val totalPairs = ceInfos.sumOf { it.pairCount }
-        val targetTotal = minOf(MAX_JOIN_INSTANCES_L2, totalPairs.toInt())
+        val targetTotal = minOf(Settings.MAX_JOIN_INSTANCES_L2, totalPairs.toInt())
         
         // 2. 为每个CE按比例分配配额并随机采样（打乱顺序避免前面CE占满）
         for (ceInfo in ceInfos.shuffled(random)) {
@@ -672,7 +669,7 @@ object TLearn {
         }
         
         val totalPairs = ceInfos.sumOf { it.pairCount }
-        val targetTotal = minOf(MAX_JOIN_INSTANCES_L3, totalPairs.toInt())
+        val targetTotal = minOf(Settings.MAX_JOIN_INSTANCES_L3, totalPairs.toInt())
         
         // 2. 为每个CE按比例分配配额并随机采样（打乱顺序避免前面CE占满）
         for (ceInfo in ceInfos.shuffled(random)) {
@@ -813,12 +810,15 @@ object TLearn {
         
         // Step 1: Update relevantAtom2BucketCount by scanning existing buckets
         for (bandIndex in 0 until BANDS) {
-            val key = currentAtom.minHashSignature[bandIndex]
+            // 将 bandIndex 编码到 key 中，避免不同 band 的相同 signature 值冲突
+            val key = (bandIndex shl 24) or (currentAtom.minHashSignature[bandIndex] and 0xFFFFFF)
             val bucket = key2atoms[key]
             if (bucket != null) {
                 synchronized(bucket) {
                     bucket.forEach { existingAtom ->
-                        if (existingAtom.isHeadAtom)
+                        // 避免同实体碰撞
+                        if (existingAtom.entityId == currentAtom.entityId && !existingAtom.isBinary) return@forEach 
+                        if (existingAtom.isHeadAtom) 
                         relevantAtom2BucketCount[existingAtom] = relevantAtom2BucketCount.getOrDefault(existingAtom, 0) + 1
                     }
                 }
@@ -834,11 +834,7 @@ object TLearn {
                 "performLSH: Self-collision detected for atom $currentAtom in bucket"
             }
 
-            // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
-            val jaccard = bucketCount.toDouble() / BANDS
-            // 估计交集大小 (head=currentAtom, body=bucketAtom)
-            var intersectionSize = estimateIntersectionSize(jaccard, currentAtom.support, bucketAtom.support)
-            if (intersectionSize >= Settings.MIN_SUPP * ESTIMATE_RATIO) {
+            fun tryValidate() {
                 if (validateH2B(bucketAtom, currentAtom)) cnt++
                 
                 if (currentAtom.isHeadAtom) {
@@ -847,6 +843,16 @@ object TLearn {
                     // 注意这里不能只验证 headAtom，因为 currentAtom 可能是 Binary & L1Atom: current'(X,Y) <= bucket(X,Y)
                     if (validateH2B(currentAtom.inverse(), bucketAtom.inverse())) cnt++
                 }
+            }
+            
+            // 如果body比较简单直接验证
+            if (currentAtom.isL1Atom) tryValidate()
+            else {
+                // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
+                val jaccard = bucketCount.toDouble() / BANDS
+                // 估计交集大小 (head=currentAtom, body=bucketAtom)
+                var intersectionSize = estimateIntersectionSize(jaccard, currentAtom.support, bucketAtom.support)
+                if (intersectionSize >= Settings.MIN_SUPP * ESTIMATE_RATIO) tryValidate()
             }
         }
 
@@ -858,7 +864,8 @@ object TLearn {
         
         // Add currentAtom to key2atoms buckets only if there are valid relevant atoms
         for (bandIndex in 0 until BANDS) {
-            val key = currentAtom.minHashSignature[bandIndex]
+            // 将 bandIndex 编码到 key 中，避免不同 band 的相同 signature 值冲突
+            val key = (bandIndex shl 24) or (currentAtom.minHashSignature[bandIndex] and 0xFFFFFF)
             val atomBucket = key2atoms.computeIfAbsent(key) { java.util.Collections.synchronizedList(mutableListOf()) }
             synchronized(atomBucket) { atomBucket.add(currentAtom) }
         }
@@ -916,21 +923,61 @@ object TLearn {
         val processedHeads = AtomicInteger(0)
         val totalHeads = H2B2metric.size
         val threadPool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
+        val compositionActiveThreadCount = AtomicInteger(0)
+        val compositionThreadMonitorLock = Object()
         
         try {
             val futures = H2B2metric.entries.map { (headAtom, bodyMap) ->
                 threadPool.submit {
-                    processHeadAtom(headAtom, bodyMap)
-                    val cnt = processedHeads.incrementAndGet()
-                    if (cnt % 100 == 0) {
-                        println("Processed $cnt/$totalHeads head atoms...")
+                    compositionActiveThreadCount.incrementAndGet()
+                    try {
+                        processHeadAtom(headAtom, bodyMap)
+                        val cnt = processedHeads.incrementAndGet()
+                        if (cnt % 100 == 0) {
+                            println("Processed $cnt/$totalHeads head atoms...")
+                        }
+                    } finally {
+                        val activeCount = compositionActiveThreadCount.decrementAndGet()
+                        synchronized(compositionThreadMonitorLock) {
+                            compositionThreadMonitorLock.notifyAll()
+                        }
                     }
                 }
             }
             
-            // Wait for all tasks to complete
-            futures.forEach { it.get() }
+            // Monitor thread activity
+            var lastActiveCount = 0
+            while (true) {
+                val activeCount: Int
+                synchronized(compositionThreadMonitorLock) {
+                    // Wait for thread count changes
+                    while (compositionActiveThreadCount.get() == lastActiveCount && !futures.all { it.isDone }) {
+                        compositionThreadMonitorLock.wait(1000)
+                    }
+                    activeCount = compositionActiveThreadCount.get()
+                    lastActiveCount = activeCount
+                }
+                
+                if (futures.all { it.isDone }) {
+                    println("All composition tasks completed")
+                    break
+                }
+                
+                if (activeCount > 0) {
+                    println("Composition thread count: $activeCount/${Settings.WORKER_THREADS} active")
+                }
+                
+                if (activeCount < Settings.WORKER_THREADS / 4 && activeCount > 0) {
+                    println("FORCING SHUTDOWN: Less than 1/4 threads remaining in composition phase")
+                    futures.forEach { it.cancel(true) }
+                    threadPool.shutdownNow()
+                    break
+                }
+            }
             
+        } catch (e: Exception) {
+            println("Error in composition phase monitoring: ${e.message}")
+            threadPool.shutdownNow()
         } finally {
             threadPool.shutdown()
             threadPool.awaitTermination(1, TimeUnit.HOURS)

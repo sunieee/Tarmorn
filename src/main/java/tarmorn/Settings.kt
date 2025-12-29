@@ -10,6 +10,12 @@ object Settings {
     @JvmField
     var MIN_SUPP: Int = 10
     @JvmField
+    var MAX_JOIN_INSTANCES_L2: Int = 20000
+    @JvmField
+    var MAX_JOIN_INSTANCES_L3: Int = 10000
+    @JvmField
+    var MIN_CONF: Double = 0.001
+    @JvmField
     var MIN_ENTITY_SUPP: Int = 1
     @JvmField
     var DATASET: String = "FB15k-237"

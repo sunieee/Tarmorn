@@ -480,27 +480,52 @@ class RuleParser:
                         constants.add(arg)
         
         # 确定规则类型
-        # 自由变量就是头部参数中的单字母变量
-        free_vars_count = sum(1 for arg in head_args if len(arg) == 1)
+        # 检查是否是自环规则（head的两个参数是同一个变量）
+        is_self_loop = (len(head_args) == 2 and 
+                       len(head_args[0]) == 1 and 
+                       head_args[0] == head_args[1])
         
-        if free_vars_count == 1:
-            # 一元规则：头部有一个变量和一个常量
-            return RuleParser._convert_unary_to_simplified(head_relation, head_args, body_atoms)
+        # 自由变量就是头部参数中的不同单字母变量
+        free_vars_count = len(set(arg for arg in head_args if len(arg) == 1))
+        
+        if free_vars_count == 1 or is_self_loop:
+            # 一元规则：头部有一个变量和一个常量，或者是自环规则
+            return RuleParser._convert_unary_to_simplified(head_relation, head_args, body_atoms, is_self_loop)
         else:
-            # 二元规则：头部有两个变量
+            # 二元规则：头部有两个不同变量
             return RuleParser._convert_binary_to_simplified(head_relation, head_args, body_atoms)
     
     @staticmethod
     def _convert_unary_to_simplified(head_relation: str, head_args: List[str], 
-                                   body_atoms: List[str]) -> str:
+                                   body_atoms: List[str], is_self_loop: bool = False) -> str:
         """
         将一元规则转换为简写格式
         
         例如：rel(X,/m/const) <= body1(X,A), body2(A,/m/const2)
         转换为：rel(/m/const) <= body_path(/m/const2) 或 INVERSE_rel(/m/const) <= body_path(/m/const2)
         
+        自环规则：rel(X,X) <= body1(/m/const,X)
+        转换为：rel(X) <= INVERSE_body1(/m/const)
+        
         一元规则的自由变量固定是X（头部中唯一的单字母变量）
         """
+        # 处理自环规则
+        if is_self_loop:
+            debug(f"[DEBUG] Self-loop unary conversion: {head_relation}({head_args[0]},{head_args[1]})")
+            free_var = head_args[0]  # X
+            # 构建body路径
+            body_path, body_constant = RuleParser._build_unary_body_path(body_atoms, free_var)
+            # 自环规则的简写形式：/rel(X) <= body_path(constant)
+            # 注意：自环规则头部写成 /rel(X) 表示计算 X -rel-> X
+            simplified_head = f"{head_relation}({free_var})"
+            if body_constant:
+                simplified_body = f"{body_path}({body_constant})"
+            else:
+                simplified_body = body_path
+            result = f"{simplified_head} <= {simplified_body}"
+            debug(f"[DEBUG] Self-loop simplified result: {result}")
+            return result
+        
         # 找到自由变量和常量
         free_var = None
         head_constant = None
@@ -508,8 +533,9 @@ class RuleParser:
         
         for i, arg in enumerate(head_args):
             if len(arg) == 1:  # 变量
-                free_var = arg
-                free_var_pos_in_head = i
+                if free_var is None:  # 只取第一个变量
+                    free_var = arg
+                    free_var_pos_in_head = i
             else:  # 常量
                 head_constant = arg
         
@@ -930,12 +956,37 @@ class RuleParser:
         # 解析身体关系，可能包含实体约束
         body_relations, body_constant = RuleParser._parse_simplified_body(body_part)
         
+        # 检查是否是自环规则
+        is_self_loop = (var_pos == 'self_loop')
+        
         # 确定规则类型
-        if fixed_entity or body_constant:
+        if is_self_loop:
+            # 自环规则：/rel(X) 表示 X -rel-> X
+            variable_count = 1
+            rule_info.update({
+                'is_unary': True,
+                'is_self_loop': True,
+                'variable_count': 1,
+                'head_relation': head_relation,
+                'head_constant': None,  # 自环规则没有固定实体
+                'body_relations': body_relations,
+                'body_constant': body_constant,
+                'free_variable': fixed_entity  # 这里fixed_entity实际是变量名（如X）
+            })
+            
+            # 构建标准的head_atom结构 - 自环规则表示为(X, X)
+            rule_info['head_atom'] = {
+                'relation': head_relation,
+                'args': [fixed_entity, fixed_entity]  # (X, X)
+            }
+            rule_info['head_variables'] = [fixed_entity, fixed_entity]
+            rule_info['free_variables'] = [fixed_entity]
+        elif fixed_entity or body_constant:
             # 一元规则：有固定实体
             variable_count = 1
             rule_info.update({
                 'is_unary': True,
+                'is_self_loop': False,
                 'variable_count': 1,
                 'head_relation': head_relation,
                 'head_constant': fixed_entity,
@@ -956,6 +1007,7 @@ class RuleParser:
             variable_count = 2
             rule_info.update({
                 'is_unary': False,
+                'is_self_loop': False,
                 'variable_count': 2,
                 'head_relation': head_relation,
                 'head_constant': None,
@@ -1164,16 +1216,21 @@ class RuleParser:
         
         对于INVERSE_/rel(/m/entity)，等价于/rel(/m/entity, X)，实体在head位置
         对于/rel(/m/entity)，等价于/rel(X, /m/entity)，实体在tail位置
+        对于/rel(X)，是自环规则，等价于/rel(X, X)
         
         Returns:
             (relation, fixed_entity, variable_position)
         """
         if '(' in head_part and ')' in head_part:
-            # 有括号，可能是一元规则：/rel(/m/123) 或 INVERSE_/rel(/m/123)
+            # 有括号，可能是一元规则：/rel(/m/123) 或 INVERSE_/rel(/m/123) 或自环规则 /rel(X)
             relation = head_part.split('(')[0].strip()
             entity_part = head_part.split('(')[1].split(')')[0].strip()
             
-            if entity_part.startswith('/m/'):
+            if len(entity_part) == 1:
+                # 自环规则：/rel(X) 表示 /rel(X, X)
+                # 对于自环规则，没有固定实体，返回变量名作为特殊标记
+                return relation, entity_part, 'self_loop'
+            elif entity_part.startswith('/m/'):
                 if relation.startswith('INVERSE_'):
                     # INVERSE_/rel(/m/entity) 等价于 /rel(/m/entity, X)
                     # 实体在head位置，变量在tail位置
@@ -1658,6 +1715,20 @@ class RuleSupportCalculator:
         """获取头部实例集合 - 使用统一的简写格式处理"""
         head_relation = rule_info.get('head_relation')
         variable_count = rule_info.get('variable_count', 0)
+        is_self_loop = rule_info.get('is_self_loop', False)
+        
+        if is_self_loop:
+            # 自环规则：rel(X) 表示 rel(X, X)
+            # 找到所有满足 X -rel-> X 的实体X
+            debug(f"  [DEBUG] Self-loop rule: {head_relation}(X)")
+            result = set()
+            if head_relation in self.kg.r2h2t:
+                for head_id, tail_ids in self.kg.r2h2t[head_relation].items():
+                    # 检查head_id是否在它自己的tail_ids中
+                    if head_id in tail_ids:
+                        result.add(head_id)
+            debug(f"  [DEBUG] Found {len(result)} self-loop instances")
+            return result
         
         if variable_count == 1:
             # 一元规则：返回变量的所有可能值（实体ID集合）

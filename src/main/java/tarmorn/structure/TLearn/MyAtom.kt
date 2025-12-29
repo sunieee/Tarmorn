@@ -44,9 +44,8 @@ class MyAtom(
     }
 
     override fun hashCode(): Int {
-        var result = relationId.hashCode()
-        result = 31 * result + entityId
-        return result
+        // IMPORTANT: 注意不能使用简单的31 * relationId.hashCode() + entityId，很容易冲突
+        return pairHash32(relationId.hashCode(), entityId)
     }
 
     override fun toString(): String {
@@ -65,7 +64,10 @@ class MyAtom(
 
     fun getRuleString(): String = if (entityId == IdManager.getZId()) "" else IdManager.getAtomString(relationId, entityId)
 
-    fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId)
+    // 注意：inverse仅仅在validateH2B时调用，head和body同时取反，所以instances不用变
+    fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId, instances)
+
+    // fun getBinaryAtom(): MyAtom = MyAtom(relationId, IdManager.getYId())
 
     val isBinary: Boolean
         get() = entityId == IdManager.getYId()
@@ -110,6 +112,12 @@ class MyAtom(
         fun computeUnaryHash(entity: Int, seed: Int): Int {
             val hash = mix32(entity xor seed)
             return abs(hash)
+        }
+
+        fun pairHash32(h: Int, t: Int): Int {
+            val uH = h * -0x61c88647     // 0x9E3779B9 的补码（黄金比例常数）
+            val uT = t * 0x85ebca6b.toInt()
+            return uH xor Integer.rotateLeft(uT, 16)
         }
 
         /**

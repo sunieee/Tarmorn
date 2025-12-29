@@ -15,10 +15,10 @@ data class Metric(
     val confidence: Double = if (bodySize > 0) support / bodySize else 0.0
 
     val valid: Boolean
-        get() = support >= Settings.MIN_SUPP && confidence > tarmorn.TLearn.MIN_CONF // && coverage > 0.1
+        get() = support >= Settings.MIN_SUPP && confidence > Settings.MIN_CONF // && coverage > 0.1
 
     val estimateValid: Boolean
-        get() = support >= Settings.MIN_SUPP * tarmorn.TLearn.ESTIMATE_RATIO // && confidence > tarmorn.TLearn.MIN_CONF * tarmorn.TLearn.ESTIMATE_RATIO // && coverage > 0.1 * tarmorn.TLearn.ESTIMATE_RATIO
+        get() = support >= Settings.MIN_SUPP * tarmorn.TLearn.ESTIMATE_RATIO // && confidence > Settings.MIN_CONF * tarmorn.TLearn.ESTIMATE_RATIO // && coverage > 0.1 * tarmorn.TLearn.ESTIMATE_RATIO
 
     val needValidation: Boolean
         get() = support < Settings.MIN_SUPP * 2 || support > min(headSize, bodySize).toDouble()
