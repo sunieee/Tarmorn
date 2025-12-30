@@ -98,13 +98,17 @@ def normalize_rule(rule: str) -> str:
     """
     标准化规则，移除变量绑定的差异，便于比较
     保留规则的结构和关系，但忽略具体的实体ID和变量名差异
+    
+    重要：先转换为简写格式，确保不同表示形式的相同规则能够被识别为相同
     """
-    # 简单的标准化：移除置信度相关的差异
-    # 这里可以根据需要进一步完善标准化逻辑
-    if '<=' in rule:
-        head, body = rule.split('<=', 1)
+    # 先转换为简写格式（统一表示形式）
+    simplified = convert_to_simplified_format(rule)
+    
+    # 然后进行标准化：移除空格差异
+    if '<=' in simplified:
+        head, body = simplified.split('<=', 1)
         return f"{head.strip()} <= {body.strip()}"
-    return rule
+    return simplified
 
 def filter_rules_by_length(rules_dict: Dict[str, List[Tuple[str, Dict, str]]], 
                            max_length: int) -> Dict[str, List[Tuple[str, Dict, str]]]:

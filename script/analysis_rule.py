@@ -576,16 +576,28 @@ class RuleParser:
         # 处理自环规则
         if is_self_loop:
             debug(f"[DEBUG] Self-loop unary conversion: {head_relation}({head_args[0]},{head_args[1]})")
-            free_var = head_args[0]  # X
+            free_var = head_args[0]  # 原始变量名
             # 构建body路径
             body_path, body_constant = RuleParser._build_unary_body_path(body_atoms, free_var)
             # 自环规则的简写形式：/rel(X) <= body_path(constant)
             # 注意：自环规则头部写成 /rel(X) 表示计算 X -rel-> X
-            simplified_head = f"{head_relation}({free_var})"
+            # 统一使用X作为变量名，而不是保留原始变量名（如Y）
+            simplified_head = f"{head_relation}(X)"
             if body_constant:
                 simplified_body = f"{body_path}({body_constant})"
             else:
-                simplified_body = body_path
+                # 检查是否有中间变量
+                has_intermediate_var = len(body_atoms) > 1
+                if not has_intermediate_var and len(body_atoms) == 1:
+                    atom = body_atoms[0]
+                    args = RuleParser._extract_variables(atom)
+                    args = RuleParser._normalize_me_myself_i(args, 'body')
+                    has_intermediate_var = len(args) == 2 and all(RuleParser._is_variable(arg) for arg in args)
+                
+                if has_intermediate_var:
+                    simplified_body = f"{body_path}(·)"
+                else:
+                    simplified_body = body_path
             result = f"{simplified_head} <= {simplified_body}"
             debug(f"[DEBUG] Self-loop simplified result: {result}")
             return result
@@ -609,12 +621,20 @@ class RuleParser:
         body_path, body_constant = RuleParser._build_unary_body_path(body_atoms, free_var)
         
         # 确定头部的简写形式
-        if free_var_pos_in_head == 0:
-            # rel(X, /m/const) -> rel(/m/const)
-            simplified_head = f"{head_relation}({head_constant})"
+        # 注意：对于一元规则，如果头部只有一个变量，需要统一替换为X
+        # 例如：/location/hud_county_place/place(me_myself_i,Y) 应该简化为 /location/hud_county_place/place(X)
+        if head_constant:
+            # 有常量的情况
+            if free_var_pos_in_head == 0:
+                # rel(X, /m/const) -> rel(/m/const)
+                simplified_head = f"{head_relation}({head_constant})"
+            else:
+                # rel(/m/const, X) -> INVERSE_rel(/m/const)
+                simplified_head = f"INVERSE_{head_relation}({head_constant})"
         else:
-            # rel(/m/const, X) -> INVERSE_rel(/m/const)
-            simplified_head = f"INVERSE_{head_relation}({head_constant})"
+            # 没有常量，说明头部是 rel(X, Y) 但实际是一元规则（X和Y是同一个变量或其中一个是me_myself_i）
+            # 这种情况应该统一显示为 rel(X)
+            simplified_head = f"{head_relation}(X)"
         
         # 构建完整的简写规则
         # 一元规则的body部分需要带括号：

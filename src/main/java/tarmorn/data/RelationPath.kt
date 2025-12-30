@@ -184,6 +184,25 @@ object RelationPath {
     fun isL1Relation(encoded: Long): Boolean = encoded < MAX_RELATION_ID
     
     /**
+     * Check if prefix is a prefix of path.
+     * For example: r1 is a prefix of r1·r2, r1·r2 is a prefix of r1·r2·r3
+     */
+    fun isPrefixOf(prefix: Long, path: Long): Boolean {
+        if (prefix == path) return false  // 自身不算前缀
+        val prefixLength = getLength(prefix)
+        val pathLength = getLength(path)
+        if (prefixLength >= pathLength) return false
+        
+        // 比较前prefixLength个关系是否相同
+        for (i in 0 until prefixLength) {
+            val prefixRel = (prefix shr (i * BITS_PER_RELATION)) and RELATION_MASK
+            val pathRel = (path shr (i * BITS_PER_RELATION)) and RELATION_MASK
+            if (prefixRel != pathRel) return false
+        }
+        return true
+    }
+    
+    /**
      * Get the inverse of a relation path.
      * For single relations (rp <= MAX_RELATION_ID), uses IdManager.getInverseRelation.
      * For relation paths (rp > MAX_RELATION_ID), decomposes into r1, ..., rm 

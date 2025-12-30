@@ -511,6 +511,7 @@ object TLearn {
         if (supp >= Settings.MIN_SUPP) {
             performLSH(MyAtom(rp, IdManager.getYId(), instanceSet))
             // atomizeUnaryRelationPath(rp, h2tSet, t2hSet, loopSet)
+            // L2 Uc, L2 Ud 没什么用，加上不会提升LP指标，反而拖慢速度
         }
 
         debug1("[isValidRelationPathL2] ${IdManager.getRelationString(rp)} supp: $supp, entitySupp: $entitySupp, self-inverse: ${rp == rpInv}, estimated: $totalPairs, sampled: $supp")
@@ -872,8 +873,10 @@ object TLearn {
             }
         }
 
-        if (!currentAtom.isHeadAtom && cnt == 0) {
-            // No valid candidates and not a head atom - skip adding this atom to buckets
+        // IMPORTANT: 所有L1原子必须被添加到桶中以供后续组合
+        // 如果只添加headAtom，导致 r(·) 如果先performLSH，会忽略掉与 r(c) 的组合
+        if (!currentAtom.isL1Atom && cnt == 0) {
+            // No valid candidates and not a L1 atom - skip adding this atom to buckets
             // currentAtom will be garbage collected as it's not referenced anywhere
             return
         }
