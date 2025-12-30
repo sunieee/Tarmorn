@@ -157,31 +157,45 @@ object TLearn {
      * Step 1: Initialize level 1 relations (single relations with sufficient supp)
      */
     fun initializeRelationL1() {
-        println("Initializing level 1 relations...")
+        println("Initializing level 1 relations with ${Settings.WORKER_THREADS} threads...")
 
-        for ((relation, tripleSet) in ts.r2tripleSet) {
-            R2supp[relation] = tripleSet.size
-            if (tripleSet.size >= Settings.MIN_SUPP) {
-                relationQueue.offer(relation)
-                addedCount.incrementAndGet()
-                debug2("[path] ${IdManager.getRelationString(relation)}: ${tripleSet.size}")
+        val threadPool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
+        val relations = ts.r2tripleSet.entries.toList()
+        
+        try {
+            val futures = relations.map { (relation, tripleSet) ->
+                threadPool.submit {
+                    R2supp[relation] = tripleSet.size
+                    if (tripleSet.size >= Settings.MIN_SUPP) {
+                        relationQueue.offer(relation)
+                        addedCount.incrementAndGet()
+                        debug2("[path] ${IdManager.getRelationString(relation)}: ${tripleSet.size}")
 
-                if (!IdManager.isInverseRelation(relation)) {
-                    // 为L=1关系进行原子化，直接使用R2h2tSet中的反向索引
-                    val h2tSet = R2h2tSet[relation]
-                    val inverseRelation = RelationPath.getInverseRelation(relation)
-                    val t2hSet = R2h2tSet[inverseRelation]
-                    
-                    if (h2tSet != null && t2hSet != null) {
-                        // 处理Binary原子
-                        atomizeBinaryRelationL1(relation, r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
-                        // 处理Unary原子
-                        atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), r2loopSet[relation] ?: mutableSetOf())
-                    } else {
-                        println("Warning: Missing h2tSet or t2hSet for relation ${IdManager.getRelationString(relation)} or its inverse ${IdManager.getRelationString(inverseRelation)}")
+                        if (!IdManager.isInverseRelation(relation)) {
+                            // 为L=1关系进行原子化，直接使用R2h2tSet中的反向索引
+                            val h2tSet = R2h2tSet[relation]
+                            val inverseRelation = RelationPath.getInverseRelation(relation)
+                            val t2hSet = R2h2tSet[inverseRelation]
+                            
+                            if (h2tSet != null && t2hSet != null) {
+                                // 处理Binary原子
+                                atomizeBinaryRelationL1(relation, r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
+                                // 处理Unary原子
+                                atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), r2loopSet[relation] ?: mutableSetOf())
+                            } else {
+                                println("Warning: Missing h2tSet or t2hSet for relation ${IdManager.getRelationString(relation)} or its inverse ${IdManager.getRelationString(inverseRelation)}")
+                            }
+                        }
                     }
                 }
             }
+            
+            // 等待所有任务完成
+            futures.forEach { it.get() }
+            
+        } finally {
+            threadPool.shutdown()
+            threadPool.awaitTermination(1, TimeUnit.HOURS)
         }
 
         relationL1 = relationQueue.map { it }.toList()
@@ -714,11 +728,24 @@ object TLearn {
     /**
      * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
      * 需要动态计算MinHash签名
+     * 注意：先处理 entityId=0 的存在性原子，再处理 entityId>0 的常量原子
      */
     fun atomizeUnaryRelationPath(rp: Long, h2tSet: MutableMap<Int, MutableSet<Int>>, t2hSet: MutableMap<Int, MutableSet<Int>>, loopSet: MutableSet<Int>) {
         val rpInv = RelationPath.getInverseRelation(rp)
 
-        // 1. r(X,c): Unary Atom for each constant c where rp(X,c) exists
+        // 先处理 entityId = 0 的存在性原子，确保它们先被添加到 H2B2metric
+        
+        // 1. r(X,·): Unary Atom for existence - relation rp has head entities
+        if (h2tSet.size >= Settings.MIN_SUPP)
+            performLSH(MyAtom(rp, 0, h2tSet.keys))
+        
+        // 2. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
+        if (t2hSet.size >= Settings.MIN_SUPP)
+            performLSH(MyAtom(rpInv, 0, t2hSet.keys))
+        
+        // 后处理 entityId > 0 的常量原子，此时可以检查是否存在更好的存在性原子
+        
+        // 3. r(X,c): Unary Atom for each constant c where rp(X,c) exists
         t2hSet.forEach { (constant, unaryInstanceSet) -> 
             val supp = unaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
@@ -731,11 +758,7 @@ object TLearn {
             }
         }
         
-        // 2. r(X,·): Unary Atom for existence - relation rp has head entities
-        if (h2tSet.size >= Settings.MIN_SUPP)
-            performLSH(MyAtom(rp, 0, h2tSet.keys))
-        
-        // 3. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
+        // 4. r(c,X) / r'(X,c): Unary Atom for each constant c where r(c,X) exists
         h2tSet.forEach { (constant, inverseUnaryInstanceSet) -> 
             val supp = inverseUnaryInstanceSet.size
             if (supp >= Settings.MIN_SUPP) {
@@ -747,10 +770,6 @@ object TLearn {
                 }
             }
         }
-        
-        // 4. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
-        if (t2hSet.size >= Settings.MIN_SUPP)
-            performLSH(MyAtom(rpInv, 0, t2hSet.keys))
 
         // 5. r(X,X): Unary Atom for loops - r(X,X) exists
         if (loopSet.size >= Settings.MIN_SUPP)
@@ -773,6 +792,30 @@ object TLearn {
 
     fun setH2B2metric(headAtom: MyAtom, bodyAtom: MyAtom, metric: Metric) {
         val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
+        
+        // 过滤逻辑：Uc vs Ud 规则
+        // Uc: r(x,c) <= r1(x,c1)，bodyAtom.entityId > 0
+        // Ud: r(x,c) <= r1(x,·)， bodyAtom.entityId = 0
+        // 如果 conf(Ud) >= conf(Uc)，则 Uc 无效
+        // 
+        // 由于 atomizeUnaryRelationPath 保证先处理 entityId=0 再处理 entityId>0，
+        // 所以只需要在添加常量原子时检查是否存在更好的存在性原子即可
+        
+        if (bodyAtom.entityId > 0) {
+            // 当前是常量原子，检查是否存在更好的存在性原子
+            val existenceAtom = B2metric.keys.find { 
+                it.relationId == bodyAtom.relationId && it.entityId == 0 
+            }
+            if (existenceAtom != null) {
+                val existenceMetric = B2metric[existenceAtom]!!
+                if (existenceMetric.confidence >= metric.confidence) {
+                    // 存在性原子的 confidence 更好，不添加当前常量原子
+                    debug2("Filtered out constant atom $bodyAtom (conf=${metric.confidence}) due to better existence atom $existenceAtom (conf=${existenceMetric.confidence})")
+                    return
+                }
+            }
+        }
+        
         B2metric[bodyAtom] = metric
     }
 
