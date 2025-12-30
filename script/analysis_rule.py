@@ -199,6 +199,64 @@ class RuleParser:
     """规则解析器，支持多种规则格式和简写"""
     
     @staticmethod
+    def _is_variable(arg: str) -> bool:
+        """
+        判断一个参数是否是变量
+        
+        变量的定义：
+        1. 单字母（X, Y, A, B等）
+        2. 特殊标记 me_myself_i（表示自引用变量）
+        
+        Args:
+            arg: 参数字符串
+            
+        Returns:
+            True如果是变量，False如果是常量
+        """
+        return len(arg) == 1 or arg == 'me_myself_i'
+    
+    @staticmethod
+    def _normalize_me_myself_i(args: List[str], context: str = 'head') -> List[str]:
+        """
+        规范化包含 me_myself_i 的参数列表
+        
+        me_myself_i 是一个特殊标记，表示该位置的变量应该与另一个位置的变量相同。
+        例如：
+        - /rel(X, me_myself_i) 应该被视为 /rel(X, X)
+        - /rel(me_myself_i) 应该被视为 /rel(X, X) 的某种简写
+        
+        Args:
+            args: 参数列表
+            context: 上下文（'head' 或 'body'），用于决定替换策略
+            
+        Returns:
+            规范化后的参数列表
+        """
+        if 'me_myself_i' not in args:
+            return args
+        
+        normalized = []
+        # 找到第一个非 me_myself_i 的变量
+        first_var = None
+        for arg in args:
+            if RuleParser._is_variable(arg) and arg != 'me_myself_i':
+                first_var = arg
+                break
+        
+        # 如果没有找到其他变量，使用默认变量X
+        if first_var is None:
+            first_var = 'X'
+        
+        # 将所有 me_myself_i 替换为第一个变量
+        for arg in args:
+            if arg == 'me_myself_i':
+                normalized.append(first_var)
+            else:
+                normalized.append(arg)
+        
+        return normalized
+    
+    @staticmethod
     def parse_rule(rule_str: str) -> Tuple[str, List[str], int, Dict]:
         """
         解析规则字符串，将所有规则转换为简写模式进行统一处理
@@ -287,8 +345,10 @@ class RuleParser:
             else:
                 # 有逗号，检查是否有两个变量（二元）还是一个变量一个常量（一元）
                 args = [arg.strip() for arg in paren_content.split(',')]
+                # 规范化 me_myself_i
+                args = RuleParser._normalize_me_myself_i(args, 'head')
                 # 统计单字母变量（真正的变量）的数量
-                var_count = sum(1 for arg in args if len(arg) == 1)
+                var_count = sum(1 for arg in args if RuleParser._is_variable(arg))
                 is_unary = (var_count == 1)
         else:
             # 没有括号，是简写的二元规则
@@ -464,8 +524,10 @@ class RuleParser:
         # 分析变量
         all_vars = set()
         constants = set()
+        # 先规范化 head_args 中的 me_myself_i
+        head_args = RuleParser._normalize_me_myself_i(head_args, 'head')
         for arg in head_args:
-            if len(arg) == 1:  # 变量
+            if RuleParser._is_variable(arg):  # 变量
                 all_vars.add(arg)
             else:  # 常量
                 constants.add(arg)
@@ -473,8 +535,10 @@ class RuleParser:
         for atom in body_atoms:
             if '(' in atom and ')' in atom:
                 atom_args = RuleParser._extract_variables(atom)
+                # 规范化 body 中的 me_myself_i
+                atom_args = RuleParser._normalize_me_myself_i(atom_args, 'body')
                 for arg in atom_args:
-                    if len(arg) == 1:  # 变量
+                    if RuleParser._is_variable(arg):  # 变量
                         all_vars.add(arg)
                     else:  # 常量
                         constants.add(arg)
@@ -486,7 +550,7 @@ class RuleParser:
                        head_args[0] == head_args[1])
         
         # 自由变量就是头部参数中的不同单字母变量
-        free_vars_count = len(set(arg for arg in head_args if len(arg) == 1))
+        free_vars_count = len(set(arg for arg in head_args if RuleParser._is_variable(arg)))
         
         if free_vars_count == 1 or is_self_loop:
             # 一元规则：头部有一个变量和一个常量，或者是自环规则
@@ -532,7 +596,7 @@ class RuleParser:
         free_var_pos_in_head = -1
         
         for i, arg in enumerate(head_args):
-            if len(arg) == 1:  # 变量
+            if RuleParser._is_variable(arg):  # 变量
                 if free_var is None:  # 只取第一个变量
                     free_var = arg
                     free_var_pos_in_head = i
@@ -565,8 +629,10 @@ class RuleParser:
                 # 单个原子，检查是否有中间变量
                 atom = body_atoms[0]
                 args = RuleParser._extract_variables(atom)
+                # 规范化 me_myself_i
+                args = RuleParser._normalize_me_myself_i(args, 'body')
                 # 如果有两个参数且都是变量（单字母），说明有中间变量
-                has_intermediate_var = len(args) == 2 and all(len(arg) == 1 for arg in args)
+                has_intermediate_var = len(args) == 2 and all(RuleParser._is_variable(arg) for arg in args)
             
             if has_intermediate_var:
                 simplified_body = f"{body_path}(·)"
@@ -747,7 +813,8 @@ class RuleParser:
         二元规则的自由变量固定是 head_args（即 X, Y，顺序确定）
         """
         # 提取自由变量（头部中的单字母变量）
-        free_vars = [arg for arg in head_args if len(arg) == 1]
+        head_args = RuleParser._normalize_me_myself_i(head_args, 'head')
+        free_vars = [arg for arg in head_args if RuleParser._is_variable(arg)]
         
         if len(free_vars) != 2:
             # 如果不是严格的二元规则，返回原始格式
@@ -902,7 +969,9 @@ class RuleParser:
             if not has_intermediate_var and len(branch_atoms) == 1:
                 atom = branch_atoms[0]
                 args = RuleParser._extract_variables(atom)
-                has_intermediate_var = len(args) == 2 and all(len(arg) == 1 for arg in args)
+                # 规范化 me_myself_i
+                args = RuleParser._normalize_me_myself_i(args, 'body')
+                has_intermediate_var = len(args) == 2 and all(RuleParser._is_variable(arg) for arg in args)
             
             if has_intermediate_var:
                 simplified_branch = f"{body_path}(·)"
@@ -1222,13 +1291,16 @@ class RuleParser:
             (relation, fixed_entity, variable_position)
         """
         if '(' in head_part and ')' in head_part:
-            # 有括号，可能是一元规则：/rel(/m/123) 或 INVERSE_/rel(/m/123) 或自环规则 /rel(X)
+            # 有括号，可能是一元规则：/rel(/m/123) 或 INVERSE_/rel(/m/123) 或自环规则 /rel(X) 或 /rel(me_myself_i)
             relation = head_part.split('(')[0].strip()
             entity_part = head_part.split('(')[1].split(')')[0].strip()
             
-            if len(entity_part) == 1:
-                # 自环规则：/rel(X) 表示 /rel(X, X)
+            if RuleParser._is_variable(entity_part):
+                # 自环规则：/rel(X) 或 /rel(me_myself_i) 表示 /rel(X, X)
                 # 对于自环规则，没有固定实体，返回变量名作为特殊标记
+                # 如果是 me_myself_i，规范化为 X
+                if entity_part == 'me_myself_i':
+                    entity_part = 'X'
                 return relation, entity_part, 'self_loop'
             elif entity_part.startswith('/m/'):
                 if relation.startswith('INVERSE_'):
@@ -1249,16 +1321,20 @@ class RuleParser:
     @staticmethod
     def _analyze_variables(head_variables: List[str], body_variables: List[str]) -> Tuple[Set[str], Set[str]]:
         """分析变量类型，区分自由变量和约束变量"""
+        # 规范化变量列表中的 me_myself_i
+        head_variables = RuleParser._normalize_me_myself_i(head_variables, 'head')
+        body_variables = RuleParser._normalize_me_myself_i(body_variables, 'body')
+        
         head_var_set = set(head_variables)
         body_var_set = set(body_variables)
         
-        # 自由变量：X, Y (长度为1且出现在头部)
-        free_variables = {var for var in head_var_set if len(var) == 1}
+        # 自由变量：单字母变量或me_myself_i（已规范化）且出现在头部
+        free_variables = {var for var in head_var_set if RuleParser._is_variable(var)}
         
-        # 约束变量：长度为1但不在头部的变量 (如A, B, C等)
+        # 约束变量：是变量但不在头部的变量 (如A, B, C等)
         constraint_variables = set()
         for var in body_var_set:
-            if len(var) == 1 and var not in head_var_set:
+            if RuleParser._is_variable(var) and var not in head_var_set:
                 constraint_variables.add(var)
         
         return free_variables, constraint_variables
@@ -1273,12 +1349,14 @@ class RuleParser:
     
     @staticmethod
     def _extract_variables(atom: str) -> List[str]:
-        """从原子中提取变量"""
+        """从原子中提取变量（包括规范化 me_myself_i）"""
         if '(' not in atom or ')' not in atom:
             return []
         
         var_part = atom.split('(')[1].split(')')[0]
         variables = [v.strip() for v in var_part.split(',')]
+        # 规范化 me_myself_i
+        variables = RuleParser._normalize_me_myself_i(variables, 'extracted')
         return variables
     
     @staticmethod

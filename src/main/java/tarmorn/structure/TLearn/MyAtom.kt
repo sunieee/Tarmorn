@@ -32,7 +32,9 @@ class MyAtom(
         }
     }
     
-    val minHashSignature: IntArray = computeMinHashDOPH(instances, isBinary)
+    // 延迟计算：minHashSignature 只有在第一次被访问时才会计算
+    // 结果缓存：计算完成后结果会被保存，后续访问直接返回缓存值，不会重复计算
+    val minHashSignature: IntArray by lazy { computeMinHashDOPH(instances, isBinary) }
 
     val support: Int
         get() = instances.size
@@ -78,10 +80,13 @@ class MyAtom(
     val isL2Atom: Boolean
         get() = relationId < RelationPath.MAX_L2RELATION_ID
 
+    // val isHeadAtom: Boolean
+    //     get() = isL1Atom &&
+    //             ((entityId == IdManager.getYId() || entityId == IdManager.getXId()) && !IdManager.isInverseRelation(relationId)
+    //                     || entityId > 0)
+    
     val isHeadAtom: Boolean
-        get() = isL1Atom &&
-                ((entityId == IdManager.getYId() || entityId == IdManager.getXId()) && !IdManager.isInverseRelation(relationId)
-                        || entityId > 0)
+        get() = isL1Atom && entityId != 0
 
     val firstRelation: Long
         get() = if (isL1Atom) relationId else RelationPath.getFirstRelation(relationId)
