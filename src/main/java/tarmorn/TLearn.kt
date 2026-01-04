@@ -39,7 +39,7 @@ object TLearn {
         }
     }
 
-    const val MAX_PATH_LENGTH = 2
+    const val MAX_PATH_LENGTH = 3
     const val ESTIMATE_RATIO = 0.6
     const val MIN_LIFT = 1.2
     const val MIN_COMMON_BUCKET = 2
@@ -371,7 +371,7 @@ object TLearn {
      * 使用分层比例随机采样，确保每个CE按比例贡献instances
      */
     private fun isValidRelationPathL2(rp: Long): Boolean {
-        // 分解路径: rp = r1 · r2
+        // 分解路径: rp = r1 * r2
         val rpInv = RelationPath.getInverseRelation(rp)
         val relations = RelationPath.decode(rp)
         val r1 = relations[0]
@@ -526,15 +526,15 @@ object TLearn {
     private fun isValidRelationPathL3(rp: Long): Boolean {
         debug2("isValidRelationPathL3: rp=${IdManager.getRelationString(rp)}")
         
-        // 分解路径: rp = r1 · r2 · r3
+        // 分解路径: rp = r1 * r2 * r3
         val relations = RelationPath.decode(rp)
         val r1 = relations[0]
         val r2 = relations[1]
         val r3 = relations[2]
         val r3Inv = RelationPath.getInverseRelation(r3)
 
-        // 方式一: r1 · (r2·r3) = r1 · r23  通过 isForwardValid 用于验证
-        // 方式二: r3Inv · (r2Inv·r1Inv) = r3Inv · r12Inv  用于构造
+        // 方式一: r1 * (r2*r3) = r1 * r23  通过 isForwardValid 用于验证
+        // 方式二: r3Inv * (r2Inv*r1Inv) = r3Inv * r12Inv  用于构造
         val r23 = RelationPath.connectHead(r2, r3)
         val r23Inv = RelationPath.getInverseRelation(r23)
         val r12 = RelationPath.connectHead(r1, r2)
@@ -594,11 +594,11 @@ object TLearn {
         val h2tSet4r12Inv = R2h2tSet[r12Inv]!!
         val t2hSet4r3Inv = R2h2tSet[r3]!!
         
-        // 判断实例 (h, t) 是否通过方式一有效：r1 · (r2·r3)
-        // 需要存在中间节点 y 使得 r1(h, y) 且 (r2·r3)(y, t)
+        // 判断实例 (h, t) 是否通过方式一有效：r1 * (r2*r3)
+        // 需要存在中间节点 y 使得 r1(h, y) 且 (r2*r3)(y, t)
         fun isForwardValid(h: Int, t: Int): Boolean {
             val r1Tails = h2tSet4r1.get(h) ?: return false  // r1(h, ?) 的所有尾节点
-            val r23Heads = t2hSet4r23.get(t) ?: return false  // (r2·r3)(?, t) 的所有头节点
+            val r23Heads = t2hSet4r23.get(t) ?: return false  // (r2*r3)(?, t) 的所有头节点
             
             // 检查是否有交集（存在共同的中间节点）
             for (tail in r1Tails) {
@@ -607,7 +607,7 @@ object TLearn {
             return false
         }
         
-        // 使用方式二进行连接：r3Inv · (r2Inv·r1Inv)
+        // 使用方式二进行连接：r3Inv * (r2Inv*r1Inv)
         val instanceSet = mutableSetOf<Int>()
         val random = Random((r1 xor r2 xor r3).toLong())
         
@@ -727,7 +727,7 @@ object TLearn {
     }
 
     /**
-     * 处理Unary原子化：r(X,c), r(X,·), r(c,X), r(·,X), r(X,X)
+     * 处理Unary原子化：r(X,c), r(X,*), r(c,X), r(*,X), r(X,X)
      * 需要动态计算MinHash签名
      * 注意：先处理 entityId=0 的存在性原子，再处理 entityId>0 的常量原子
      */
@@ -736,11 +736,11 @@ object TLearn {
 
         // 先处理 entityId = 0 的存在性原子，确保它们先被添加到 H2B2metric
         
-        // 1. r(X,·): Unary Atom for existence - relation rp has head entities
+        // 1. r(X,*): Unary Atom for existence - relation rp has head entities
         if (h2tSet.size >= Settings.MIN_SUPP)
             performLSH(MyAtom(rp, 0, h2tSet.keys))
         
-        // 2. r(·,X) / r'(X,·): Unary Atom for existence - inverse relation has head entities
+        // 2. r(*,X) / r'(X,*): Unary Atom for existence - inverse relation has head entities
         if (t2hSet.size >= Settings.MIN_SUPP)
             performLSH(MyAtom(rpInv, 0, t2hSet.keys))
         
@@ -796,7 +796,7 @@ object TLearn {
         
         // 过滤逻辑：Uc vs Ud 规则
         // Uc: r(x,c) <= r1(x,c1)，bodyAtom.entityId > 0
-        // Ud: r(x,c) <= r1(x,·)， bodyAtom.entityId = 0
+        // Ud: r(x,c) <= r1(x,*)， bodyAtom.entityId = 0
         // 如果 conf(Ud) >= conf(Uc)，则 Uc 无效
         // 
         // 由于 atomizeUnaryRelationPath 保证先处理 entityId=0 再处理 entityId>0，
@@ -811,6 +811,8 @@ object TLearn {
                 val existenceMetric = B2metric[existenceAtom]!!
                 if (existenceMetric.confidence >= metric.confidence) {
                     // 存在性原子的 confidence 更好，不添加当前常量原子
+                    // 这里不加等号从结果上来说更好：0.318-> 0.320. 原因：Ud权重比Uc更低，相同的conf的rule，Uc实际conf更高
+                    // 因此设置 d_weight=1 避免这个问题，解决规则冗余
                     debug2("Filtered out constant atom $bodyAtom (conf=${metric.confidence}) due to better existence atom $existenceAtom (conf=${existenceMetric.confidence})")
                     return
                 }
@@ -874,7 +876,7 @@ object TLearn {
         }
 
         // IMPORTANT: 所有L1原子必须被添加到桶中以供后续组合
-        // 如果只添加headAtom，导致 r(·) 如果先performLSH，会忽略掉与 r(c) 的组合
+        // 如果只添加headAtom，导致 r(*) 如果先performLSH，会忽略掉与 r(c) 的组合
         if (!currentAtom.isL1Atom && cnt == 0) {
             // No valid candidates and not a L1 atom - skip adding this atom to buckets
             // currentAtom will be garbage collected as it's not referenced anywhere

@@ -39,7 +39,7 @@ class Atom(
             h == IdManager.getXId() && istC -> {
                 tripleSet.r2h2tSet[inverseRelation]?.get(t) ?: emptySet()
             }
-            // r(X,·): 获取逆关系的所有尾部实体
+            // r(X,*): 获取逆关系的所有尾部实体
             h == IdManager.getXId() && t == 0 -> {
                 tripleSet.r2h2tSet[r]?.keys?: emptySet()
             }
@@ -47,7 +47,7 @@ class Atom(
             ishC && t == IdManager.getYId() -> {
                 tripleSet.r2h2tSet[r]?.get(h) ?: emptySet()
             }
-            // r(·,Y): 获取该关系的所有尾部实体
+            // r(*,Y): 获取该关系的所有尾部实体
             h == 0 && t == IdManager.getYId() -> {
                 tripleSet.r2h2tSet[inverseRelation]?.keys?: emptySet()
             }

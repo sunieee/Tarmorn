@@ -42,5 +42,5 @@
 
 ### 备注：
 
-- 约束变量在 IdManager 中设置为 ID=0 ("·"符号) 和其他负ID变量
+- 约束变量在 IdManager 中设置为 ID=0 ("*"符号) 和其他负ID变量
 - AC2 规则的一些功能（如 `getTripleExplanation`）标记为"not yet implemented"，保持与原代码一致

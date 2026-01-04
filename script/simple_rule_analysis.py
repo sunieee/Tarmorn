@@ -76,7 +76,7 @@ try:
         forward_index[head].add(tail)
         backward_index[tail].add(head)
     
-    # 计算body实例：对于路径 rel · INVERSE_rel · rel
+    # 计算body实例：对于路径 rel * INVERSE_rel * rel
     body_instances = set()
     
     for x in forward_index:  # X

@@ -15,7 +15,7 @@ REM Run Maven with output redirected to log file
 call mvn clean compile
 call mvn exec:java -Dexec.mainClass="tarmorn.TLearn" > "out\%dataset%\run.log" 2>&1
 
-call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --disable_combo > out/%dataset%/eval.log
+call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --disable_combo --d_weight=1 > out/%dataset%/eval.log
 
 @REM call python script\compare_rules.py --dataset %dataset%
 

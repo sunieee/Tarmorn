@@ -20,13 +20,13 @@ def test_rule_normalization():
             'name': '一元规则案例1',
             'rule': '/award/award_category/winners./award/award_honor/ceremony(/m/0gs96,X) <= /award/award_category/winners./award/award_honor/ceremony(A,X), /award/award_category/nominees./award/award_nomination/nominated_for(A,/m/02r79_h)',
             'expected_type': 'unary',
-            'expected_normalized': 'INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0gs96) <= INVERSE_/award/award_category/winners./award/award_honor/ceremony·/award/award_category/nominees./award/award_nomination/nominated_for(/m/02r79_h)'
+            'expected_normalized': 'INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0gs96) <= INVERSE_/award/award_category/winners./award/award_honor/ceremony*/award/award_category/nominees./award/award_nomination/nominated_for(/m/02r79_h)'
         },
         {
             'name': '一元规则案例2', 
             'rule': '/award/award_category/winners./award/award_honor/ceremony(X,/m/01xqqp) <= /award/award_category/winners./award/award_honor/ceremony(X,A), /award/award_category/winners./award/award_honor/ceremony(/m/0257w4,A)',
             'expected_type': 'unary',
-            'expected_normalized': '/award/award_category/winners./award/award_honor/ceremony(/m/01xqqp) <= /award/award_category/winners./award/award_honor/ceremony·INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0257w4)'
+            'expected_normalized': '/award/award_category/winners./award/award_honor/ceremony(/m/01xqqp) <= /award/award_category/winners./award/award_honor/ceremony*INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0257w4)'
         }
     ]
     

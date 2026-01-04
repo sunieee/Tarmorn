@@ -20,7 +20,7 @@ def parse_atom_to_rule_string(atom_str):
     For path length == 1: relation(X, entity)
     For path length > 1: r1(X,A), r2(A,B), ..., rN(prev, entity)
     Handle INVERSE relations by swapping arguments
-    Special: if entity is '·', use the previous variable name instead
+    Special: if entity is '*', use the previous variable name instead
     """
     # Extract relation path and entity
     if '(' not in atom_str:
@@ -34,8 +34,8 @@ def parse_atom_to_rule_string(atom_str):
     relation_part = match.group(1)
     entity_part = match.group(2)
     
-    # Split relation path by '·' (middle dot)
-    relations = relation_part.split('·')
+    # Split relation path by '*' (middle dot)
+    relations = relation_part.split('*')
     n = len(relations)
     
     # Build node list: X, A, B, ..., tailTerm
@@ -45,10 +45,10 @@ def parse_atom_to_rule_string(atom_str):
         nodes.append(chr(ord('A') + i))
     
     # Handle terminal entity:
-    # If entity is '·', keep the last variable (don't replace nodes[n])
+    # If entity is '*', keep the last variable (don't replace nodes[n])
     # Otherwise, replace nodes[n] with the actual entity
     tail_term = entity_part
-    if tail_term != '·':
+    if tail_term != '*':
         nodes[n] = tail_term
     
     # Build rule string parts

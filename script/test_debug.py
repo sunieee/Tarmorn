@@ -33,7 +33,7 @@ def test_simple_rule():
         
         # 测试简单的二元规则
         # simple_rule = "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,A)"
-        simple_rule = "/award/award_category/winners./award/award_honor/ceremony  <= /award/award_category/winners./award/award_honor/ceremony·/award/award_ceremony/awards_presented./award/award_honor/award_winner·INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner"
+        simple_rule = "/award/award_category/winners./award/award_honor/ceremony  <= /award/award_category/winners./award/award_honor/ceremony*/award/award_ceremony/awards_presented./award/award_honor/award_winner*INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner"
         print(f"\n测试简单规则: {simple_rule}")
         
         # 解析规则

@@ -202,9 +202,9 @@ def calculate_rule_attributes(rule_string: str) -> dict:
         branch_atom_counts = []
         for b in branches:
             # 计算body原子数量
-            if '·' in b:
-                # 简写格式：通过·连接的关系数量
-                atom_count = b.count('·') + 1
+            if '*' in b:
+                # 简写格式：通过*连接的关系数量
+                atom_count = b.count('*') + 1
             elif ', ' in b:
                 # 完整格式：原子之间用", "分隔（逗号+空格）
                 atom_count = b.count(', ') + 1
@@ -220,9 +220,9 @@ def calculate_rule_attributes(rule_string: str) -> dict:
         branch = 1
         
         # 计算body原子数量
-        if '·' in body_part:
-            # 简写格式：通过·连接的关系数量
-            atom_count = body_part.count('·') + 1
+        if '*' in body_part:
+            # 简写格式：通过*连接的关系数量
+            atom_count = body_part.count('*') + 1
         elif ', ' in body_part:
             # 完整格式：原子之间用", "分隔（逗号+空格）
             atom_count = body_part.count(', ') + 1

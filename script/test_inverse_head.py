@@ -6,7 +6,7 @@ def test_inverse_head():
     """测试INVERSE关系的头部实例计算"""
     
     # 测试规则
-    rule_str = "INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0gs9p) <= INVERSE_/award/award_category/winners./award/award_honor/ceremony·/award/award_category/nominees./award/award_nomination/nominated_for(/m/0j8f09z)"
+    rule_str = "INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0gs9p) <= INVERSE_/award/award_category/winners./award/award_honor/ceremony*/award/award_category/nominees./award/award_nomination/nominated_for(/m/0j8f09z)"
     
     # 加载数据集
     try:

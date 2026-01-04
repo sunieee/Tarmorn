@@ -6,7 +6,7 @@
 支持的规则格式：
 1. 简写格式：
    /award/award_category/winners./award/award_honor/ceremony <= 
-   /award/award_category/winners./award/award_honor/ceremony·/award/award_ceremony/awards_presented./award/award_honor/award_winner·INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner
+   /award/award_category/winners./award/award_honor/ceremony*/award/award_ceremony/awards_presented./award/award_honor/award_winner*INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner
 
 2. 带括号格式：
    /award/award_category/winners./award/award_honor/ceremony(X,Y) <= 
@@ -151,12 +151,12 @@ class KnowledgeGraph:
         Examples:
         - r1 -> INVERSE_r1
         - INVERSE_r1 -> r1
-        - r1·r2·r3 -> INVERSE_r3·INVERSE_r2·INVERSE_r1
-        - INVERSE_r3·INVERSE_r2·INVERSE_r1 -> r1·r2·r3
+        - r1*r2*r3 -> INVERSE_r3*INVERSE_r2*INVERSE_r1
+        - INVERSE_r3*INVERSE_r2*INVERSE_r1 -> r1*r2*r3
         """
-        if '·' in relation:
+        if '*' in relation:
             # 复合关系路径
-            parts = relation.split('·')
+            parts = relation.split('*')
             inverse_parts = []
             
             for part in reversed(parts):
@@ -167,7 +167,7 @@ class KnowledgeGraph:
                     # 如果是正向关系，返回逆关系
                     inverse_parts.append(f"INVERSE_{part}")
             
-            return '·'.join(inverse_parts)
+            return '*'.join(inverse_parts)
         else:
             # 单个关系
             if relation.startswith("INVERSE_"):
@@ -262,8 +262,8 @@ class RuleParser:
         解析规则字符串，将所有规则转换为简写模式进行统一处理
         
         统一规则格式为简写模式：
-        - 一元规则：/rel(/m/const) <= /rel1·/rel2(/m/const2)
-        - 二元规则：/rel <= /rel1·INVERSE_/rel2
+        - 一元规则：/rel(/m/const) <= /rel1*/rel2(/m/const2)
+        - 二元规则：/rel <= /rel1*INVERSE_/rel2
         - 复杂规则（Complex Rule）：body包含分号，表示多个branch
         
         Args:
@@ -402,8 +402,8 @@ class RuleParser:
             else:
                 # 完整格式，需要转换为简写格式
                 # 对于complex rule的每个branch，需要进行转换
-                # 例如：/rel1(X,A), /rel2(A,/m/const) -> /rel1·/rel2(/m/const)
-                # 或者：/rel1(X,A), /rel2(Y,A) -> /rel1·INVERSE_/rel2
+                # 例如：/rel1(X,A), /rel2(A,/m/const) -> /rel1*/rel2(/m/const)
+                # 或者：/rel1(X,A), /rel2(Y,A) -> /rel1*INVERSE_/rel2
                 
                 # 解析branch中的原子
                 branch_atoms = RuleParser._parse_body_atoms(branch)
@@ -595,7 +595,7 @@ class RuleParser:
                     has_intermediate_var = len(args) == 2 and all(RuleParser._is_variable(arg) for arg in args)
                 
                 if has_intermediate_var:
-                    simplified_body = f"{body_path}(·)"
+                    simplified_body = f"{body_path}(*)"
                 else:
                     simplified_body = body_path
             result = f"{simplified_head} <= {simplified_body}"
@@ -639,7 +639,7 @@ class RuleParser:
         # 构建完整的简写规则
         # 一元规则的body部分需要带括号：
         # - 如果有body常量，格式为 body_path(constant)
-        # - 如果没有body常量（只有中间变量），格式为 body_path(·)，表示有中间变量
+        # - 如果没有body常量（只有中间变量），格式为 body_path(*)，表示有中间变量
         if body_constant:
             simplified_body = f"{body_path}({body_constant})"
         else:
@@ -655,7 +655,7 @@ class RuleParser:
                 has_intermediate_var = len(args) == 2 and all(RuleParser._is_variable(arg) for arg in args)
             
             if has_intermediate_var:
-                simplified_body = f"{body_path}(·)"
+                simplified_body = f"{body_path}(*)"
             else:
                 simplified_body = body_path
         
@@ -671,7 +671,7 @@ class RuleParser:
         分析body原子中的连接方式，确定正确的关系路径和常量
         
         例如：body1(X,A), body2(A,/m/const) 
-        -> X通过A连接到/m/const，路径为 body1·body2，常量为/m/const
+        -> X通过A连接到/m/const，路径为 body1*body2，常量为/m/const
         
         Args:
             body_atoms: body原子列表
@@ -816,7 +816,7 @@ class RuleParser:
                 break
         
         # 构建最终路径
-        final_path = '·'.join(path_relations)
+        final_path = '*'.join(path_relations)
         debug(f"[DEBUG] Final unary path: {final_path}")
         
         return final_path, body_constant
@@ -828,7 +828,7 @@ class RuleParser:
         将二元规则转换为简写格式
         
         例如：rel(X,Y) <= body1(X,A), body2(Y,A)
-        转换为：rel <= body1·INVERSE_body2
+        转换为：rel <= body1*INVERSE_body2
         
         二元规则的自由变量固定是 head_args（即 X, Y，顺序确定）
         """
@@ -854,8 +854,8 @@ class RuleParser:
         
         分析连接模式，构建正确的关系路径
         例如：
-        - body1(X,A), body2(Y,A) -> body1·INVERSE_body2 (X->A<-Y)
-        - body1(X,A), body2(A,B), body3(Y,B) -> body1·body2·INVERSE_body3 (X->A->B<-Y)
+        - body1(X,A), body2(Y,A) -> body1*INVERSE_body2 (X->A<-Y)
+        - body1(X,A), body2(A,B), body3(Y,B) -> body1*body2*INVERSE_body3 (X->A->B<-Y)
         """
         if not body_atoms:
             return ""
@@ -891,7 +891,7 @@ class RuleParser:
         
         if len(free_vars) != 2:
             # 简化处理：直接连接所有关系
-            return '·'.join([atom['relation'] for atom in parsed_atoms])
+            return '*'.join([atom['relation'] for atom in parsed_atoms])
         
         # 分析连接模式：从X开始，找到到Y的路径
         X, Y = free_vars[0], free_vars[1]
@@ -905,7 +905,7 @@ class RuleParser:
         
         if start_atom_idx == -1:
             # 没找到包含X的原子，使用简化处理
-            return '·'.join([atom['relation'] for atom in parsed_atoms])
+            return '*'.join([atom['relation'] for atom in parsed_atoms])
         
         # 构建从X到Y的连接路径
         path_relations = []
@@ -958,7 +958,7 @@ class RuleParser:
                 debug(f"[DEBUG] Cannot find connection from {current_var}")
                 break
         
-        final_path = '·'.join(path_relations)
+        final_path = '*'.join(path_relations)
         debug(f"[DEBUG] Final binary path: {final_path}")
         
         return final_path
@@ -968,7 +968,7 @@ class RuleParser:
         """
         将一元规则的branch从完整格式转换为简写格式
         
-        例如：/rel1(X,A), /rel2(A,/m/const) -> /rel1·/rel2(/m/const)
+        例如：/rel1(X,A), /rel2(A,/m/const) -> /rel1*/rel2(/m/const)
         
         Args:
             branch_atoms: branch的原子列表
@@ -994,7 +994,7 @@ class RuleParser:
                 has_intermediate_var = len(args) == 2 and all(RuleParser._is_variable(arg) for arg in args)
             
             if has_intermediate_var:
-                simplified_branch = f"{body_path}(·)"
+                simplified_branch = f"{body_path}(*)"
             else:
                 simplified_branch = body_path
         
@@ -1005,7 +1005,7 @@ class RuleParser:
         """
         将二元规则的branch从完整格式转换为简写格式
         
-        例如：/rel1(X,A), /rel2(Y,A) -> /rel1·INVERSE_/rel2
+        例如：/rel1(X,A), /rel2(Y,A) -> /rel1*INVERSE_/rel2
         
         Args:
             branch_atoms: branch的原子列表
@@ -1118,10 +1118,10 @@ class RuleParser:
         """
         解析简写格式的body部分
         
-        例如：/rel1·/rel2(/m/entity) 
+        例如：/rel1*/rel2(/m/entity) 
         返回：(["/rel1", "/rel2"], "/m/entity")
         
-        特殊情况：/rel(·) 表示"任意实体"，不是常量约束
+        特殊情况：/rel(*) 表示"任意实体"，不是常量约束
         返回：(["/rel"], None)
         
         U0规则（空body）：返回空列表
@@ -1142,8 +1142,8 @@ class RuleParser:
             if last_paren_start < last_paren_end:
                 entity_part = body_part[last_paren_start+1:last_paren_end].strip()
                 # 检查是否是"任意实体"占位符
-                if entity_part == '·':
-                    # (·) 表示任意实体，不是常量约束
+                if entity_part == '*':
+                    # (*) 表示任意实体，不是常量约束
                     # 移除括号部分，但不设置body_constant
                     body_part = body_part[:last_paren_start].strip()
                 elif entity_part.startswith('/m/'):
@@ -1153,8 +1153,8 @@ class RuleParser:
                     body_part = body_part[:last_paren_start].strip()
         
         # 解析关系路径
-        if '·' in body_part:
-            body_relations = [rel.strip() for rel in body_part.split('·')]
+        if '*' in body_part:
+            body_relations = [rel.strip() for rel in body_part.split('*')]
         else:
             body_relations = [body_part.strip()]
         
@@ -1421,9 +1421,9 @@ class RuleSupportCalculator:
             r2: 第二个关系
             
         Returns:
-            复合关系名称 (r1·r2)
+            复合关系名称 (r1*r2)
         """
-        composite_name = f"{r1}·{r2}"
+        composite_name = f"{r1}*{r2}"
         
         # 如果复合关系已经存在，直接返回
         if composite_name in self.kg.r2h2t:
@@ -1474,7 +1474,7 @@ class RuleSupportCalculator:
         Returns:
             满足所有约束的编码配对集合
         """
-        path_str = '·'.join(relation_path)
+        path_str = '*'.join(relation_path)
         
         # 如果已经计算过，直接返回
         if path_str in self.instance_cache:
@@ -1505,7 +1505,7 @@ class RuleSupportCalculator:
             left_path = relation_path[:split_pos]
             right_path = relation_path[split_pos:]
             
-            debug(f"      [DEBUG] Split {split_pos}: {' · '.join(left_path)} | {' · '.join(right_path)}")
+            debug(f"      [DEBUG] Split {split_pos}: {' * '.join(left_path)} | {' * '.join(right_path)}")
             
             # 递归计算左右两部分
             left_instances = self.compute_supp(left_path)
@@ -1521,7 +1521,7 @@ class RuleSupportCalculator:
                 split_results.append(set())
                 continue
             
-            # 统一使用 instances · instances 连接左右两部分
+            # 统一使用 instances * instances 连接左右两部分
             split_result = self._join_two_instance_sets(left_instances, right_instances)
             
             debug(f"      [DEBUG] Split {split_pos} result: {len(split_result)} instances")
@@ -1542,7 +1542,7 @@ class RuleSupportCalculator:
     
     def _join_two_relations(self, r1: str, r2: str) -> Set[int]:
         """连接两个关系，确保 X != A != Y"""
-        debug(f"      [DEBUG] Joining two relations: {r1} · {r2}")
+        debug(f"      [DEBUG] Joining two relations: {r1} * {r2}")
         
         r1_h2t = self.kg.r2h2t.get(r1, {})
         r2_h2t = self.kg.r2h2t.get(r2, {})
@@ -1570,7 +1570,7 @@ class RuleSupportCalculator:
         return result
     
     def _join_instances_with_relation(self, instances: Set[int], relation: str) -> Set[int]:
-        """将实例集合与关系连接：instances · relation"""
+        """将实例集合与关系连接：instances * relation"""
         debug(f"      [DEBUG] Joining {len(instances)} instances with relation {relation}")
         
         r_h2t = self.kg.r2h2t.get(relation, {})
@@ -1589,7 +1589,7 @@ class RuleSupportCalculator:
         return result
     
     def _join_relation_with_instances(self, relation: str, instances: Set[int]) -> Set[int]:
-        """将关系与实例集合连接：relation · instances"""
+        """将关系与实例集合连接：relation * instances"""
         debug(f"      [DEBUG] Joining relation {relation} with {len(instances)} instances")
         
         # 需要找到 relation 的逆关系来获取 tail -> head 的映射
@@ -2240,7 +2240,7 @@ class RuleSupportCalculator:
         if len(relation_path) == 1:
             return self.kg.get_relation_instances_count(relation_path[0])
         
-        debug(f"计算路径实例: {' · '.join(relation_path)}")
+        debug(f"计算路径实例: {' * '.join(relation_path)}")
         
         # 从右到左逐级连接
         current_relation = relation_path[-1]  # 最右边的关系
@@ -2294,7 +2294,7 @@ class RuleSupportCalculator:
         """
         处理简写格式的一元规则身体实例
         
-        例如：/rel(/m/123) <= /rel1·/rel2(/m/456)
+        例如：/rel(/m/123) <= /rel1*/rel2(/m/456)
         表示：/rel(X,/m/123) <= /rel1(X,A), /rel2(A,/m/456)
         """
         if not body_relations:
@@ -2598,7 +2598,7 @@ class RuleSupportCalculator:
         # 从倒数第二个关系开始，向左连接（复用已存储的中间结果）
         for i in range(len(relation_path) - 2, -1, -1):
             left_relation = relation_path[i]
-            current_relation = f"{left_relation}·{current_relation}"
+            current_relation = f"{left_relation}*{current_relation}"
         
         # 如果该关系已经在r2h2t中，直接获取实例
         if current_relation in self.kg.r2h2t:
@@ -2720,9 +2720,9 @@ if __name__ == "__main__":
         "/award/award_category/winners./award/award_honor/ceremony(X,/m/05pd94v) <= /award/award_category/winners./award/award_honor/ceremony(X,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(A,/m/0m2l9)",
         
         # 一元规则简写格式
-        "/award/award_category/winners./award/award_honor/ceremony(/m/05pd94v) <= /award/award_category/winners./award/award_honor/ceremony·/award/award_ceremony/awards_presented./award/award_honor/award_winner(/m/0m2l9)",
+        "/award/award_category/winners./award/award_honor/ceremony(/m/05pd94v) <= /award/award_category/winners./award/award_honor/ceremony*/award/award_ceremony/awards_presented./award/award_honor/award_winner(/m/0m2l9)",
         
-        "INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0gs9p) <= INVERSE_/award/award_category/winners./award/award_honor/ceremony·/award/award_category/nominees./award/award_nomination/nominated_for(/m/0j8f09z)",
+        "INVERSE_/award/award_category/winners./award/award_honor/ceremony(/m/0gs9p) <= INVERSE_/award/award_category/winners./award/award_honor/ceremony*/award/award_category/nominees./award/award_nomination/nominated_for(/m/0j8f09z)",
         
         # 二元规则示例（有两个自由变量X,Y）
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,A)",
@@ -2730,7 +2730,7 @@ if __name__ == "__main__":
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/ceremony(X,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(A,B), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)",
         
         # 简写格式的二元规则（传统格式）
-        "/award/award_category/winners./award/award_honor/ceremony <= /award/award_category/winners./award/award_honor/ceremony·/award/award_ceremony/awards_presented./award/award_honor/award_winner·INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner",
+        "/award/award_category/winners./award/award_honor/ceremony <= /award/award_category/winners./award/award_honor/ceremony*/award/award_ceremony/awards_presented./award/award_honor/award_winner*INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner",
 
         "/award/award_category/winners./award/award_honor/ceremony(/m/0gs96,X) <= /award/award_category/winners./award/award_honor/ceremony(A,X), /award/award_category/nominees./award/award_nomination/nominated_for(A,/m/02r79_h)",
         "/award/award_category/winners./award/award_honor/ceremony(/m/0f4x7,X) <= /award/award_category/winners./award/award_honor/ceremony(A,X), /award/award_nominee/award_nominations./award/award_nomination/award(/m/02_fj,A)",
@@ -2744,15 +2744,15 @@ if __name__ == "__main__":
 
         "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)",
 
-        "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(·)",
-        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency · INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency · /education/university/local_tuition./measurement_unit/dated_money_value/currency"
+        "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(*)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency * INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency * /education/university/local_tuition./measurement_unit/dated_money_value/currency"
     
         "/award/award_category/winners./award/award_honor/ceremony(X,Y) <= /award/award_category/winners./award/award_honor/award_winner(X,A), /award/award_winner/awards_won./award/award_honor/award_winner(B,A), /award/award_ceremony/awards_presented./award/award_honor/award_winner(Y,B)",
 
         "/film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/0b90_r) <= /film/film/release_date_s./film/film_regional_release_date/film_release_region(X,/m/07ylj)",
 
-        "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(·)",
-        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency · INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency · /education/university/local_tuition./measurement_unit/dated_money_value/currency"
+        "INVERSE_/music/genre/artists(/m/06by7) <= INVERSE_/music/performance_role/regular_performances./music/group_membership/group(*)",
+        "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency <= /education/university/local_tuition./measurement_unit/dated_money_value/currency * INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency * /education/university/local_tuition./measurement_unit/dated_money_value/currency"
     ]
     
     # 用户提供的Complex Rules测试用例
@@ -2766,7 +2766,7 @@ if __name__ == "__main__":
         "INVERSE_/government/legislative_session/members./government/government_position_held/legislative_sessions(/m/01gsvb) <= /government/legislative_session/members./government/government_position_held/district_represented(/m/05kkh); /government/legislative_session/members./government/government_position_held/district_represented(/m/07_f2)"
     ]
 
-    # 下面这些rules理论上supp都应该是0，因为 currency 都是多对一关系，所以后半段 INVERSE_currency·currency 不可能有实例
+    # 下面这些rules理论上supp都应该是0，因为 currency 都是多对一关系，所以后半段 INVERSE_currency*currency 不可能有实例
     test_rules4 = {
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/statistical_region/gdp_real./measurement_unit/adjusted_money_value/adjustment_currency(B,Y)",
         "/education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,Y) <= /education/university/local_tuition./measurement_unit/dated_money_value/currency(X,A), /business/business_operation/operating_income./measurement_unit/dated_money_value/currency(B,A), /organization/endowed_organization/endowment./measurement_unit/dated_money_value/currency(B,Y)",
@@ -2778,9 +2778,9 @@ if __name__ == "__main__":
         }
     
     # 注意，单独计算下面的rule，发现bodySize != 0，这是严重的问题
-    # test_rules = ["INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency·/education/university/local_tuition./measurement_unit/dated_money_value/currency·INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency"]
+    # test_rules = ["INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency*/education/university/local_tuition./measurement_unit/dated_money_value/currency*INVERSE_/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency"]
 
-    # test_rules = ["/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  /location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency·INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency·/education/university/local_tuition./measurement_unit/dated_money_value/currency"]
+    # test_rules = ["/location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency <=  /location/statistical_region/rent50_2./measurement_unit/dated_money_value/currency*INVERSE_/education/university/local_tuition./measurement_unit/dated_money_value/currency*/education/university/local_tuition./measurement_unit/dated_money_value/currency"]
 
     if len(sys.argv) > 1:
         test_rules = sys.argv[1:]

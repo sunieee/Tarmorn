@@ -27,8 +27,8 @@ object IdManager {
             entity2id[letterStr] = id
             id2entity[id] = letterStr
         }
-        entity2id["·"] = 0 // Special entity for existence
-        id2entity[0] = "·" // Map existence entity to ID 0
+        entity2id["*"] = 0 // Special entity for existence
+        id2entity[0] = "*" // Map existence entity to ID 0
     }
 
     /**
@@ -65,7 +65,7 @@ object IdManager {
             return id2relation[id] ?: throw IllegalArgumentException("Unknown relation ID: $id")
         } else {
             val relations = RelationPath.decode(id)
-            return relations.joinToString("·") { getRelationString(it) }
+            return relations.joinToString("*") { getRelationString(it) }
         }
     }
 
@@ -144,7 +144,7 @@ object IdManager {
         fun termString(eid: Int): String = when (eid) {
             getYId() -> "Y"
             getXId() -> "X"
-            0 -> "·"
+            0 -> "*"
             else -> getEntityString(eid)
         }
 
@@ -159,7 +159,7 @@ object IdManager {
         for (i in 1 until n+1) {
             nodes[i] = ('A'.code + (i - 1)).toChar().toString()
         }
-        if (tailTerm != "·") nodes[n] = tailTerm
+        if (tailTerm != "*") nodes[n] = tailTerm
         val parts = ArrayList<String>(n)
         for (i in 0 until n) {
             val r = relations[i]

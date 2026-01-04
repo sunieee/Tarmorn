@@ -30,6 +30,8 @@ argparser.add_argument("--combo_debug", action="store_true", help="whether to di
 argparser.add_argument("--combo_max_depth", type=int, default=-1, help="whether to disable u_xxd rules")
 argparser.add_argument("--combo_max_branch", type=int, default=-1, help="whether to disable u_xxd rules")
 argparser.add_argument("--b_max_length", type=int, default=-1, help="whether to disable u_xxd rules")
+argparser.add_argument("--d_weight", type=float, default=0.1, help="whether to disable u_xxd rules")
+argparser.add_argument("--z_weight", type=float, default=0.01, help="whether to disable u_xxd rules")
 
 
 args = argparser.parse_args()

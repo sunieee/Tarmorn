@@ -185,7 +185,7 @@ object RelationPath {
     
     /**
      * Check if prefix is a prefix of path.
-     * For example: r1 is a prefix of r1·r2, r1·r2 is a prefix of r1·r2·r3
+     * For example: r1 is a prefix of r1*r2, r1*r2 is a prefix of r1*r2*r3
      */
     fun isPrefixOf(prefix: Long, path: Long): Boolean {
         if (prefix == path) return false  // 自身不算前缀

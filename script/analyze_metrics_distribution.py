@@ -7,9 +7,9 @@ import os
 def is_unary_rule(rule_str):
     """
     判断规则是否为一元规则
-    一元规则包含常量，例如 (X,/m/04dn09n) 或 (X,·)
+    一元规则包含常量，例如 (X,/m/04dn09n) 或 (X,*)
     """
-    return '(' in rule_str and ('·)' in rule_str or '/m/' in rule_str.split('(')[-1])
+    return '(' in rule_str and ('*)' in rule_str or '/m/' in rule_str.split('(')[-1])
 
 def is_binary_rule(rule_str):
     """
@@ -20,7 +20,7 @@ def is_binary_rule(rule_str):
         return False
     args = rule_str.split('(')[-1].rstrip(')')
     # 简单判断：如果不包含常量标记，则为二元规则
-    return '·' not in args and '/m/' not in args
+    return '*' not in args and '/m/' not in args
 
 def analyze_file(file_path):
     """分析JSON文件中的规则分布"""

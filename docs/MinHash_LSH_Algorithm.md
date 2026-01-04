@@ -30,7 +30,7 @@ const val BANDS = MH_DIM / R // band数量 = 64
 // 原子定义
 data class MyAtom(val relationId: Long, val entityId: Int)
 // entityId < 0: Binary原子 r(X,Y)
-// entityId = 0: 存在性原子 r(X,·)
+// entityId = 0: 存在性原子 r(X,*)
 // entityId > 0: 常量原子 r(X,c)
 
 // 公式定义
@@ -189,7 +189,7 @@ fun performLSH(formula: Formula, minHashSignature: IntArray, supp: Int, rpLength
 
 ### Unary原子化
 1. **常量原子**: r(X,c) - 为每个常量c创建原子
-2. **存在性原子**: r(X,·) - 表示关系的存在性
+2. **存在性原子**: r(X,*) - 表示关系的存在性
 3. **实例集合**: 收集相应的实体集合
 4. **MinHash计算**: 为实体集合计算MinHash签名
 
@@ -201,7 +201,7 @@ val binaryAtom = MyAtom(relationId, -1)
 // Unary常量原子: relation(X, entity123)
 val unaryAtom = MyAtom(relationId, 123)
 
-// Unary存在性原子: relation(X, ·)
+// Unary存在性原子: relation(X, *)
 val existenceAtom = MyAtom(relationId, 0)
 ```
 

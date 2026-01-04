@@ -56,7 +56,7 @@ class MyAtom(
         return when {
             entityId == IdManager.getYId() -> "$relationStr(X,Y)"
             entityId == IdManager.getXId() -> "$relationStr(X,X)"
-            entityId == 0 -> "$relationStr(X,·)"
+            entityId == 0 -> "$relationStr(X,*)"
             else -> {
                 val entityStr = IdManager.getEntityString(entityId)
                 "$relationStr(X,$entityStr)"
@@ -197,7 +197,7 @@ class MyAtom(
                 val inv = IdManager.getInverseRelation(relationId)
                 TLearn.R2h2tSet[inv]?.get(entityId) ?: emptySet()
             }
-            // Existence: r(X,·)
+            // Existence: r(X,*)
             entityId == 0 -> TLearn.R2h2tSet[relationId]?.keys ?: emptySet()
             // Loop: r(X,X)
             entityId == IdManager.getXId() -> TLearn.r2loopSet[relationId] ?: emptySet()

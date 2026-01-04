@@ -236,7 +236,7 @@ def convert_to_simplified_format(rule: str) -> str:
     
     转换为:
     /award/award_category/winners./award/award_honor/ceremony <=
-    /award/award_category/winners./award/award_honor/award_winner · INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner
+    /award/award_category/winners./award/award_honor/award_winner * INVERSE_/award/award_ceremony/awards_presented./award/award_honor/award_winner
     """
     if '<=' not in rule:
         return rule
@@ -259,7 +259,7 @@ def convert_to_simplified_format(rule: str) -> str:
     # 使用RuleParser转换
     try:
         normalized = RuleParser._normalize_to_simplified(head_part, body_part)
-        # 美化输出：在·连接符左右添加空格
+        # 美化输出：在*连接符左右添加空格
         normalized = beautify_simplified_rule(normalized)
         return normalized
     except Exception as e:
@@ -268,15 +268,7 @@ def convert_to_simplified_format(rule: str) -> str:
         return rule
 
 def beautify_simplified_rule(rule: str) -> str:
-    """
-    美化简写格式规则：在·连接符左右添加空格
-    
-    例如：/rel1·/rel2·INVERSE_/rel3 => /rel1 · /rel2 · INVERSE_/rel3
-    """
-    # 替换·为 · （左右各添加一个空格）
-    # 但要避免重复添加空格
-    beautified = re.sub(r'\s*·\s*', ' · ', rule)
-    return beautified
+    return rule
 
 
 def is_binary_rule(rule: str) -> bool:
@@ -410,10 +402,10 @@ def get_body_atom_type(atom: str) -> str:
 def get_relation_path_length(atom: str) -> int:
     """
     获取原子中关系路径的长度（关系的个数）
-    通过计数"·"的个数+1来确定
+    通过计数"*"的个数+1来确定
     
     注意：这个函数现在用于简写格式的原子
-    简写格式的原子就是一个关系路径，可能包含多个关系用·连接
+    简写格式的原子就是一个关系路径，可能包含多个关系用*连接
     """
     # 对于简写格式，atom可能不包含括号，就是纯关系路径
     # 或者是 relation_path(constant) 格式
@@ -424,11 +416,11 @@ def get_relation_path_length(atom: str) -> int:
     else:
         relation_path = atom.strip()
     
-    # 计算"·"的个数（忽略空格）
+    # 计算"*"的个数（忽略空格）
     # 移除所有空格后再计数
     relation_path_no_space = relation_path.replace(' ', '')
-    dot_count = relation_path_no_space.count('·')
-    # 关系路径长度 = "·"的个数 + 1
+    dot_count = relation_path_no_space.count('*')
+    # 关系路径长度 = "*"的个数 + 1
     return dot_count + 1
 
 def get_rule_length_type(rule: str) -> str:
@@ -448,13 +440,13 @@ def get_rule_length_type(rule: str) -> str:
     # 从简写格式中提取body
     body = simplified_rule.split('<=', 1)[1].strip()
     
-    # 对于简写格式的二元规则，body就是一个关系路径（可能包含·连接多个关系）
+    # 对于简写格式的二元规则，body就是一个关系路径（可能包含*连接多个关系）
     # 对于简写格式的一元规则，body是 relation_path(constant) 格式
     # 可能有多个这样的原子（虽然通常一元规则只有一个body原子）
     
     # 解析body原子
     # 简写格式的二元规则: body就是一个关系路径，没有逗号分隔
-    # 简写格式的一元规则: body可能是 rel(c) 或 rel1·rel2(c)
+    # 简写格式的一元规则: body可能是 rel(c) 或 rel1*rel2(c)
     
     # 检查是否为二元规则（简写格式下，二元规则的body没有括号，或者head没有括号）
     head = simplified_rule.split('<=', 1)[0].strip()
