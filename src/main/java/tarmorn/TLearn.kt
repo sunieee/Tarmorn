@@ -45,6 +45,7 @@ object TLearn {
     const val MIN_COMMON_BUCKET = 2
     const val MAX_BUCKET_ATTEMPT = 100
     const val MAX_STACK_SIZE = 3
+    const val MIN_SURPRISAL_LIFT = 0.1
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 256
@@ -134,7 +135,7 @@ object TLearn {
         println("\n=== Phase 2: Composition ===")
         // Step 3: Composition phase - combine atoms into formulas using Eclat
         try {
-            // compositionPhase()
+            compositionPhase()
         } catch (e: Exception) {
             println("Error during composition phase: ${e.message}")
             e.printStackTrace()
@@ -166,24 +167,30 @@ object TLearn {
             val futures = relations.map { (relation, tripleSet) ->
                 threadPool.submit {
                     R2supp[relation] = tripleSet.size
-                    if (tripleSet.size >= Settings.MIN_SUPP) {
+                    val relationInv = RelationPath.getInverseRelation(relation)
+                    val entitySupp = minOf(
+                        R2h2tSet[relation]?.size ?: 0,
+                        R2h2tSet[relationInv]?.size ?: 0
+                    )
+                    if (entitySupp >= Settings.MIN_ENTITY_SUPP) {
+                    // if (tripleSet.size >= Settings.MIN_SUPP) {
+                    // 注意不要用 supp 过滤，而是用 entity supp 过滤
                         relationQueue.offer(relation)
                         addedCount.incrementAndGet()
-                        debug2("[path] ${IdManager.getRelationString(relation)}: ${tripleSet.size}")
+                        debug1("[path] ${IdManager.getRelationString(relation)}, supp: ${tripleSet.size}, entitySupp: $entitySupp")
 
                         if (!IdManager.isInverseRelation(relation)) {
                             // 为L=1关系进行原子化，直接使用R2h2tSet中的反向索引
                             val h2tSet = R2h2tSet[relation]
-                            val inverseRelation = RelationPath.getInverseRelation(relation)
-                            val t2hSet = R2h2tSet[inverseRelation]
+                            val t2hSet = R2h2tSet[relationInv]
                             
                             if (h2tSet != null && t2hSet != null) {
                                 // 处理Binary原子
-                                atomizeBinaryRelationL1(relation, r2instanceSet[relation]!!, r2instanceSet[inverseRelation]!!)
+                                atomizeBinaryRelationL1(relation, r2instanceSet[relation]!!, r2instanceSet[relationInv]!!)
                                 // 处理Unary原子
                                 atomizeUnaryRelationPath(relation, h2tSet.toMutableMap(), t2hSet.toMutableMap(), r2loopSet[relation] ?: mutableSetOf())
                             } else {
-                                println("Warning: Missing h2tSet or t2hSet for relation ${IdManager.getRelationString(relation)} or its inverse ${IdManager.getRelationString(inverseRelation)}")
+                                println("Warning: Missing h2tSet or t2hSet for relation ${IdManager.getRelationString(relation)} or its inverse ${IdManager.getRelationString(relationInv)}")
                             }
                         }
                     }
@@ -721,9 +728,11 @@ object TLearn {
     fun atomizeBinaryRelationL1(rp: Long, instanceSet: MutableSet<Int>, inverseSet: MutableSet<Int>) {
         val rpInv = RelationPath.getInverseRelation(rp)
         // 1. r(X,Y): Binary Atom with relation path rp
-        performLSH(MyAtom(rp, IdManager.getYId(), instanceSet))
+        if (instanceSet.size >= Settings.MIN_SUPP)
+            performLSH(MyAtom(rp, IdManager.getYId(), instanceSet))
         // 2. r'(X,Y): Binary Atom with inverse relation path
-        performLSH(MyAtom(rpInv, IdManager.getYId(), inverseSet))
+        if (inverseSet.size >= Settings.MIN_SUPP)
+            performLSH(MyAtom(rpInv, IdManager.getYId(), inverseSet))
     }
 
     /**
@@ -865,7 +874,7 @@ object TLearn {
             }
             
             // 如果body比较简单直接验证
-            if (currentAtom.isL1Atom) tryValidate()
+            if (currentAtom.isL2Atom) tryValidate()
             else {
                 // 直接使用碰撞次数计算Jaccard相似度：bucketCount / BANDS
                 val jaccard = bucketCount.toDouble() / BANDS
@@ -1023,7 +1032,7 @@ object TLearn {
     private fun processHeadAtom(headAtom: MyAtom, bodyMap: ConcurrentHashMap<MyAtom, Metric>) {
         // Sort by confidence in descending order (Metric implements Comparable)
         val sortedBodies = bodyMap.entries
-            .sortedBy { it.value }  // Metric.compareTo sorts by confidence descending
+            .sortedBy { it.value }  // Metric.compareTo sorts by confidence / surprisal descending
             .toList()
         
         if (sortedBodies.isEmpty()) return
@@ -1043,7 +1052,7 @@ object TLearn {
             // val formula = Formula(bodyAtom)
             // setH2F2metric(headAtom, formula, metric)
             
-            debug2("Frequent-1: $headAtom <= $bodyAtom, conf=${metric.confidence}, supp=${metric.support}")
+            debug2("Frequent-1: $headAtom <= $bodyAtom, conf=${metric.confidence}, surprisal=${metric.surprisal}, supp=${metric.support}")
             
             // Build FrequentAtomSet for Eclat DFS
             // Note: bodyAtom.instances already filtered in performLSH for entity-anchored unary rules
@@ -1051,7 +1060,7 @@ object TLearn {
                 atoms = listOf(bodyAtom),
                 intersectInstances = headAtom.instances.intersect(bodyAtom.instances),
                 bodyInstances = bodyAtom.instances,
-                confidence = metric.confidence
+                metric = metric
             )
         }
         
@@ -1068,7 +1077,7 @@ object TLearn {
                     candidateAtoms = remainingAtoms,
                     intersectInstances = freq1.intersectInstances,
                     bodyInstances = freq1.bodyInstances,
-                    currentConf = freq1.confidence
+                    currentMetric = freq1.metric
                 )
             }
         }
@@ -1083,7 +1092,7 @@ object TLearn {
         candidateAtoms: List<MyAtom>,
         intersectInstances: Set<Int>,
         bodyInstances: Set<Int>,
-        currentConf: Double
+        currentMetric: Metric
     ) {
         if (stack.size >= MAX_STACK_SIZE) return
         if (candidateAtoms.isEmpty()) return
@@ -1099,9 +1108,14 @@ object TLearn {
             }
             
             val newBodyInstances = bodyInstances.intersect(nextAtom.instances)
-            val newConf = newIntersectionSize.toDouble() / newBodyInstances.size
+            val newMetric = Metric(
+                support = newIntersectionSize.toDouble(),
+                headSize = headAtom.instances.size,
+                bodySize = newBodyInstances.size
+            )
             
-            if (newConf > currentConf * MIN_LIFT && newConf > H2B2metric[headAtom]!![nextAtom]!!.confidence * MIN_LIFT) {
+            val deltaSurprisal = newMetric.surprisal - currentMetric.surprisal - H2B2metric[headAtom]!![nextAtom]!!.surprisal
+            if (deltaSurprisal >  MIN_SURPRISAL_LIFT) {
                 // Add nextAtom to stack
                 stack.add(nextAtom)
                 
@@ -1113,14 +1127,9 @@ object TLearn {
                 }
                 
                 if (formula != null) {
-                    val metric = Metric(
-                        support = newIntersectionSize.toDouble(),
-                        headSize = headAtom.instances.size,
-                        bodySize = newBodyInstances.size
-                    )
-                    setH2F2metric(headAtom, formula, metric)
+                    setH2F2metric(headAtom, formula, newMetric)
                     
-                    debug2("Frequent-${stack.size}: $headAtom <= ${stack.joinToString(" & ")}, conf=$newConf, supp=$newIntersectionSize")
+                    debug2("Frequent-${stack.size}: $headAtom <= ${stack.joinToString(" & ")}, conf=${newMetric.confidence}, surprisal=${newMetric.surprisal}, supp=$newIntersectionSize")
                 }
                 
                 // Recurse: only combine with subsequent atoms
@@ -1132,7 +1141,7 @@ object TLearn {
                         candidateAtoms = remainingCandidates,
                         intersectInstances = newIntersectInstances,
                         bodyInstances = newBodyInstances,
-                        currentConf = newConf
+                        currentMetric = newMetric
                     )
                 }
                 
@@ -1149,7 +1158,7 @@ object TLearn {
         val atoms: List<MyAtom>,
         val intersectInstances: Set<Int>,
         val bodyInstances: Set<Int>,
-        val confidence: Double
+        val metric: Metric
     )
 
 

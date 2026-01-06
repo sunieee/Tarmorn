@@ -10,6 +10,10 @@ object Settings {
     @JvmField
     var MIN_SUPP: Int = 10
     @JvmField
+    var NUM_UNSEEN: Int = 5
+    @JvmField
+    var MIN_SURPRISAL_LIFT: Double = 0.01
+    @JvmField
     var MAX_JOIN_INSTANCES_L2: Int = 20000
     @JvmField
     var MAX_JOIN_INSTANCES_L3: Int = 10000
@@ -313,6 +317,9 @@ object Settings {
         // Load from environment variables to override YAML settings
         loadFrom(System.getenv().toMutableMap())
 
+        // Replace {DATASET} placeholders after all config is loaded
+        replacePaths()
+
         if (AGGREGATION_TYPE == "maxplus") AGGREGATION_ID = 1
         if (AGGREGATION_TYPE == "max2") AGGREGATION_ID = 2
         if (AGGREGATION_TYPE == "noisyor") AGGREGATION_ID = 3
@@ -345,8 +352,11 @@ object Settings {
     }
 
     fun loadFrom(config: MutableMap<String, Any>) {
+        // 创建大小写不敏感的映射
+        val configLower = config.mapKeys { it.key.uppercase() }
+        
         for (field in Settings::class.java.getFields()) {
-            val value = config.get(field.getName())
+            val value = configLower.get(field.getName().uppercase())
             if (value != null) {
                 val type = field.getType()
                 try {
@@ -371,6 +381,9 @@ object Settings {
                 }
             }
         }
+    }
+    
+    private fun replacePaths() {
         PATH_OUTPUT = PATH_OUTPUT.replace("{DATASET}", DATASET)
         PATH_RULES = PATH_RULES.replace("{DATASET}", DATASET)
         PATH_TRAINING = PATH_TRAINING.replace("{DATASET}", DATASET)
