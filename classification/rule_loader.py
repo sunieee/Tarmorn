@@ -4,13 +4,18 @@
 
 规则文件格式示例:
 1. 普通二元规则:
-   0.85  rel <= rel1*rel2
+   body_size  support  confidence  rel <= rel1*rel2
    
 2. 普通一元规则:
-   0.90  rel(/m/xxx) <= rel1*rel2(/m/yyy)
+   body_size  support  confidence  rel(/m/xxx) <= rel1*rel2(/m/yyy)
    
 3. 组合规则 (multi-branch):
-   0.75  rel <= branch1; branch2; branch3
+   body_size  support  confidence  rel <= branch1; branch2; branch3
+   
+格式说明：
+- body_size: 规则前提出现的次数
+- support: 同时满足前提和结论的次数  
+- confidence: 置信度（文件中的值，但实际使用时会根据 support / (body_size + NUM_UNSEEN) 计算）
 """
 
 import re
@@ -73,20 +78,19 @@ class RuleLoader:
     
     def _parse_and_add_rule(self, line: str, verbose: bool = False):
         """解析单行规则并添加到索引"""
-        # 解析置信度和规则部分
-        # 格式: confidence  head <= body
-        parts = line.split(None, 1)  # 按空白分割，最多2部分
-        if len(parts) < 2:
+        # 解析度量和规则部分
+        # 格式: body_size support confidence head <= body
+        parts = line.split(None, 3)  # 按空白分割，最多4部分
+        if len(parts) < 4:
             raise ValueError(f"Invalid rule format: {line}")
         
         try:
-            confidence = float(parts[0])
-        except ValueError:
-            # 可能没有置信度前缀，整行就是规则
-            confidence = 1.0
-            rule_str = line
-        else:
-            rule_str = parts[1]
+            body_size = int(parts[0])
+            support = int(parts[1])
+            confidence = float(parts[2])
+            rule_str = parts[3]
+        except (ValueError, IndexError):
+            raise ValueError(f"Invalid metrics in rule: {line}")
         
         if '<=' not in rule_str:
             raise ValueError(f"Missing '<=' in rule: {rule_str}")
@@ -97,17 +101,17 @@ class RuleLoader:
         
         # 检查是否是组合规则（body包含分号）
         if ';' in body_part:
-            self._add_combo_rule(head_part, body_part, confidence, verbose)
+            self._add_combo_rule(head_part, body_part, body_size, support, confidence, verbose)
         else:
-            self._add_normal_rule(head_part, body_part, confidence, verbose)
+            self._add_normal_rule(head_part, body_part, body_size, support, confidence, verbose)
     
     def _add_normal_rule(self, head_str: str, body_str: str, 
-                         confidence: float, verbose: bool = False):
+                         body_size: int, support: int, confidence: float, verbose: bool = False):
         """添加普通规则"""
         head_atom = self._parse_atom(head_str)
         body_atom = self._parse_atom(body_str)
         
-        metric = Metric.from_confidence(confidence)
+        metric = Metric(body_size=body_size, support=support)
         rule = NormalRule(head=head_atom, body=body_atom, metric=metric)
         
         if head_atom not in self.h2b2rule:
@@ -119,7 +123,7 @@ class RuleLoader:
             print(f"  Added: {rule.to_string(self.id_manager)}")
     
     def _add_combo_rule(self, head_str: str, body_str: str,
-                        confidence: float, verbose: bool = False):
+                        body_size: int, support: int, confidence: float, verbose: bool = False):
         """添加组合规则"""
         head_atom = self._parse_atom(head_str)
         
@@ -130,7 +134,7 @@ class RuleLoader:
             key=lambda a: (a.relation_id, a.entity_id)
         ))
         
-        metric = Metric.from_confidence(confidence)
+        metric = Metric(body_size=body_size, support=support)
         combo = ComboRule(head=head_atom, branches=branch_atoms, metric=metric)
         
         # 找到对应的NormalRule并用其hash作为key

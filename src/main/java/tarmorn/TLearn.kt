@@ -46,6 +46,7 @@ object TLearn {
     const val MAX_BUCKET_ATTEMPT = 100
     const val MAX_STACK_SIZE = 3
     const val MIN_SURPRISAL_LIFT = 0.1
+    const val MIN_RULE_JACCARD = 0.1
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 256
@@ -81,6 +82,7 @@ object TLearn {
     val H2B2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<MyAtom, Metric>>() // headAtom -> bodyAtom -> metric
     val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
     val H2F2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
+    val atomPair2Jaccard = ConcurrentHashMap<Pair<MyAtom, MyAtom>, Double>() // atomPair -> Jaccard similarity
 
     // Statistics variables
     var totalRules = 0
@@ -144,6 +146,9 @@ object TLearn {
             
             // 保存H2F2metric到JSON文件
             saveH2F2metricToJson()
+            
+            // 保存atomPair2Jaccard到JSON文件
+            saveAtomPair2JaccardToJson()
         }
 
         // Print rule statistics
@@ -818,10 +823,12 @@ object TLearn {
             }
             if (existenceAtom != null) {
                 val existenceMetric = B2metric[existenceAtom]!!
+                // if (existenceMetric.confidence >= metric.confidence) {
                 if (existenceMetric.confidence >= metric.confidence) {
                     // 存在性原子的 confidence 更好，不添加当前常量原子
                     // 这里不加等号从结果上来说更好：0.318-> 0.320. 原因：Ud权重比Uc更低，相同的conf的rule，Uc实际conf更高
-                    // 因此设置 d_weight=1 避免这个问题，解决规则冗余
+                    // 0105：改成 >=，设置 d_weight=1 避免这个问题，解决规则冗余
+                    // 0107: 改成 >，从结果上来看，设置d_weight=1降低了指标 325->322，但是cluster没用，改回来算了 
                     debug2("Filtered out constant atom $bodyAtom (conf=${metric.confidence}) due to better existence atom $existenceAtom (conf=${existenceMetric.confidence})")
                     return
                 }
@@ -1100,6 +1107,23 @@ object TLearn {
         for (i in candidateAtoms.indices) {
             val nextAtom = candidateAtoms[i]
             
+            // 当 stack.size == 1 时，检查规则之间的 Jaccard 相似度（redundancy）
+            if (stack.size == 1) {
+                val atom1 = stack[0]
+                val atom2 = nextAtom
+                
+                // 按 hash 排序创建 atomPair
+                val atomPair = if (atom1.hashCode() <= atom2.hashCode()) Pair(atom1, atom2) else Pair(atom2, atom1)
+                // 检查是否已计算过
+                val jaccard = atomPair2Jaccard.computeIfAbsent(atomPair) {
+                    calculateJaccardFromMinHash(atom1, atom2)
+                }
+                if (jaccard == 0.0) {
+                    // prefiltering: too low similarity, skip
+                    continue
+                }
+            }
+            
             val newIntersectInstances = intersectInstances.intersect(nextAtom.instances)
             val newIntersectionSize = newIntersectInstances.size
             
@@ -1160,6 +1184,59 @@ object TLearn {
         val bodyInstances: Set<Int>,
         val metric: Metric
     )
+    
+    /**
+     * Calculate Jaccard similarity using MinHash signatures
+     * Jaccard ≈ (number of matching bands) / (total bands)
+     */
+    private fun calculateJaccardFromMinHash(atom1: MyAtom, atom2: MyAtom): Double {
+        if (atom1.minHashSignature.isEmpty() || atom2.minHashSignature.isEmpty()) {
+            return 0.0
+        }
+        
+        var matchingBands = 0
+        for (bandIndex in 0 until BANDS) {
+            if (atom1.minHashSignature[bandIndex] == atom2.minHashSignature[bandIndex]) {
+                matchingBands++
+            }
+        }
+        
+        return matchingBands.toDouble() / BANDS
+    }
+    
+    /**
+     * Save atomPair2Jaccard to JSON file
+     */
+    private fun saveAtomPair2JaccardToJson() {
+        val outputFile = File("out/${Settings.DATASET}/atomPair2Jaccard.json")
+        outputFile.parentFile?.mkdirs()
+        
+        println("Saving atomPair2Jaccard to ${outputFile.absolutePath}...")
+        
+        BufferedWriter(FileWriter(outputFile)).use { writer ->
+            writer.write("{\n")
+            val entries = atomPair2Jaccard.entries.toList()
+                .sortedByDescending { it.value } // Sort by Jaccard descending
+            
+            entries.forEachIndexed { index, (atomPair, jaccard) ->
+                if (jaccard < MIN_RULE_JACCARD) return@forEachIndexed // Skip low Jaccard entries
+                writer.write("  \"${atomPair.first.getRuleString()};${atomPair.second.getRuleString()}\": $jaccard")
+                if (index < entries.size - 1) writer.write(",")
+                writer.write("\n")
+                
+                // Flush every 100 entries
+                if (index % 100 == 0 && index > 0) {
+                    writer.flush()
+                    println("[saveAtomPair2JaccardToJson] Processed ${index + 1}/${entries.size} atom pairs...")
+                }
+            }
+            
+            writer.write("}\n")
+        }
+        
+        println("Successfully saved atomPair2Jaccard to ${outputFile.absolutePath}")
+        println("Total atom pairs: ${atomPair2Jaccard.size}")
+    }
 
 
     /**

@@ -23,6 +23,9 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional, Set
 from collections import defaultdict
 
+# 全局配置：未观测平滑参数
+NUM_UNSEEN = 5
+
 
 # ============ RelationPath 编码工具 ============
 
@@ -306,22 +309,21 @@ class Atom:
 class Metric:
     """
     度量类 - 存储规则的统计度量
+    confidence = support / (body_size + NUM_UNSEEN)
     """
-    head_size: int = 0      # 头部支持度 (规则结论出现的次数)
     body_size: int = 0      # 体部支持度 (规则前提出现的次数)
     support: int = 0        # 规则支持度 (同时满足前提和结论的次数)
-    confidence: float = 0.0 # 置信度 = support / body_size
+    
+    @property
+    def confidence(self) -> float:
+        """置信度 = support / (body_size + NUM_UNSEEN)"""
+        return self.support / (self.body_size + NUM_UNSEEN)
     
     def __str__(self):
-        return f"Metric(conf={self.confidence:.4f}, supp={self.support})"
+        return f"Metric(conf={self.confidence:.4f}, body={self.body_size}, supp={self.support})"
     
     def __repr__(self):
         return self.__str__()
-    
-    @classmethod
-    def from_confidence(cls, confidence: float):
-        """从置信度创建Metric"""
-        return cls(confidence=confidence)
 
 
 # ============ NormalRule 普通规则 ============
@@ -389,10 +391,3 @@ H2B2Rule = Dict[Atom, Dict[Atom, NormalRule]]
 # Dict[int, ComboRule]
 # key是NormalRule的hashCode，value是ComboRule
 RuleHash2Combo = Dict[int, ComboRule]
-
-
-class ScoringMode:
-    """评分模式枚举"""
-    MAX = "max"
-    NOISY_OR = "noisy_or"
-    SUM = "sum"
