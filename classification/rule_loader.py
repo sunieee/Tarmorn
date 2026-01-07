@@ -2,15 +2,20 @@
 规则加载器模块
 从规则文件中读取规则并构造H2B2Metric和HB2Combo数据结构
 
-规则文件格式示例:
+规则文件实际格式（完整格式）:
 1. 普通二元规则:
-   body_size  support  confidence  rel <= rel1*rel2
+   body_size  support  confidence  rel(X,Y) <= rel1(X,A)*rel2(A,Y)
    
 2. 普通一元规则:
-   body_size  support  confidence  rel(/m/xxx) <= rel1*rel2(/m/yyy)
+   body_size  support  confidence  rel(X,/m/xxx) <= rel1(X,A)*rel2(A,/m/yyy)
    
 3. 组合规则 (multi-branch):
-   body_size  support  confidence  rel <= branch1; branch2; branch3
+   body_size  support  confidence  rel(X,Y) <= branch1(X,A); branch2(Y,A)
+
+转换后的简写格式：
+1. 二元规则: rel <= rel1*rel2
+2. 一元规则: rel(/m/xxx) <= rel1*rel2(/m/yyy)
+3. 组合规则: rel <= branch1; branch2
    
 格式说明：
 - body_size: 规则前提出现的次数
@@ -29,9 +34,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'script'))
 
 from structures import (
     IdManager, RelationPath, Atom, Metric,
-    NormalRule, ComboRule, H2B2Rule, RuleHash2Combo
+    Rule, Combo, H2B2Rule, RuleHash2Combo
 )
 
+# 导入RuleParser用于格式转换（使用绝对导入，因为已添加到sys.path）
+try:
+    from analysis_rule import RuleParser
+except ImportError as e:
+    print(f"Warning: Could not import RuleParser from analysis_rule: {e}")
+    print("Rules will be treated as already in simplified format.")
+    # 定义一个简单的fallback
+    class RuleParser:
+        @staticmethod
+        def _normalize_to_simplified(head_part: str, body_part: str) -> str:
+            """简单的fallback，假设已经是简写格式"""
+            return f"{head_part} <= {body_part}"
 
 class RuleLoader:
     """
@@ -58,9 +75,15 @@ class RuleLoader:
             rule_file: 规则文件路径
             verbose: 是否打印详细信息
         """
+        print(f"  Loading rules from: {rule_file}")
         with open(rule_file, 'r', encoding='utf-8') as f:
             for line in f:
                 self.stats['total_lines'] += 1
+                
+                # 每1000行打印一次进度
+                if self.stats['total_lines'] % 100000 == 0:
+                    print(f"    Processed {self.stats['total_lines']} lines, {self.stats['normal_rules']} normal rules, {self.stats['combo_rules']} combo rules...")
+                
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
@@ -73,6 +96,7 @@ class RuleLoader:
                         print(f"[WARN] Failed to parse rule: {line}")
                         print(f"       Error: {e}")
         
+        print(f"  Finished loading rules.")
         if verbose:
             self._print_stats()
     
@@ -100,10 +124,51 @@ class RuleLoader:
         body_part = body_part.strip()
         
         # 检查是否是组合规则（body包含分号）
-        if ';' in body_part:
-            self._add_combo_rule(head_part, body_part, body_size, support, confidence, verbose)
+        # 组合规则需要特殊处理，因为RuleParser._normalize_to_simplified不支持分号
+        is_combo = ';' in body_part
+        
+        # 转换为简写格式
+        # 规则文件中是完整格式：rel(X,Y) <= body(X,A)*body2(A,Y)
+        # 需要转换为简写格式：rel <= body*body2
+        try:
+            if verbose and self.stats['total_lines'] <= 3:
+                print(f"    Converting rule {self.stats['total_lines']}: {head_part} <= {body_part}")
+                print(f"    Is combo: {is_combo}")
+            
+            if is_combo:
+                # 组合规则：分别转换每个分支
+                branches = [b.strip() for b in body_part.split(';')]
+                simplified_branches = []
+                simplified_head = None
+                for branch in branches:
+                    branch_simplified = RuleParser._normalize_to_simplified(head_part, branch)
+                    simplified_head, branch_body = branch_simplified.split('<=', 1)
+                    simplified_branches.append(branch_body.strip())
+                # 头部只需要转换一次（使用第一个分支）
+                simplified_head = simplified_head.strip()
+                simplified_body = '; '.join(simplified_branches)
+            else:
+                # 普通规则：直接转换
+                simplified_rule = RuleParser._normalize_to_simplified(head_part, body_part)
+                simplified_head, simplified_body = simplified_rule.split('<=', 1)
+                simplified_head = simplified_head.strip()
+                simplified_body = simplified_body.strip()
+            
+            if verbose and self.stats['total_lines'] <= 3:
+                print(f"    Simplified to: {simplified_head} <= {simplified_body}")
+        except Exception as e:
+            if verbose or self.stats['parse_errors'] < 10:
+                print(f"[WARN] Failed to convert to simplified format: {head_part} <= {body_part}")
+                print(f"       Error: {e}, skipping this rule")
+            # 跳过这个规则
+            self.stats['parse_errors'] += 1
+            return
+        
+        # 检查是否是组合规则（body包含分号）
+        if ';' in simplified_body:
+            self._add_combo_rule(simplified_head, simplified_body, body_size, support, confidence, verbose)
         else:
-            self._add_normal_rule(head_part, body_part, body_size, support, confidence, verbose)
+            self._add_normal_rule(simplified_head, simplified_body, body_size, support, confidence, verbose)
     
     def _add_normal_rule(self, head_str: str, body_str: str, 
                          body_size: int, support: int, confidence: float, verbose: bool = False):
@@ -112,7 +177,7 @@ class RuleLoader:
         body_atom = self._parse_atom(body_str)
         
         metric = Metric(body_size=body_size, support=support)
-        rule = NormalRule(head=head_atom, body=body_atom, metric=metric)
+        rule = Rule(head=head_atom, body=body_atom, metric=metric)
         
         if head_atom not in self.h2b2rule:
             self.h2b2rule[head_atom] = {}
@@ -135,11 +200,11 @@ class RuleLoader:
         ))
         
         metric = Metric(body_size=body_size, support=support)
-        combo = ComboRule(head=head_atom, branches=branch_atoms, metric=metric)
+        combo = Combo(head=head_atom, branches=branch_atoms, metric=metric, h2b2rule=self.h2b2rule)
         
-        # 找到对应的NormalRule并用其hash作为key
+        # 找到对应的Rule并用其hash作为key
         for branch in branch_atoms:
-            base_rule = NormalRule(head=head_atom, body=branch, metric=Metric())
+            base_rule = Rule(head=head_atom, body=branch, metric=Metric())
             self.rule_hash2combo[hash(base_rule)] = combo
         
         self.stats['combo_rules'] += 1
@@ -244,7 +309,8 @@ class KnowledgeGraphLoader:
     def __init__(self, id_manager: IdManager):
         self.id_manager = id_manager
         # r2h2t索引: relation_id -> {head_id: set of tail_ids}
-        self.r2h2t: Dict[int, Dict[int, Set[int]]] = defaultdict(lambda: defaultdict(set))
+        # 不使用lambda以支持pickle（多进程需要）
+        self.r2h2t: Dict[int, Dict[int, Set[int]]] = {}
         # 三元组集合
         self.triples: Set[Tuple[int, int, int]] = set()
         self.stats = {
@@ -252,6 +318,19 @@ class KnowledgeGraphLoader:
             'entities': 0,
             'relations': 0
         }
+    
+    def _get_or_create_h2t(self, rel_id: int) -> Dict[int, Set[int]]:
+        """获取或创建head到tail的映射"""
+        if rel_id not in self.r2h2t:
+            self.r2h2t[rel_id] = {}
+        return self.r2h2t[rel_id]
+    
+    def _add_tail(self, rel_id: int, head_id: int, tail_id: int):
+        """添加一个tail到索引"""
+        h2t = self._get_or_create_h2t(rel_id)
+        if head_id not in h2t:
+            h2t[head_id] = set()
+        h2t[head_id].add(tail_id)
     
     def load_triples(self, triple_file: str, verbose: bool = False):
         """
@@ -261,11 +340,16 @@ class KnowledgeGraphLoader:
             triple_file: 三元组文件路径 (格式: head TAB relation TAB tail)
             verbose: 是否打印详细信息
         """
+        print(f"  Loading triples from: {triple_file}")
         with open(triple_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
+                
+                # 每10000行打印一次进度
+                if self.stats['total_triples'] > 0 and self.stats['total_triples'] % 100000 == 0:
+                    print(f"    Loaded {self.stats['total_triples']} triples...")
                 
                 parts = line.split('\t')
                 if len(parts) != 3:
@@ -284,13 +368,16 @@ class KnowledgeGraphLoader:
                 self.triples.add((head_id, rel_id, tail_id))
                 
                 # 建立r2h2t索引
-                self.r2h2t[rel_id][head_id].add(tail_id)
+                self._add_tail(rel_id, head_id, tail_id)
                 
                 self.stats['total_triples'] += 1
         
+        print(f"  Finished loading {self.stats['total_triples']} triples.")
+        print(f"  Adding inverse relations...")
         # 添加逆关系
         self.id_manager.add_inverse_relations()
         self._add_inverse_index()
+        print(f"  Inverse relations added.")
         
         self.stats['entities'] = len(self.id_manager.id2entity) - 27  # 减去A-Z和*
         self.stats['relations'] = self.id_manager.original_relation_count
@@ -310,7 +397,7 @@ class KnowledgeGraphLoader:
                         inverse_entries.append((inv_rel_id, tail_id, head_id))
         
         for inv_rel_id, head_id, tail_id in inverse_entries:
-            self.r2h2t[inv_rel_id][head_id].add(tail_id)
+            self._add_tail(inv_rel_id, head_id, tail_id)
     
     def has_triple(self, head_id: int, rel_id: int, tail_id: int) -> bool:
         """检查三元组是否存在"""
@@ -347,16 +434,20 @@ def load_data_and_rules(train_file: str, rule_file: str,
     Returns:
         (id_manager, kg_loader, rule_loader)
     """
+    print("Creating IdManager...")
     id_manager = IdManager()
     
     # 先加载知识图谱（建立entity和relation的ID映射）
+    print("Loading knowledge graph...")
     kg_loader = KnowledgeGraphLoader(id_manager)
     kg_loader.load_triples(train_file, verbose)
     
     # 再加载规则（使用已建立的ID映射）
+    print("Loading rules...")
     rule_loader = RuleLoader(id_manager)
     rule_loader.load_rules(rule_file, verbose)
     
+    print("Data and rules loaded successfully!")
     return id_manager, kg_loader, rule_loader
 
 

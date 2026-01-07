@@ -9,9 +9,11 @@
 import argparse
 import os
 import random
+import math
 import multiprocessing as mp
 from typing import List, Tuple, Set, Dict
 from concurrent.futures import ProcessPoolExecutor
+from tqdm import tqdm
 
 from structures import IdManager, RelationPath, Atom, H2B2Rule, RuleHash2Combo
 from rule_loader import load_data_and_rules, KnowledgeGraphLoader
@@ -95,134 +97,151 @@ def find_relation_paths(
     return results
 
 
-def find_outgoing_paths(
-    r2h2t: Dict[int, Dict[int, Set[int]]],
-    start: int, max_len: int = 3
-) -> Set[int]:
+def _evaluate_chunk(args) -> List[Tuple[float, int]]:
     """
-    查找从start出发的所有路径（用于existence规则检查）
-    
-    Returns:
-        编码后的关系路径集合
-    """
-    results: Set[int] = set()
-    
-    # L1
-    fwd1_nodes: Set[int] = set()
-    fwd1_rels: Set[int] = set()
-    for rel, h2t in r2h2t.items():
-        if start in h2t and h2t[start]:
-            results.add(rel)
-            fwd1_rels.add(rel)
-            fwd1_nodes.update(h2t[start])
-    
-    if max_len < 2:
-        return results
-    
-    # L2
-    fwd2_nodes: Set[int] = set()
-    fwd2_paths: Set[int] = set()
-    for rel2, h2t in r2h2t.items():
-        for mid in fwd1_nodes:
-            if mid in h2t and h2t[mid]:
-                for r1 in fwd1_rels:
-                    path = RelationPath.encode([r1, rel2])
-                    results.add(path)
-                    fwd2_paths.add(path)
-                fwd2_nodes.update(h2t[mid])
-    
-    if max_len < 3:
-        return results
-    
-    # L3
-    for rel3, h2t in r2h2t.items():
-        for mid in fwd2_nodes:
-            if mid in h2t and h2t[mid]:
-                for path2 in fwd2_paths:
-                    results.add(RelationPath.connect_tail(path2, rel3))
-    
-    return results
-
-
-def _evaluate_chunk(args) -> Dict:
-    """
-    多进程评估的工作函数
+    多进程评估的工作函数 - 返回每个三元组的(score, label)
     
     Args:
-        args: (triples, threshold, r2h2t, h2b2rule, rule_hash2combo, rel2heads, scoring_mode)
+        args: (triples, r2h2t, h2b2rule, rule_hash2combo, rel2heads, scoring_mode, disable_combo, worker_id)
+    
+    预测逻辑：
+    对于三元组<h,r,t>，找到能预测这个三元组的规则：
+    1. 规则head atom为: r(y), r(t), r'(h) 或 r(x) (当h==t时)
+    2. 找h到t之间的所有relation paths（3hop以内）
+    3. 检查规则是否满足，并记录满足的规则
+    4. 对于combo规则，只有当所有分支规则都满足时，combo才满足
+    5. 使用surprisal聚合：
+       - maxplus: max(所有满足的rule和combo的surprisal)
+       - noisyor: greedy-packing方法，按lift从高到低选择不冲突的combo
     """
-    triples, threshold, r2h2t, h2b2rule, rule_hash2combo, rel2heads, scoring_mode = args
+    from structures import Combo
     
-    tp = fp = tn = fn = 0
+    triples, r2h2t, h2b2rule, rule_hash2combo, rel2heads, scoring_mode, disable_combo, worker_id = args
     
-    for h, r, t, label in triples:
-        matched_confs = []
+    results = []
+    # 为每个worker创建独立的进度条
+    pbar = tqdm(triples, desc=f"Worker {worker_id}", position=worker_id, leave=True)
+    for h, r, t, label in pbar:
+        satisfied_rules = []  # 存储满足的rule对象
         heads = rel2heads.get(r, set())
         
         if heads:
-            # 预计算路径（按需）
-            paths_h2t: Set[int] = None
-            paths_h2h: Set[int] = None
-            paths_exist: Set[int] = None
+            # 找h到t之间的所有relation paths (3hop以内)
+            paths_h2t = find_relation_paths(r2h2t, h, t, max_len=3)
             
             for head_atom in heads:
+                # 跳过不匹配的head atom
+                if head_atom.is_unary and head_atom.entity_id != t:
+                    continue
+                # r(x)<-R(c) 只有h==t时才激活
+                if head_atom.is_loop and h != t:
+                    continue
+                
                 b2rule = h2b2rule.get(head_atom, {})
                 for body_atom, rule in b2rule.items():
-                    if head_atom.is_unary and head_atom.entity_id != t:
-                        continue
-                    if head_atom.is_loop and h != t:
-                        continue
-                    
                     satisfied = False
                     body_path = body_atom.relation_id
                     
+                    # 检查规则是否满足
                     if body_atom.is_binary:
-                        if paths_h2t is None:
-                            paths_h2t = find_relation_paths(r2h2t, h, t)
+                        # r(y) <- R(y): R在paths_h2t内
                         satisfied = body_path in paths_h2t
+                    
                     elif body_atom.is_unary:
-                        paths_to_const = find_relation_paths(r2h2t, h, body_atom.entity_id)
-                        satisfied = body_path in paths_to_const
+                        # r(t) <- R(c): c在r2h2t[R][h]中（单跳）
+                        c = body_atom.entity_id
+                        if body_path in r2h2t and h in r2h2t[body_path]:
+                            satisfied = c in r2h2t[body_path][h]
+                    
                     elif body_atom.is_existence:
-                        if paths_exist is None:
-                            paths_exist = find_outgoing_paths(r2h2t, h)
-                        satisfied = body_path in paths_exist
+                        # r(t) <- R(*): r2h2t[R][h]非空（Ud规则）
+                        if body_path in r2h2t and h in r2h2t[body_path]:
+                            satisfied = len(r2h2t[body_path][h]) > 0
+                    
                     elif body_atom.is_loop:
-                        if paths_h2h is None:
-                            paths_h2h = find_relation_paths(r2h2t, h, h)
-                        satisfied = body_path in paths_h2h
+                        # r(x) <- R(c) 或 R(x)：仅当h==t时
+                        # 注意：这里body_atom.is_loop表示body是自环，即R(x)
+                        # 检查 h 是否在 r2h2t[R][h]中（即h有自环R）
+                        if body_path in r2h2t and h in r2h2t[body_path]:
+                            satisfied = h in r2h2t[body_path][h]
                     
                     if satisfied:
-                        matched_confs.append(rule.metric.confidence)
-                        combo = rule_hash2combo.get(hash(rule))
-                        if combo:
-                            matched_confs.append(combo.metric.confidence)
+                        satisfied_rules.append(rule)
         
-        # 聚合置信度
-        if not matched_confs:
+        # 检查combo规则（只有所有分支都满足时才满足）
+        satisfied_combos = []
+        if not disable_combo and satisfied_rules:
+            # 统计每个combo有多少个分支满足
+            combo2counts = {}
+            for rule in satisfied_rules:
+                rule_hash = hash(rule)
+                if rule_hash in rule_hash2combo:
+                    combo = rule_hash2combo[rule_hash]  # 直接获取Combo对象
+                    if combo not in combo2counts:
+                        combo2counts[combo] = 0
+                    combo2counts[combo] += 1
+            
+            # 找出所有分支都满足的combo
+            for combo, count in combo2counts.items():
+                if count == len(combo.branches):
+                    satisfied_combos.append(combo)
+        
+        # 聚合得分
+        if not satisfied_rules and not satisfied_combos:
             score = 0.0
         elif scoring_mode == 'maxplus':
-            score = max(matched_confs)
+            # maxplus: 选择最大的surprisal（包括rule和combo）
+            max_surprisal = max([r.metric.surprisal for r in satisfied_rules], default=0.0)
+            if satisfied_combos:
+                max_surprisal = max(max_surprisal, 
+                                   max([c.metric.surprisal for c in satisfied_combos]))
+            score = max_surprisal
+            
         elif scoring_mode == 'noisyor':
-            prod = 1.0
-            for c in matched_confs:
-                prod *= (1.0 - c)
-            score = 1.0 - prod
+            # noisyor: greedy-packing方法
+            # 1. 按lift从高到低排序combo
+            combos_with_lift = []
+            for combo in satisfied_combos:
+                try:
+                    lift = combo.get_lift()
+                    combos_with_lift.append((combo, lift))
+                except:
+                    # 如果无法计算lift，跳过该combo
+                    pass
+            combos_with_lift.sort(key=lambda x: x[1], reverse=True)
+            
+            # 2. greedy-packing: 选择不冲突的combo
+            used_rule_hashes = set()
+            aggregated_surprisal = 0.0
+            
+            for combo, lift in combos_with_lift:
+                # 检查combo的所有branch rule是否已被使用
+                branch_hashes = {hash((combo.head, branch)) for branch in combo.branches}
+                
+                # 如果没有冲突，使用这个combo
+                if not branch_hashes & used_rule_hashes:  # 集合交集为空
+                    aggregated_surprisal += lift
+                    used_rule_hashes.update(branch_hashes)
+            
+            # 3. 加上未被使用的单个rule的surprisal
+            for rule in satisfied_rules:
+                rule_hash = hash(rule)
+                if rule_hash not in used_rule_hashes:
+                    aggregated_surprisal += rule.metric.surprisal
+            
+            # 4. 转换为概率
+            score = 1.0 - math.exp(-aggregated_surprisal)
         else:
-            score = max(matched_confs)
+            # 默认使用maxplus
+            max_surprisal = max([r.metric.surprisal for r in satisfied_rules], default=0.0)
+            if satisfied_combos:
+                max_surprisal = max(max_surprisal, 
+                                   max([c.metric.surprisal for c in satisfied_combos]))
+            score = max_surprisal
         
-        pred = 1 if score >= threshold else 0
-        
-        if pred == 1 and label == 1:
-            tp += 1
-        elif pred == 1 and label == 0:
-            fp += 1
-        elif pred == 0 and label == 0:
-            tn += 1
-        else:
-            fn += 1
+        results.append((score, label))
     
-    return {'tp': tp, 'fp': fp, 'tn': tn, 'fn': fn}
+    return results
 
 
 def evaluate_triples(
@@ -231,12 +250,12 @@ def evaluate_triples(
     h2b2rule: H2B2Rule,
     rule_hash2combo: RuleHash2Combo,
     rel2heads: Dict[int, Set[Atom]],
-    threshold: float = 0.5,
     scoring_mode: str = 'maxplus',
+    disable_combo: bool = False,
     n_workers: int = None
 ) -> Dict:
     """
-    多进程评估三元组
+    多进程评估三元组，计算AUC和最佳Accuracy
     
     Args:
         test_triples: [(head, rel, tail, label), ...] label=1正例, label=0负例
@@ -244,12 +263,12 @@ def evaluate_triples(
         h2b2rule: 规则映射
         rule_hash2combo: 组合规则映射
         rel2heads: 关系到规则头的索引
-        threshold: 分类阈值
         scoring_mode: 'maxplus' 或 'noisyor'
+        disable_combo: 是否禁用combo规则
         n_workers: 进程数，默认为CPU核心数
         
     Returns:
-        评估指标字典
+        评估指标字典 {'auc': float, 'best_acc': float, 'best_threshold': float}
     """
     if n_workers is None:
         n_workers = mp.cpu_count()
@@ -258,33 +277,51 @@ def evaluate_triples(
     chunk_size = max(1, (len(test_triples) + n_workers - 1) // n_workers)
     chunks = [test_triples[i:i+chunk_size] for i in range(0, len(test_triples), chunk_size)]
     
-    # 准备共享数据
-    eval_args = [(chunk, threshold, kg.r2h2t, h2b2rule, 
-                  rule_hash2combo, rel2heads, scoring_mode)
-                 for chunk in chunks]
+    # 准备共享数据，添加worker_id
+    eval_args = [(chunk, kg.r2h2t, h2b2rule, 
+                  rule_hash2combo, rel2heads, scoring_mode, disable_combo, i)
+                 for i, chunk in enumerate(chunks)]
     
     # 并行评估
+    print(f"  Using {n_workers} workers for parallel evaluation...")
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        results = list(executor.map(_evaluate_chunk, eval_args))
+        chunk_results = list(executor.map(_evaluate_chunk, eval_args))
     
-    # 合并结果
-    tp = fp = tn = fn = 0
-    for r in results:
-        tp += r['tp']
-        fp += r['fp']
-        tn += r['tn']
-        fn += r['fn']
+    # 合并结果: [(score, label), ...]
+    all_results = []
+    for chunk_result in chunk_results:
+        all_results.extend(chunk_result)
     
-    # 计算指标
-    total = tp + fp + tn + fn
-    accuracy = (tp + tn) / total if total > 0 else 0.0
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+    scores = [s for s, l in all_results]
+    labels = [l for s, l in all_results]
+    
+    # 计算AUC
+    try:
+        from sklearn.metrics import roc_auc_score
+        auc = roc_auc_score(labels, scores)
+    except Exception as e:
+        print(f"[WARN] Failed to calculate AUC: {e}")
+        auc = 0.0
+    
+    # 计算最佳Accuracy (遍历所有可能的阈值)
+    # 使用所有唯一的score作为候选阈值
+    unique_scores = sorted(set(scores))
+    best_acc = 0.0
+    best_threshold = 0.0
+    
+    for threshold in unique_scores + [0.0, 1.0]:
+        correct = sum(1 for score, label in all_results 
+                     if (score >= threshold) == (label == 1))
+        acc = correct / len(all_results)
+        if acc > best_acc:
+            best_acc = acc
+            best_threshold = threshold
     
     return {
-        'accuracy': accuracy, 'precision': precision, 'recall': recall,
-        'f1': f1, 'tp': tp, 'fp': fp, 'tn': tn, 'fn': fn
+        'auc': auc,
+        'best_acc': best_acc,
+        'best_threshold': best_threshold,
+        'num_samples': len(all_results)
     }
 
 
@@ -391,15 +428,20 @@ def load_test_triples(
 
 def main():
     parser = argparse.ArgumentParser(description='Rule-based Triple Classification')
-    parser.add_argument('--train', type=str, required=True, help='Training triples file')
-    parser.add_argument('--rules', type=str, required=True, help='Rules file')
-    parser.add_argument('--test', type=str, required=True, help='Test data directory (contains test.txt)')
+    parser.add_argument('--dataset', type=str, default="codex-m", help='Training triples file')
+    parser.add_argument('--rules', type=str, default="", help='Rules file')
     parser.add_argument('--scoring-mode', type=str, default='maxplus',
                         choices=['maxplus', 'noisyor'], help='Scoring mode: maxplus or noisyor')
-    parser.add_argument('--threshold', type=float, default=0.5, help='Classification threshold')
+    parser.add_argument('--disable-combo', action='store_true', help='Disable combo rules')
     parser.add_argument('--workers', type=int, default=None, help='Number of worker processes')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output')
     args = parser.parse_args()
+
+    args.train = f"data/{args.dataset}/train.txt"
+    args.test = f"data/{args.dataset}"
+
+    if args.rules == "":
+        args.rules = f"out/{args.dataset}/rule.txt"
 
     # 检查文件
     if not os.path.exists(args.train):
@@ -408,7 +450,8 @@ def main():
         parser.error(f"File not found: {args.rules}")
     test_file = os.path.join(args.test, 'test.txt')
     if not os.path.exists(test_file):
-        parser.error(f"Test file not found: {test_file}")
+        parser.error(f"File not found: {test_file}")
+    
 
     # 加载数据
     print("[1/3] Loading data and rules...")
@@ -440,19 +483,18 @@ def main():
         h2b2rule=rule_loader.h2b2rule,
         rule_hash2combo=rule_loader.rule_hash2combo,
         rel2heads=rel2heads,
-        threshold=args.threshold,
         scoring_mode=args.scoring_mode,
+        disable_combo=args.disable_combo,
         n_workers=args.workers
     )
 
     print("\n" + "=" * 40)
     print("RESULTS")
     print("=" * 40)
-    print(f"  Accuracy:  {results['accuracy']:.4f}")
-    print(f"  Precision: {results['precision']:.4f}")
-    print(f"  Recall:    {results['recall']:.4f}")
-    print(f"  F1:        {results['f1']:.4f}")
-    print(f"  TP={results['tp']}, FP={results['fp']}, TN={results['tn']}, FN={results['fn']}")
+    print(f"  AUC:            {results['auc']:.4f}")
+    print(f"  Best Accuracy:  {results['best_acc']:.4f}")
+    print(f"  Best Threshold: {results['best_threshold']:.4f}")
+    print(f"  Samples:        {results['num_samples']}")
 
 
 if __name__ == '__main__':

@@ -22,6 +22,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Dict, Optional, Set
 from collections import defaultdict
+import math
 
 # 全局配置：未观测平滑参数
 NUM_UNSEEN = 5
@@ -319,19 +320,24 @@ class Metric:
         """置信度 = support / (body_size + NUM_UNSEEN)"""
         return self.support / (self.body_size + NUM_UNSEEN)
     
+    @property
+    def surprisal(self) -> float:
+        """惊讶度 = -ln(1-confidence)"""
+        return -math.log(1 - self.confidence)
+
     def __str__(self):
-        return f"Metric(conf={self.confidence:.4f}, body={self.body_size}, supp={self.support})"
+        return f"Metric(conf={self.confidence:.4f}, body={self.body_size}, supp={self.support}, surprisal={self.surprisal:.4f})"
     
     def __repr__(self):
         return self.__str__()
 
 
-# ============ NormalRule 普通规则 ============
+# ============ Rule 规则类 ============
 
 @dataclass
-class NormalRule:
+class Rule:
     """
-    普通规则 (Normal Rule) - 单分支规则
+    规则类 (Rule) - 单分支规则
     H ← B
     
     head: Atom (头部原子)
@@ -345,7 +351,7 @@ class NormalRule:
         return hash((self.head, self.body))
     
     def __eq__(self, other):
-        if not isinstance(other, NormalRule):
+        if not isinstance(other, Rule):
             return False
         return self.head == other.head and self.body == other.body
     
@@ -354,40 +360,74 @@ class NormalRule:
         return f"{self.head.to_string(id_manager)} <= {self.body.to_string(id_manager)} [{self.metric}]"
 
 
-# ============ ComboRule 组合规则 ============
+# ============ Combo 组合规则类 ============
 
-@dataclass
-class ComboRule:
+class Combo:
     """
-    组合规则 (Combo Rule / Multi-branch Rule) - 多分支规则
+    组合规则类 (Combo / Multi-branch Rule) - 多分支规则
     H ← B1 ∧ B2 ∧ ... ∧ Bn
+    
+    lift = combo的surprisal - 所有分支规则的surprisal之和
+    使用 _lift 缓存计算结果
     """
-    head: Atom              # 头部原子
-    branches: Tuple[Atom, ...]  # 分支原子元组（排序后）
-    metric: Metric          # 度量指标
+    
+    def __init__(self, head: Atom, branches: Tuple[Atom, ...], metric: Metric, h2b2rule: Optional['H2B2Rule'] = None):
+        self.head = head
+        self.branches = branches
+        self.metric = metric
+        self.h2b2rule = h2b2rule
+        self._lift: Optional[float] = None  # 缓存lift计算结果
     
     def __hash__(self):
         return hash((self.head, self.branches))
     
     def __eq__(self, other):
-        if not isinstance(other, ComboRule):
+        if not isinstance(other, Combo):
             return False
         return self.head == other.head and self.branches == other.branches
+    
+    def __repr__(self):
+        return f"Combo(head={self.head}, branches={self.branches}, metric={self.metric})"
     
     def to_string(self, id_manager: 'IdManager') -> str:
         """转换为可读字符串"""
         branches_str = "; ".join(b.to_string(id_manager) for b in self.branches)
         return f"{self.head.to_string(id_manager)} <= {branches_str} [{self.metric}]"
-
+    
+    def get_lift(self, h2b2rule: 'H2B2Rule' = None) -> float:
+        """
+        计算lift值：combo的surprisal减去所有分支规则的surprisal之和
+        lift表示组合规则相对于单个分支规则的额外信息增益
+        结果会被缓存在 _lift 中
+        """
+        # 如果已经缓存，直接返回
+        if self._lift is not None:
+            return self._lift
+        
+        if h2b2rule is None:
+            h2b2rule = self.h2b2rule
+        if h2b2rule is None:
+            raise ValueError("h2b2rule is required to calculate lift")
+        
+        total_surprisal = self.metric.surprisal
+        for branch in self.branches:
+            # 从h2b2rule中获取对应的分支规则
+            if self.head in h2b2rule and branch in h2b2rule[self.head]:
+                branch_rule = h2b2rule[self.head][branch]
+                total_surprisal -= branch_rule.metric.surprisal
+        
+        # 缓存结果
+        self._lift = total_surprisal
+        return self._lift
 
 # ============ 索引结构类型定义 ============
 
 # H2B2Rule: 头部 -> 体部 -> 规则
-# Dict[Atom, Dict[Atom, NormalRule]]
-# 一级key是head Atom，二级key是body Atom，value是NormalRule
-H2B2Rule = Dict[Atom, Dict[Atom, NormalRule]]
+# Dict[Atom, Dict[Atom, Rule]]
+# 一级key是head Atom，二级key是body Atom，value是Rule
+H2B2Rule = Dict[Atom, Dict[Atom, Rule]]
 
 # RuleHash2Combo: 规则哈希 -> 组合规则
-# Dict[int, ComboRule]
-# key是NormalRule的hashCode，value是ComboRule
-RuleHash2Combo = Dict[int, ComboRule]
+# Dict[int, Combo]
+# key是Rule的hashCode，value是Combo
+RuleHash2Combo = Dict[int, Combo]
