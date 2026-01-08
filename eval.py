@@ -5,6 +5,7 @@ from clause import Ranking
 from clause import TripleSet
 
 import argparse
+import os
 
 # *** Example Evaluation ***
 
@@ -34,13 +35,14 @@ argparser.add_argument("--combo_max_branch", type=int, default=-1, help="whether
 argparser.add_argument("--b_max_length", type=int, default=-1, help="whether to disable u_xxd rules")
 argparser.add_argument("--d_weight", type=float, default=0.1, help="whether to disable u_xxd rules")
 argparser.add_argument("--z_weight", type=float, default=0.01, help="whether to disable u_xxd rules")
+argparser.add_argument("--test_valid_split", type=str, default="", help="whether to disable u_xxd rules")
 
 
 args = argparser.parse_args()
 dataset = args.dataset
 train = f"data/{dataset}/train.txt"
-filter_set = f"data/{dataset}/valid.txt"
-target = f"data/{dataset}/test.txt"
+filter_set = f"data/{dataset}/valid{args.test_valid_split}.txt"
+target = f"data/{dataset}/test{args.test_valid_split}.txt"
 
 # rules = f"{get_base_dir()}/data/rules/{dataset}.txt"
 rules = args.rules if args.rules else f"data/rules/{dataset}.txt"
@@ -66,7 +68,7 @@ options.set("loader.b_max_length", args.b_max_length)
 
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", -1)  
-options.set("loader.num_threads", 20)           # 指定4个线程用于规则加载
+options.set("loader.num_threads", os.cpu_count())           # 指定4个线程用于规则加载
 
 
 #### Calculate a ranking

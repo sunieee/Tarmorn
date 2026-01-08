@@ -37,3 +37,6 @@ python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-10 --ranking_
 python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-10 --ranking_file out/FB15k-237/eval-10.txt --disable_u_xxc --disable_u_xxd --disable_zero > out/FB15k-237/eval-10-main.log
 python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-10 --ranking_file out/FB15k-237/eval-10.txt --b_max_length 2 > out/FB15k-237/eval-10-b2.log
 python eval.py --dataset FB15k-237 --rules out/FB15k-237/rules-100-10-common --ranking_file out/FB15k-237/eval-10.txt --b_max_length 2 > out/FB15k-237/eval-10-common.log
+
+python evaltc.py --dataset FB15k-237 --rules out/FB15k-237/rules-100 > out/FB15k-237/evaltc-baseline-maxplus.log
+python evaltc.py --dataset FB15k-237 --rules out/FB15k-237/rules-100 --aggregation_function noisyor > out/FB15k-237/evaltc-baseline-noisyor.log

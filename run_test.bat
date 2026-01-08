@@ -4,7 +4,8 @@ setlocal enabledelayedexpansion
 REM Configuration
 @REM set dataset=FB15k-237
 @REM set dataset=WN18RR
-set dataset=codex-m
+@REM set dataset=codex-m
+set dataset=codex-s
 mkdir out\%dataset%
 
 REM Loop through all .tsv files in the partitions directory
@@ -24,8 +25,17 @@ call mvn exec:java -Dexec.mainClass="tarmorn.TLearn" > "out\%dataset%\run.log" 2
 call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --disable_combo > out/%dataset%/eval-maxplus.log
 call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor > out/%dataset%/eval-noisyor.log
 call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor --combo_noisyor_method greed > out/%dataset%/eval-noisyor-greed.log
-call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --jaccard_file out/%dataset%/atomPair2Jaccard.json --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor > out/%dataset%/eval-noisyor-cluster.log
-call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --jaccard_file out/%dataset%/atomPair2Jaccard.json --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor --combo_noisyor_method greed > out/%dataset%/eval-noisyor-greed-cluster.log
+@REM call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --jaccard_file out/%dataset%/atomPair2Jaccard.json --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor > out/%dataset%/eval-noisyor-cluster.log
+@REM call python eval.py --dataset %dataset% --rules out/%dataset%/rule.txt --jaccard_file out/%dataset%/atomPair2Jaccard.json --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor --combo_noisyor_method greed > out/%dataset%/eval-noisyor-greed-cluster.log
+
+@REM call python eval.py --dataset %dataset% --test_valid_split RP --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor > out/%dataset%/eval-RP-noisyor.log
+@REM call python eval.py --dataset %dataset% --test_valid_split RP --rules out/%dataset%/rule.txt --ranking_file out/%dataset%/eval.txt --aggregation_function noisyor --combo_noisyor_method greed > out/%dataset%/eval-RP-noisyor-greed.log
+
+call python evaltc.py --dataset %dataset% --rules out/%dataset%/rule.txt --disable_combo > out/%dataset%/evaltc-maxplus.log
+call python evaltc.py --dataset %dataset% --rules out/%dataset%/rule.txt --aggregation_function noisyor > out/%dataset%/evaltc-noisyor.log
+call python evaltc.py --dataset %dataset% --rules out/%dataset%/rule.txt --aggregation_function noisyor --combo_noisyor_method greed > out/%dataset%/evaltc-noisyor-greed.log
+@REM call python evaltc.py --dataset %dataset% --rules out/%dataset%/rule.txt --jaccard_file out/%dataset%/atomPair2Jaccard.json --aggregation_function noisyor > out/%dataset%/evaltc-noisyor-cluster.log
+@REM call python evaltc.py --dataset %dataset% --rules out/%dataset%/rule.txt --jaccard_file out/%dataset%/atomPair2Jaccard.json --aggregation_function noisyor --combo_noisyor_method greed > out/%dataset%/evaltc-noisyor-greed-cluster.log
 endlocal 
 
 @REM set dataset=FB15k-237
