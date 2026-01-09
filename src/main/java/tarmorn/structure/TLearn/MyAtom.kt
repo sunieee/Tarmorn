@@ -13,14 +13,14 @@ import kotlin.math.abs
  * entityId: Y for binary, X for loop, 0 for existence, >0 for constant entity id
  * instances: set of entity instances covered by this atom (only for non-L1 atoms)
  * minHashSignature: computed MinHash signature for LSH
- * isInverseInstances: whether the instances are for the inverse relation
- * 该属性仅对BinaryAtom: MyAtom<Long>有意义，表示实例集是正向的还是反向的
+ * 
+ * Note: For L1 BinaryAtom with inverse relation, instances are stored in forward order
+ * but isInverseInstances can be derived from (isInverseRelation && isBinary && isL1Atom)
  */
 class MyAtom<T>(
     val relationId: Long,
     val entityId: Int,
-    val instances: Set<T> = emptySet(),
-    val isInverseInstances: Boolean = false
+    var instances: Set<T> = emptySet()
 ) {
     init {
         if (instances.isNotEmpty()) {
@@ -41,8 +41,46 @@ class MyAtom<T>(
     // 结果缓存：计算完成后结果会被保存，后续访问直接返回缓存值，不会重复计算
     val minHashSignature: IntArray by lazy { computeMinHashDOPH(instances, isBinary, isInverseInstances) }
 
+    // 判断实例集是否为反向存储：仅对 L1 BinaryAtom 且是 inverse relation 时为 true
+    val isInverseInstances: Boolean
+        get() = isBinary && isL1Atom && IdManager.isInverseRelation(relationId)
+
+    // ===== L2+ 原子的预计算缓存（用于 hasInstance 优化）=====
+    // 缓存 r1Path（前 n-1 个关系的连接）和 r2InvPath（最后一个关系的逆）
+    // 只有 L2+ BinaryAtom 才会用到，L1 原子访问时返回 null
+    private val l2PlusPathCache: Pair<Long, Long>? by lazy {
+        if (isL1Atom || !isBinary) null
+        else {
+            val relations = RelationPath.decode(relationId)
+            require(relations.size >= 2) { "L2+ atom should have at least 2 relations" }
+            
+            // r2 是最后一个关系
+            val r2 = relations.last()
+            // r1 是前面所有关系的连接
+            val r1 = if (relations.size == 2) {
+                relations[0]
+            } else {
+                var rp = relations[0]
+                for (i in 1 until relations.size - 1) {
+                    rp = RelationPath.connectHead(rp, relations[i])
+                }
+                rp
+            }
+            val r2Inv = RelationPath.getInverseRelation(r2)
+            Pair(r1, r2Inv)
+        }
+    }
+
     val support: Int
         get() = instances.size
+
+    // 判断是否为采样后的原子（L2/L3 BinaryAtom 且达到最大采样数）
+    val isSampled: Boolean
+        get() = isBinary && when {
+            isL1Atom -> false
+            isL2Atom -> support >= Settings.MAX_JOIN_INSTANCES_L2
+            else -> support >= Settings.MAX_JOIN_INSTANCES_L3  // L3 Atom
+        }
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -72,8 +110,8 @@ class MyAtom<T>(
     fun getRuleString(): String = if (entityId == IdManager.getZId()) "" else IdManager.getAtomString(relationId, entityId)
 
     // 注意：inverse仅仅在validateH2B时调用，head和body同时取反，所以instances不用变
-    // 0109 添加了 isInverseInstances 标志位，以区分实例集是正向还是反向的
-    fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId, instances, isInverseInstances = !isInverseInstances)
+    // isInverseInstances 现在通过 isInverseRelation && isBinary && isL1Atom 自动计算
+    fun inverse() = MyAtom(RelationPath.getInverseRelation(relationId), entityId, instances)
 
     // fun getBinaryAtom(): MyAtom = MyAtom(relationId, IdManager.getYId())
 
@@ -114,8 +152,10 @@ class MyAtom<T>(
             // BinaryAtom: instances is Set<Long>
             else -> {
                 val longE = e as Long
+                val cache = l2PlusPathCache
                 
-                if (isL1Atom) {
+                if (cache == null) {
+                    // L1 原子：直接查实例集
                     val realE = if (isInverse xor isInverseInstances) {
                         // 如果实例集和查询方向不一致，则需要取反
                         val h = (longE ushr 32).toInt()
@@ -127,44 +167,29 @@ class MyAtom<T>(
                     @Suppress("UNCHECKED_CAST")
                     (instances as Set<Long>).contains(realE)
                 } else {
+                    // L2+ 原子：使用缓存的 r1, r2Inv 查表
+                    val (r1, r2Inv) = cache
+                    
                     // 分解 Long 为 h, t
                     var h = (longE ushr 32).toInt()
                     var t = longE.toInt()
                     if (isInverse) {
-                        // 不是通过实例集的方向查询，而是通过关系路径查询
-                        // 因此不需要考虑 isInverseInstances
                         val temp = h
                         h = t
                         t = temp
                     }
                     
-                    // 分解 relationId 为 r1, r2（其中 r2 长度为1）
-                    val relations = RelationPath.decode(relationId)
-                    require(relations.size >= 2) { "L2+ atom should have at least 2 relations" }
-                    
-                    // r2 是最后一个关系（长度为1）
-                    val r2 = relations.last()
-                    // r1 是前面所有关系的连接
-                    val r1 = if (relations.size == 2) {
-                        relations[0]
-                    } else {
-                        // 连接前 n-1 个关系
-                        var rp = relations[0]
-                        for (i in 1 until relations.size - 1) {
-                            rp = RelationPath.connectHead(rp, relations[i])
-                        }
-                        rp
-                    }
-                    
-                    val r2Inv = RelationPath.getInverseRelation(r2)
-                    
-                    // 检查 R2h2t[r1][h] 与 R2h2t[r2'][t] 是否有交集
+                    // 检查 R2h2t[r1][h] 与 R2h2t[r2Inv][t] 是否有交集
                     val r1Tails = TLearn.R2h2tSet[r1]?.get(h)
                     val r2InvTails = TLearn.R2h2tSet[r2Inv]?.get(t)
                     
                     if (r1Tails != null && r2InvTails != null) {
-                        // 检查是否有交集
-                        r1Tails.any { it in r2InvTails }
+                        // 遍历更小的集合以优化性能
+                        if (r1Tails.size <= r2InvTails.size) {
+                            r1Tails.any { it in r2InvTails }
+                        } else {
+                            r2InvTails.any { it in r1Tails }
+                        }
                     } else {
                         false
                     }
@@ -220,8 +245,10 @@ class MyAtom<T>(
 
         /**
          * Compute MinHash signature using OPH + DOPH algorithm
+         * @param isInverseInstances 当为 true 时，对 Long 类型实例进行头尾交换后再计算 hash
+         *                           这样正向和反向的 BinaryAtom 会有相同的 MinHash 签名
          */
-        fun <T> computeMinHashDOPH(instanceSet: Set<T>, isBinary: Boolean): IntArray {
+        fun <T> computeMinHashDOPH(instanceSet: Set<T>, isBinary: Boolean, isInverseInstances: Boolean = false): IntArray {
             if (instanceSet.isEmpty()) {
                 throw IllegalArgumentException("Cannot compute MinHash for empty instance set")
             }
@@ -237,9 +264,10 @@ class MyAtom<T>(
                 val baseHash = when (e) {
                     is Int -> e
                     is Long -> {
-                        val h = (e ushr 32).toInt()  // high 32 bits
-                        val t = e.toInt()             // low 32 bits
-                        pairHash32(h, t)
+                        var h = (e ushr 32).toInt()  // high 32 bits
+                        var t = e.toInt()             // low 32 bits
+                        // 如果是反向实例，交换头尾以保持与正向实例相同的 hash
+                        if (isInverseInstances) pairHash32(t, h) else pairHash32(h, t)
                     }
                     else -> e.hashCode()
                 }
