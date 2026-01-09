@@ -44,7 +44,7 @@ object TLearn {
     const val MIN_LIFT = 1.2
     const val MIN_COMMON_BUCKET = 2
     const val MAX_BUCKET_ATTEMPT = 100
-    const val MAX_STACK_SIZE = 3
+    const val MIN_COMMON_EVIDENCE = 20
     const val MIN_SURPRISAL_LIFT = 0.1
     const val MIN_RULE_JACCARD = 0.1
 
@@ -82,12 +82,17 @@ object TLearn {
     val H2B2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<MyAtom, Metric>>() // headAtom -> bodyAtom -> metric
     val key2atoms = ConcurrentHashMap<Int, MutableList<MyAtom>>() // 一级LSH桶：key -> atoms
     val H2F2metric = ConcurrentHashMap<MyAtom, ConcurrentHashMap<Formula, Metric>>() // 原子→公式→度量映射
-    val atomPair2Jaccard = ConcurrentHashMap<Pair<MyAtom, MyAtom>, Double>() // atomPair -> Jaccard similarity
 
     // Statistics variables
     var totalRules = 0
     val unaryStats = IntArray(4) // M0, M1, M2, M3
     val binaryStats = IntArray(4) // M0, M1, M2, M3
+    
+    // Lift statistics for composition phase
+    val unaryPositiveLift = AtomicInteger(0)
+    val unaryNegativeLift = AtomicInteger(0)
+    val binaryPositiveLift = AtomicInteger(0)
+    val binaryNegativeLift = AtomicInteger(0)
 
     /**
      * Main entry point - can be run directly
@@ -146,9 +151,6 @@ object TLearn {
             
             // 保存H2F2metric到JSON文件
             saveH2F2metricToJson()
-            
-            // 保存atomPair2Jaccard到JSON文件
-            saveAtomPair2JaccardToJson()
         }
 
         // Print rule statistics
@@ -157,6 +159,16 @@ object TLearn {
         println("-" .repeat(60))
         println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
         println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
+        
+        // Print lift statistics for composition phase
+        println("\nComposition Phase - Lift Statistics:")
+        println("-" .repeat(60))
+        println("Type     Positive Lift    Negative Lift    Total")
+        val unaryTotal = unaryPositiveLift.get() + unaryNegativeLift.get()
+        val binaryTotal = binaryPositiveLift.get() + binaryNegativeLift.get()
+        println("Unary    ${unaryPositiveLift.get().toString().padStart(13)}    ${unaryNegativeLift.get().toString().padStart(13)}    ${unaryTotal.toString().padStart(8)}")
+        println("Binary   ${binaryPositiveLift.get().toString().padStart(13)}    ${binaryNegativeLift.get().toString().padStart(13)}    ${binaryTotal.toString().padStart(8)}")
+        println("Total    ${(unaryPositiveLift.get() + binaryPositiveLift.get()).toString().padStart(13)}    ${(unaryNegativeLift.get() + binaryNegativeLift.get()).toString().padStart(13)}    ${(unaryTotal + binaryTotal).toString().padStart(8)}")
     }
 
     /**
@@ -1034,156 +1046,86 @@ object TLearn {
     }
     
     /**
-     * Process single headAtom, build BQueue and perform Eclat depth-first search
+     * Process single headAtom, perform pairwise combination of bodyAtoms
      */
     private fun processHeadAtom(headAtom: MyAtom, bodyMap: ConcurrentHashMap<MyAtom, Metric>) {
-        // Sort by confidence in descending order (Metric implements Comparable)
-        val sortedBodies = bodyMap.entries
-            .sortedBy { it.value }  // Metric.compareTo sorts by confidence / surprisal descending
-            .toList()
+        if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
         
-        if (sortedBodies.isEmpty()) return
+        // Convert to list for pairwise iteration
+        val bodyList = bodyMap.entries.toList()
         
-        // Take top MAX_BUCKET_ATTEMPT candidates
-        val bQueue = if (sortedBodies.size > MAX_BUCKET_ATTEMPT) {
-            sortedBodies.take(MAX_BUCKET_ATTEMPT)
-        } else {
-            sortedBodies
-        }
+        debug2("processHeadAtom: $headAtom, bodyMap size=${bodyList.size}")
         
-        debug2("processHeadAtom: $headAtom, BQueue size=${bQueue.size}")
+        var pairCount = 0
+        var validPairCount = 0
         
-        // bodyMap already contains validated metrics, use it directly as frequent1
-        val frequent1 = bQueue.map { (bodyAtom, metric) ->
-            // Store L1 Formula
-            // val formula = Formula(bodyAtom)
-            // setH2F2metric(headAtom, formula, metric)
+        // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
+        for (i in bodyList.indices) {
+            val (B1, metric1) = bodyList[i]
+
+            val HeadandB1Common = headAtom.instances.intersect(B1.instances)
             
-            debug2("Frequent-1: $headAtom <= $bodyAtom, conf=${metric.confidence}, surprisal=${metric.surprisal}, supp=${metric.support}")
-            
-            // Build FrequentAtomSet for Eclat DFS
-            // Note: bodyAtom.instances already filtered in performLSH for entity-anchored unary rules
-            FrequentAtomSet(
-                atoms = listOf(bodyAtom),
-                intersectInstances = headAtom.instances.intersect(bodyAtom.instances),
-                bodyInstances = bodyAtom.instances,
-                metric = metric
-            )
-        }
-        
-        // Eclat depth-first search
-        for (i in frequent1.indices) {
-            val freq1 = frequent1[i]
-            // Only combine with subsequent atoms
-            val remainingAtoms = frequent1.subList(i + 1, frequent1.size).map { it.atoms[0] }
-            
-            if (remainingAtoms.isNotEmpty()) {
-                tryBodyAtoms(
-                    headAtom = headAtom,
-                    stack = freq1.atoms.toMutableList(),
-                    candidateAtoms = remainingAtoms,
-                    intersectInstances = freq1.intersectInstances,
-                    bodyInstances = freq1.bodyInstances,
-                    currentMetric = freq1.metric
+            for (j in (i + 1) until bodyList.size) {
+                val (B2, metric2) = bodyList[j]
+                pairCount++
+
+                val allCommon = HeadandB1Common.intersect(B2.instances)
+                if (allCommon.size < Settings.MIN_SUPP) {
+                    continue  // Does not meet minimum support
+                }
+                
+                // Calculate common evidence: intersection of two bodyAtom instances
+                val B1andB2Common = B1.instances.intersect(B2.instances)
+                // if (B1andB2Common.size < MIN_COMMON_EVIDENCE) {
+                //     continue  // Not enough common evidence
+                // }
+                
+                // Create new metric with bodySize = |B1andB2Common|
+                val metric = Metric(
+                    support = allCommon.size.toDouble(),
+                    headSize = headAtom.instances.size,
+                    bodySize = B1andB2Common.size
                 )
-            }
-        }
-    }
-    
-    /**
-     * Eclat depth-first search - recursively try combining more bodyAtoms
-     */
-    private fun tryBodyAtoms(
-        headAtom: MyAtom,
-        stack: MutableList<MyAtom>,
-        candidateAtoms: List<MyAtom>,
-        intersectInstances: Set<Int>,
-        bodyInstances: Set<Int>,
-        currentMetric: Metric
-    ) {
-        if (stack.size >= MAX_STACK_SIZE) return
-        if (candidateAtoms.isEmpty()) return
-        
-        for (i in candidateAtoms.indices) {
-            val nextAtom = candidateAtoms[i]
-            
-            // 当 stack.size == 1 时，检查规则之间的 Jaccard 相似度（redundancy）
-            if (stack.size == 1) {
-                val atom1 = stack[0]
-                val atom2 = nextAtom
                 
-                // 按 hash 排序创建 atomPair
-                val atomPair = if (atom1.hashCode() <= atom2.hashCode()) Pair(atom1, atom2) else Pair(atom2, atom1)
-                // 检查是否已计算过
-                val jaccard = atomPair2Jaccard.computeIfAbsent(atomPair) {
-                    calculateJaccardFromMinHash(atom1, atom2)
-                }
-                if (jaccard == 0.0) {
-                    // prefiltering: too low similarity, skip
-                    continue
-                }
-            }
-            
-            val newIntersectInstances = intersectInstances.intersect(nextAtom.instances)
-            val newIntersectionSize = newIntersectInstances.size
-            
-            if (newIntersectionSize < Settings.MIN_SUPP) {
-                continue // Does not meet minimum support, prune
-            }
-            
-            val newBodyInstances = bodyInstances.intersect(nextAtom.instances)
-            val newMetric = Metric(
-                support = newIntersectionSize.toDouble(),
-                headSize = headAtom.instances.size,
-                bodySize = newBodyInstances.size
-            )
-            
-            val deltaSurprisal = newMetric.surprisal - currentMetric.surprisal - H2B2metric[headAtom]!![nextAtom]!!.surprisal
-            if (deltaSurprisal >  MIN_SURPRISAL_LIFT) {
-                // Add nextAtom to stack
-                stack.add(nextAtom)
+                // Calculate lift
+                val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
                 
-                // Create Formula and store
-                val formula = when (stack.size) {
-                    2 -> Formula(stack[0], stack[1])
-                    3 -> Formula(stack[0], stack[1], stack[2])
-                    else -> null
+                // Check for contradicting evidence (rare but interesting)
+                if (metric.surprisal < minOf(metric1.surprisal, metric2.surprisal)) {
+                    println("[WARNING] Contradicting evidence detected:")
+                    println("  Head: $headAtom")
+                    println("  Body1: $B1 (surprisal=${metric1.surprisal})")
+                    println("  Body2: $B2 (surprisal=${metric2.surprisal})")
+                    println("  Combined: surprisal=${metric.surprisal}, lift=$lift")
                 }
                 
-                if (formula != null) {
-                    setH2F2metric(headAtom, formula, newMetric)
+                // Only store if lift is significant
+                if (kotlin.math.abs(lift) > MIN_SURPRISAL_LIFT) {
+                    val formula = Formula(B1, B2)
+                    setH2F2metric(headAtom, formula, metric)
+                    validPairCount++
                     
-                    debug2("Frequent-${stack.size}: $headAtom <= ${stack.joinToString(" & ")}, conf=${newMetric.confidence}, surprisal=${newMetric.surprisal}, supp=$newIntersectionSize")
+                    // Update lift statistics
+                    if (headAtom.isBinary) {
+                        if (lift > 0) binaryPositiveLift.incrementAndGet()
+                        else binaryNegativeLift.incrementAndGet()
+                    } else {
+                        if (lift > 0) unaryPositiveLift.incrementAndGet()
+                        else unaryNegativeLift.incrementAndGet()
+                    }
+                    
+                    debug2("Valid pair: $headAtom <= ${B1.getRuleString()} & ${B2.getRuleString()}, " +
+                           "conf=${metric.confidence}, surprisal=${metric.surprisal}, lift=$lift, supp=${allCommon.size}")
                 }
-                
-                // Recurse: only combine with subsequent atoms
-                val remainingCandidates = candidateAtoms.subList(i + 1, candidateAtoms.size)
-                if (remainingCandidates.isNotEmpty()) {
-                    tryBodyAtoms(
-                        headAtom = headAtom,
-                        stack = stack,
-                        candidateAtoms = remainingCandidates,
-                        intersectInstances = newIntersectInstances,
-                        bodyInstances = newBodyInstances,
-                        currentMetric = newMetric
-                    )
-                }
-                
-                // Backtrack
-                stack.removeAt(stack.size - 1)
             }
+        }
+        
+        if (pairCount > 0) {
+            debug2("processHeadAtom completed: $headAtom, checked $pairCount pairs, found $validPairCount valid combinations")
         }
     }
     
-    /**
-     * Data class: frequent atom set
-     */
-    private data class FrequentAtomSet(
-        val atoms: List<MyAtom>,
-        val intersectInstances: Set<Int>,
-        val bodyInstances: Set<Int>,
-        val metric: Metric
-    )
+
     
     /**
      * Calculate Jaccard similarity using MinHash signatures
@@ -1202,40 +1144,6 @@ object TLearn {
         }
         
         return matchingBands.toDouble() / BANDS
-    }
-    
-    /**
-     * Save atomPair2Jaccard to JSON file
-     */
-    private fun saveAtomPair2JaccardToJson() {
-        val outputFile = File("out/${Settings.DATASET}/atomPair2Jaccard.json")
-        outputFile.parentFile?.mkdirs()
-        
-        println("Saving atomPair2Jaccard to ${outputFile.absolutePath}...")
-        
-        BufferedWriter(FileWriter(outputFile)).use { writer ->
-            writer.write("{\n")
-            val entries = atomPair2Jaccard.entries.toList()
-                .sortedByDescending { it.value } // Sort by Jaccard descending
-            
-            entries.forEachIndexed { index, (atomPair, jaccard) ->
-                if (jaccard < MIN_RULE_JACCARD) return@forEachIndexed // Skip low Jaccard entries
-                writer.write("  \"${atomPair.first.getRuleString()};${atomPair.second.getRuleString()}\": $jaccard")
-                if (index < entries.size - 1) writer.write(",")
-                writer.write("\n")
-                
-                // Flush every 100 entries
-                if (index % 100 == 0 && index > 0) {
-                    writer.flush()
-                    println("[saveAtomPair2JaccardToJson] Processed ${index + 1}/${entries.size} atom pairs...")
-                }
-            }
-            
-            writer.write("}\n")
-        }
-        
-        println("Successfully saved atomPair2Jaccard to ${outputFile.absolutePath}")
-        println("Total atom pairs: ${atomPair2Jaccard.size}")
     }
 
 

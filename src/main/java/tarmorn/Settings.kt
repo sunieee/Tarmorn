@@ -10,7 +10,7 @@ object Settings {
     @JvmField
     var MIN_SUPP: Int = 5
     @JvmField
-    var NUM_UNSEEN: Int = 5
+    var NUM_UNSEEN: Int = 1
     @JvmField
     var MIN_SURPRISAL_LIFT: Double = 0.01
     @JvmField
