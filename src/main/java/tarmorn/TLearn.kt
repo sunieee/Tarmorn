@@ -48,6 +48,7 @@ object TLearn {
     const val MAX_BUCKET_ATTEMPT = 100
     const val MIN_COMMON_EVIDENCE = 30
     const val MIN_SURPRISAL_LIFT = 0.1
+    // const val MIN_SURPRISAL_DEGRADE = 0.2
     const val MIN_RULE_JACCARD = 0.1
 
     // MinHash parameters: MH_DIM = BANDS * R
@@ -1055,13 +1056,20 @@ object TLearn {
         if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
         
         // Convert to list for pairwise iteration
-        val bodyList = bodyMap.entries.toList()
+        // extract rule with surprisal >= MIN_SURPRISAL_LIFT
+        val newBodyMap = ConcurrentHashMap<MyAtom<*>, Metric>()
+        for ((bodyAtom, metric) in bodyMap) {
+            if (metric.surprisal >= MIN_SURPRISAL_LIFT) {
+                newBodyMap[bodyAtom] = metric
+            }
+        }
+        val bodyList = newBodyMap.entries.toList()
         
-        debug2("processHeadAtom: $headAtom, bodyMap size=${bodyList.size}")
+        debug1("processHeadAtom: $headAtom, bodyMap size=${bodyMap.size}, filtered size=${bodyList.size}")
         
         var pairCount = 0
         var validPairCount = 0
-        
+
         // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
         for (i in bodyList.indices) {
             val (B1, metric1) = bodyList[i]
@@ -1069,18 +1077,24 @@ object TLearn {
             if (S_H1.size < Settings.MIN_SUPP) {
                 continue  // Does not meet minimum support
             }
-            
+
             for (j in (i + 1) until bodyList.size) {
+                // === 响应线程中断 ===
+                if (Thread.currentThread().isInterrupted) {
+                    println("Thread interrupted, exiting processHeadAtom for $headAtom")
+                    return
+                }
+
                 val (B2, metric2) = bodyList[j]
                 pairCount++
 
                 val S_H12: Set<*>
                 val S_12: Set<*>
-                
+
                 if (B1.isSampled || B2.isSampled) {
                     // 采样情况：需要补充检查
                     val intersection = B1.instances.intersect(B2.instances).toMutableSet()
-                    
+
                     if (intersection.size < MIN_COMMON_EVIDENCE) {
                         // 补充：检查 B1 独有的实例是否在 B2 中存在
                         val originalSize = intersection.size
@@ -1088,15 +1102,17 @@ object TLearn {
                             if (s !in intersection && s != null && B2.hasInstance(s)) intersection.add(s)
                         }
                         // 补充：检查 B2 独有的实例是否在 B1 中存在
-                        for (s in B2.instances) {
-                            if (s !in intersection && s != null && B1.hasInstance(s)) intersection.add(s)
-                        }
+                        if (intersection.size < MIN_COMMON_EVIDENCE)
+                            for (s in B2.instances) {
+                                if (s !in intersection && s != null && B1.hasInstance(s)) intersection.add(s)
+                            }
+
                         if (intersection.size < MIN_COMMON_EVIDENCE) {
                             continue  // Not enough common evidence
                         }
-                        println("[DEBUG] Supplemented intersection size for sampled atoms: B1: $B1, B2: $B2, original: ${originalSize}, now ${intersection.size}")
+                        debug1("[DEBUG] Supplemented intersection size for sampled atoms: B1: $B1, B2: $B2, original: ${originalSize}, now ${intersection.size}")
                     }
-                    
+
                     S_12 = intersection
                     S_H12 = S_12.intersect(headAtom.instances)
                     if (S_H12.size < Settings.MIN_SUPP) {
@@ -1108,39 +1124,40 @@ object TLearn {
                     if (S_H12.size < Settings.MIN_SUPP) {
                         continue  // Does not meet minimum support
                     }
-                    
+
                     // Calculate common evidence: intersection of two bodyAtom instances
                     S_12 = B1.instances.intersect(B2.instances)
                     if (S_12.size < MIN_COMMON_EVIDENCE) {
                         continue  // Not enough common evidence
                     }
                 }
-                
+
                 // Create new metric with bodySize = |S_12|
                 val metric = Metric(
                     support = S_H12.size.toDouble(),
                     headSize = headAtom.instances.size,
                     bodySize = S_12.size
                 )
-                
+
                 // Calculate lift
                 val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
-                
+
                 // Check for contradicting evidence (rare but interesting)
-                if (metric.surprisal <= 0) {
-                    println("[WARNING] Contradicting evidence detected:")
-                    println("  Head: $headAtom")
-                    println("  Body1: $B1 (surprisal=${metric1.surprisal})")
-                    println("  Body2: $B2 (surprisal=${metric2.surprisal})")
-                    println("  Combined: surprisal=${metric.surprisal}, lift=$lift")
-                }
-                
+                // if (metric.surprisal <= 0) {
+                //     println("[WARNING] Contradicting evidence detected:")
+                //     println("  Head: $headAtom")
+                //     println("  Body1: $B1 (surprisal=${metric1.surprisal})")
+                //     println("  Body2: $B2 (surprisal=${metric2.surprisal})")
+                //     println("  Combined: surprisal=${metric.surprisal}, lift=$lift")
+                // }
+
                 // Only store if lift is significant
-                if (kotlin.math.abs(lift) > MIN_SURPRISAL_LIFT) {
+                if (lift > MIN_SURPRISAL_LIFT || lift < -minOf(metric1.surprisal, metric2.surprisal)) {
                     val formula = Formula(B1, B2)
+                    metric.lift = lift
                     setH2F2metric(headAtom, formula, metric)
                     validPairCount++
-                    
+
                     // Update lift statistics
                     if (headAtom.isBinary) {
                         if (lift > 0) binaryPositiveLift.incrementAndGet()
@@ -1149,13 +1166,13 @@ object TLearn {
                         if (lift > 0) unaryPositiveLift.incrementAndGet()
                         else unaryNegativeLift.incrementAndGet()
                     }
-                    
+
                     debug2("Valid pair: $headAtom <= ${B1.getRuleString()} & ${B2.getRuleString()}, " +
                            "conf=${metric.confidence}, surprisal=${metric.surprisal}, lift=$lift, supp=${S_H12.size}")
                 }
             }
         }
-        
+
         if (pairCount > 0) {
             debug2("processHeadAtom completed: $headAtom, checked $pairCount pairs, found $validPairCount valid combinations")
         }
@@ -1336,7 +1353,7 @@ object TLearn {
                     if (bodyIndex < bodyEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
-                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${formula.getRuleString()}"
+                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.lift}\t${atom.getRuleString()} <= ${formula.getRuleString()}"
                     ruleWriter.write(ruleLine)
                     ruleWriter.write("\n")
                     

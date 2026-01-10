@@ -10,6 +10,7 @@ data class Metric(
     var support: Double,
     val headSize: Int,
     val bodySize: Int,
+    var lift: Double = 0.0
 ) : Comparable<Metric> {
     val coverage: Double = if (headSize > 0) support / headSize else 0.0
     val confidence: Double = if (bodySize > 0) support / (bodySize + Settings.NUM_UNSEEN) else 0.0
@@ -24,7 +25,7 @@ data class Metric(
         get() = support < Settings.MIN_SUPP * 2 || support > min(headSize, bodySize).toDouble()
 
     override fun toString(): String {
-        return "{\"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence}"
+        return "{\"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence, \"lift\":$lift}"
     }
 
     fun inverse() =  Metric(support, bodySize, headSize)
