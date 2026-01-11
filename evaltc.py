@@ -109,9 +109,11 @@ def calculate_metrics(scores, labels):
 argparser = argparse.ArgumentParser(description="Triple Classification using PyClause")
 argparser.add_argument("--dataset", type=str, default="wnrr", help="dataset to use")
 argparser.add_argument("--rules", type=str, default="", help="rules to use")
-argparser.add_argument("--jaccard_file", type=str, default="", help="jaccard file to use")
+argparser.add_argument("--ranking_file", type=str, default="", help="rules to use")
 argparser.add_argument("--aggregation_function", type=str, default="maxplus", help="aggregation function to use")
-argparser.add_argument("--combo_noisyor_method", type=str, default="none", help="combo noisy or method to use")
+argparser.add_argument("--noisyor_positive_method", type=str, default="none", help="combo noisy or method to use")
+argparser.add_argument("--noisyor_negative_method", type=str, default="none", help="combo noisy or method to use")
+argparser.add_argument("--lift_ratio", type=float, default=1.0, help="whether to disable u_xxd rules")
 argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
 argparser.add_argument("--disable_combo", action="store_true", help="whether to disable combo rules")
 argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
@@ -119,40 +121,41 @@ argparser.add_argument("--disable_u_c", action="store_true", help="whether to di
 argparser.add_argument("--disable_zero", action="store_true", help="whether to disable zero rules")
 argparser.add_argument("--disable_u_xxc", action="store_true", help="whether to disable u_xxc rules")
 argparser.add_argument("--disable_u_xxd", action="store_true", help="whether to disable u_xxd rules")
-argparser.add_argument("--combo_debug", action="store_true", help="whether to enable combo debug")
-argparser.add_argument("--combo_max_depth", type=int, default=-1, help="max depth for combo rules")
-argparser.add_argument("--combo_max_branch", type=int, default=-1, help="max branch for combo rules")
-argparser.add_argument("--b_max_length", type=int, default=-1, help="max length for b rules")
-argparser.add_argument("--d_weight", type=float, default=0.1, help="weight for d rules")
-argparser.add_argument("--z_weight", type=float, default=0.01, help="weight for zero rules")
-argparser.add_argument("--num_top_rules", type=int, default=-1, help="number of top rules to use")
+argparser.add_argument("--b_max_length", type=int, default=-1, help="whether to disable u_xxd rules")
+argparser.add_argument("--d_weight", type=float, default=0.1, help="whether to disable u_xxd rules")
+argparser.add_argument("--z_weight", type=float, default=0.01, help="whether to disable u_xxd rules")
+argparser.add_argument("--test_valid_split", type=str, default="", help="whether to disable u_xxd rules")
+
 
 args = argparser.parse_args()
 dataset = args.dataset
 train = f"data/{dataset}/train.txt"
-filter_set = f"data/{dataset}/valid.txt"
-target = f"data/{dataset}/test.txt"
+filter_set = f"data/{dataset}/valid{args.test_valid_split}.txt"
+target = f"data/{dataset}/test{args.test_valid_split}.txt"
 
+# rules = f"{get_base_dir()}/data/rules/{dataset}.txt"
 rules = args.rules if args.rules else f"data/rules/{dataset}.txt"
+ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{dataset}.txt"
 
 options = Options()
-options.set("prediction_handler.aggregation_function", args.aggregation_function)
-options.set("prediction_handler.num_top_rules", args.num_top_rules)
-options.set("prediction_handler.combo_noisyor_method", args.combo_noisyor_method)
-options.set("prediction_handler.queryTopK", 100)  # Enable debug output for first 10 triples
-options.set("prediction_handler.min_rule_jaccard", 0.9)  # Enable rule clustering
-
+# options.set("ranking_handler.topk", args.topk)
+# options.set("ranking_handler.combo_include_negative", args.combo_include_negative)
 options.set("loader.load_b_rules", not args.disable_b)
-options.set("loader.load_combo", not args.disable_combo)
 options.set("loader.load_zero_rules", not args.disable_zero)
 options.set("loader.load_u_d_rules", not args.disable_u_d)
 options.set("loader.load_u_c_rules", not args.disable_u_c)
 options.set("loader.load_u_xxc_rules", not args.disable_u_xxc)
 options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
-options.set("loader.combo_debug", args.combo_debug)
-options.set("loader.combo_max_depth", args.combo_max_depth)
-options.set("loader.combo_max_branch", args.combo_max_branch)
 options.set("loader.b_max_length", args.b_max_length)
+
+# ComboHandler 配置现在是 Loader 的一部分，使用 loader.combo_handler.* 路径
+options.set("loader.combo_handler.aggregation_function", args.aggregation_function)
+options.set("loader.combo_handler.if_load", not args.disable_combo)
+options.set("loader.combo_handler.if_debug", False)
+options.set("loader.combo_handler.noisyor_positive_method", args.noisyor_positive_method)
+options.set("loader.combo_handler.noisyor_negative_method", args.noisyor_negative_method)
+options.set("loader.combo_handler.lift_ratio", args.lift_ratio)
+options.set("loader.combo_handler.query_topk", 100)
 
 # *** Set thread count ***
 options.set("prediction_handler.num_threads", -1)
@@ -169,7 +172,7 @@ print("=" * 50)
 print("\n[1/4] Loading data and rules...")
 loader = Loader(options=options.get("loader"))
 loader.load_data(data=train, filter=filter_set, target=target)
-loader.load_rules(rules=rules, jaccard=args.jaccard_file)
+loader.load_rules(rules=rules)
 print(f"  Entities: {len(loader.get_entity_index())}, Relations: {len(loader.get_relation_index())}")
 
 # Load test samples

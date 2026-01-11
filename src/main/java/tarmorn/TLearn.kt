@@ -48,8 +48,8 @@ object TLearn {
     const val MAX_BUCKET_ATTEMPT = 100
     const val MIN_COMMON_EVIDENCE = 30
     const val MIN_SURPRISAL_LIFT = 0.1
+    const val TOP_K_RULE_COMBO = 200
     // const val MIN_SURPRISAL_DEGRADE = 0.2
-    const val MIN_RULE_JACCARD = 0.1
 
     // MinHash parameters: MH_DIM = BANDS * R
     const val MH_DIM = 256
@@ -1063,7 +1063,7 @@ object TLearn {
                 newBodyMap[bodyAtom] = metric
             }
         }
-        val bodyList = newBodyMap.entries.toList()
+        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }
         
         debug1("processHeadAtom: $headAtom, bodyMap size=${bodyMap.size}, filtered size=${bodyList.size}")
         
@@ -1071,7 +1071,7 @@ object TLearn {
         var validPairCount = 0
 
         // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
-        for (i in bodyList.indices) {
+        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
             val (B1, metric1) = bodyList[i]
             val S_H1 = headAtom.instances.intersect(B1.instances)
             if (S_H1.size < Settings.MIN_SUPP) {
@@ -1088,71 +1088,59 @@ object TLearn {
                 val (B2, metric2) = bodyList[j]
                 pairCount++
 
-                val S_H12: Set<*>
-                val S_12: Set<*>
+                var S_H12_size = S_H1.intersect(B2.instances).size
+                var S_12_size = 0
 
-                if (B1.isSampled || B2.isSampled) {
+                if (S_H12_size < Settings.MIN_SUPP && (B1.isSampled || B2.isSampled)) {
                     // 采样情况：需要补充检查
                     val intersection = B1.instances.intersect(B2.instances).toMutableSet()
+                    S_12_size = intersection.size
 
-                    if (intersection.size < MIN_COMMON_EVIDENCE) {
-                        // 补充：检查 B1 独有的实例是否在 B2 中存在
-                        val originalSize = intersection.size
+                    // 补充：检查 B1 独有的实例是否在 B2 中存在
+                    val originalS_12_size = intersection.size
+                    val originS_H12_size = S_H12_size
+
+                    if (B2.isSampled)
                         for (s in B1.instances) {
-                            if (s !in intersection && s != null && B2.hasInstance(s)) intersection.add(s)
-                        }
-                        // 补充：检查 B2 独有的实例是否在 B1 中存在
-                        if (intersection.size < MIN_COMMON_EVIDENCE)
-                            for (s in B2.instances) {
-                                if (s !in intersection && s != null && B1.hasInstance(s)) intersection.add(s)
+                            if (s !in intersection && s != null && B2.hasInstance(s)) {
+                                S_12_size++
+                                if (s in headAtom.instances) S_H12_size++
                             }
-
-                        if (intersection.size < MIN_COMMON_EVIDENCE) {
-                            continue  // Not enough common evidence
                         }
-                        debug1("[DEBUG] Supplemented intersection size for sampled atoms: B1: $B1, B2: $B2, original: ${originalSize}, now ${intersection.size}")
-                    }
+                    // 补充：检查 B2 独有的实例是否在 B1 中存在
+                    if (B1.isSampled && S_H12_size < Settings.MIN_SUPP)
+                        for (s in B2.instances) {
+                            if (s !in intersection && s != null && B1.hasInstance(s)) {
+                                S_12_size++
+                                if (s in headAtom.instances) S_H12_size++
+                            }
+                        }
 
-                    S_12 = intersection
-                    S_H12 = S_12.intersect(headAtom.instances)
-                    if (S_H12.size < Settings.MIN_SUPP) {
+                    if (S_H12_size < Settings.MIN_SUPP) {
                         continue  // Does not meet minimum support
                     }
+
+                    debug1("[DEBUG] Supplemented intersection size for sampled atoms: B1: $B1, B2: $B2, S_12: ${originalS_12_size} -> ${S_12_size}, S_H12: ${originS_H12_size} -> ${S_H12_size}")
                 } else {
                     // 非采样情况：直接计算 S_H12
-                    S_H12 = S_H1.intersect(B2.instances)
-                    if (S_H12.size < Settings.MIN_SUPP) {
+                    if (S_H12_size < Settings.MIN_SUPP) {
                         continue  // Does not meet minimum support
                     }
-
                     // Calculate common evidence: intersection of two bodyAtom instances
-                    S_12 = B1.instances.intersect(B2.instances)
-                    if (S_12.size < MIN_COMMON_EVIDENCE) {
-                        continue  // Not enough common evidence
-                    }
+                    S_12_size = B1.instances.intersect(B2.instances).size
                 }
 
                 // Create new metric with bodySize = |S_12|
                 val metric = Metric(
-                    support = S_H12.size.toDouble(),
+                    support = S_H12_size.toDouble(),
                     headSize = headAtom.instances.size,
-                    bodySize = S_12.size
+                    bodySize = S_12_size
                 )
 
                 // Calculate lift
                 val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
-
-                // Check for contradicting evidence (rare but interesting)
-                // if (metric.surprisal <= 0) {
-                //     println("[WARNING] Contradicting evidence detected:")
-                //     println("  Head: $headAtom")
-                //     println("  Body1: $B1 (surprisal=${metric1.surprisal})")
-                //     println("  Body2: $B2 (surprisal=${metric2.surprisal})")
-                //     println("  Combined: surprisal=${metric.surprisal}, lift=$lift")
-                // }
-
                 // Only store if lift is significant
-                if (lift > MIN_SURPRISAL_LIFT || lift < -minOf(metric1.surprisal, metric2.surprisal)) {
+                if (lift > MIN_SURPRISAL_LIFT || lift < -maxOf(metric1.surprisal, metric2.surprisal)) {
                     val formula = Formula(B1, B2)
                     metric.lift = lift
                     setH2F2metric(headAtom, formula, metric)
@@ -1168,7 +1156,7 @@ object TLearn {
                     }
 
                     debug2("Valid pair: $headAtom <= ${B1.getRuleString()} & ${B2.getRuleString()}, " +
-                           "conf=${metric.confidence}, surprisal=${metric.surprisal}, lift=$lift, supp=${S_H12.size}")
+                           "conf=${metric.confidence}, surprisal=${metric.surprisal}, lift=$lift, supp=${S_H12_size}")
                 }
             }
         }

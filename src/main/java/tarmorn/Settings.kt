@@ -12,8 +12,6 @@ object Settings {
     @JvmField
     var NUM_UNSEEN: Int = 1
     @JvmField
-    var MIN_SURPRISAL_LIFT: Double = 0.01
-    @JvmField
     var MAX_JOIN_INSTANCES_L2: Int = 20000
     @JvmField
     var MAX_JOIN_INSTANCES_L3: Int = 10000
