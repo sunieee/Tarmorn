@@ -132,48 +132,6 @@ object IdManager {
         return "${getRelationString(r)}(X,Y)"
     }
 
-    /**
-     * Convert an atom (relation path + entityId) into a readable string.
-     * Rules:
-     * - If path length == 1: relation(X, entityString)
-     * - If path length  > 1: r1(X,A), r2(A,B), ..., rN(B, entityString)
-     * - If any relation is an inverse, convert to its forward name and swap arguments.
-     */
-    fun getAtomString(relationId: Long, entityId: Int): String {
-        // Resolve terminal argument
-        fun termString(eid: Int): String = when (eid) {
-            getYId() -> "Y"
-            getXId() -> "X"
-            0 -> "*"
-            else -> getEntityString(eid)
-        }
-
-        // Decode relation path
-        val relations: LongArray = if (relationId <= RelationPath.MAX_RELATION_ID) longArrayOf(relationId) else RelationPath.decode(relationId)
-        val n = relations.size
-        val tailTerm = termString(entityId)
-
-        // Build node list: X, A, B, ..., tailTerm
-        val nodes = Array(n + 1) { "" }
-        nodes[0] = "X"
-        for (i in 1 until n+1) {
-            nodes[i] = ('A'.code + (i - 1)).toChar().toString()
-        }
-        if (tailTerm != "*") nodes[n] = tailTerm
-        val parts = ArrayList<String>(n)
-        for (i in 0 until n) {
-            val r = relations[i]
-            val inv = isInverseRelation(r)
-            val forward = if (inv) getInverseRelation(r) else r
-            val name = getRelationString(forward)
-            // swap args for inverse
-            val left = if (inv) nodes[i + 1] else nodes[i]
-            val right = if (inv) nodes[i] else nodes[i + 1]
-            parts.add("$name($left,$right)")
-        }
-        return parts.joinToString(", ")
-    }
-
     // Clear all mappings except KG variables (useful for testing).
     fun clear() {
         // Preserve KG variables A-Z

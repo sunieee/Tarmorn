@@ -94,7 +94,7 @@ class MyAtom<T>(
     }
 
     override fun toString(): String {
-        if (entityId == IdManager.getZId()) return ""
+        require(entityId != IdManager.getZId()) { "EntityId cannot be ZId in toString()" }
         val relationStr = IdManager.getRelationString(relationId)
         return when {
             entityId == IdManager.getYId() -> "$relationStr(X,Y)"
@@ -106,8 +106,6 @@ class MyAtom<T>(
             }
         }
     }
-
-    fun getRuleString(): String = if (entityId == IdManager.getZId()) "" else IdManager.getAtomString(relationId, entityId)
 
     // 注意：inverse仅仅在validateH2B时调用，head和body同时取反，所以instances不用变
     // isInverseInstances 现在通过 isInverseRelation && isBinary && isL1Atom 自动计算
@@ -134,6 +132,41 @@ class MyAtom<T>(
 
     val firstRelation: Long
         get() = if (isL1Atom) relationId else RelationPath.getFirstRelation(relationId)
+
+    fun getRuleString(): String {
+        // Resolve terminal argument
+        fun termString(eid: Int): String = when (eid) {
+            IdManager.getYId() -> "Y"
+            IdManager.getXId() -> "X"
+            0 -> "*"
+            else -> IdManager.getEntityString(eid)
+        }
+
+        // Decode relation path
+        val relations: LongArray = if (relationId <= RelationPath.MAX_RELATION_ID) longArrayOf(relationId) else RelationPath.decode(relationId)
+        val n = relations.size
+        val tailTerm = termString(entityId)
+
+        // Build node list: X, A, B, ..., tailTerm
+        val nodes = Array(n + 1) { "" }
+        nodes[0] = "X"
+        for (i in 1 until n+1) {
+            nodes[i] = ('A'.code + (i - 1)).toChar().toString()
+        }
+        if (tailTerm != "*") nodes[n] = tailTerm
+        val parts = ArrayList<String>(n)
+        for (i in 0 until n) {
+            val r = relations[i]
+            val inv = IdManager.isInverseRelation(r)
+            val forward = if (inv) IdManager.getInverseRelation(r) else r
+            val name = IdManager.getRelationString(forward)
+            // swap args for inverse
+            val left = if (inv) nodes[i + 1] else nodes[i]
+            val right = if (inv) nodes[i] else nodes[i + 1]
+            parts.add("$name($left,$right)")
+        }
+        return parts.joinToString(", ")
+    }
 
     /**
      * Check if this atom contains the given instance

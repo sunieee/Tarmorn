@@ -6,6 +6,7 @@ import tarmorn.data.TripleSet
 import tarmorn.structure.TLearn.DepAtom
 import tarmorn.structure.TLearn.DepFormula
 import tarmorn.structure.TLearn.Metric
+import tarmorn.structure.TLearn.RuleParser
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
@@ -87,6 +88,13 @@ object DepLearn {
         println("\n=== Step 2: Reading Rules ===")
         println("Reading rules from: ${Settings.PATH_RULES}")
         readRules(Settings.PATH_RULES)
+
+        saveMetricToJson(
+            metricMap = H2B2metric,
+            outputPath = Settings.PATH_H2B2metric,
+            appendMode = false,
+            isFormulaMap = false
+        )
         
         // Step 3: Composition phase - combine atoms into formulas
         println("\n=== Step 3: Composition Phase ===")
@@ -96,15 +104,7 @@ object DepLearn {
             println("Error during composition phase: ${e.message}")
             e.printStackTrace()
         }
-        
-        // Step 4: Save H2B2metric and H2F2metric
-        println("\n=== Step 4: Saving Metrics ===")
-        saveMetricToJson(
-            metricMap = H2B2metric,
-            outputPath = Settings.PATH_H2B2metric,
-            appendMode = false,
-            isFormulaMap = false
-        )
+
         saveMetricToJson(
             metricMap = H2F2metric,
             outputPath = Settings.PATH_H2F2metric,
@@ -113,7 +113,7 @@ object DepLearn {
         )
         
         // Step 5: Print statistics
-        println("\n=== Step 5: Statistics ===")
+        println("\n=== Step 4: Statistics ===")
         printStatistics()
         
         val endTime = System.currentTimeMillis()
@@ -154,160 +154,6 @@ object DepLearn {
     }
     
     /**
-     * Simplify a rule by removing Y variable and converting to single-argument format
-     * Examples:
-     * - rel(X,Y) => rel(X)
-     * - rel(/m/entity,Y) => INVERSE_rel(/m/entity)
-     * - rel1(X,A), rel2(Y,A) => rel1(X,A), INVERSE_rel2(A)
-     */
-    private fun simplifyRule(ruleStr: String): String {
-        val parts = ruleStr.split(" <= ")
-        if (parts.size != 2) return ruleStr
-        
-        val headStr = parts[0].trim()
-        val bodyStr = parts[1].trim()
-        
-        // Simplify head
-        val simplifiedHead = simplifyAtom(headStr, isHead = true)
-        
-        // Simplify body atoms (comma-separated)
-        if (bodyStr.isEmpty()) {
-            return "$simplifiedHead <= "
-        }
-        val bodyAtoms = splitAtomsByComma(bodyStr)
-        val simplifiedBodyAtoms = bodyAtoms.map { simplifyAtom(it.trim(), isHead = false) }
-        val simplifiedBody = simplifiedBodyAtoms.joinToString(", ")
-        
-        return "$simplifiedHead <= $simplifiedBody"
-    }
-    
-    /**
-     * Split atoms by comma, respecting parentheses
-     */
-    private fun splitAtomsByComma(str: String): List<String> {
-        val result = mutableListOf<String>()
-        val current = StringBuilder()
-        var depth = 0
-        
-        for (c in str) {
-            when (c) {
-                '(' -> {
-                    depth++
-                    current.append(c)
-                }
-                ')' -> {
-                    depth--
-                    current.append(c)
-                }
-                ',' -> {
-                    if (depth == 0) {
-                        result.add(current.toString().trim())
-                        current.clear()
-                    } else {
-                        current.append(c)
-                    }
-                }
-                else -> current.append(c)
-            }
-        }
-        
-        if (current.isNotEmpty()) {
-            result.add(current.toString().trim())
-        }
-        
-        return result
-    }
-    
-    /**
-     * Parse a simplified atom string into DepAtom
-     * Format: relation(arg) or INVERSE_relation(arg)
-     * arg can be: X, *, or /m/entity
-     */
-    private fun parseAtom(atomStr: String): DepAtom {
-        val openParen = atomStr.indexOf('(')
-        val closeParen = atomStr.indexOf(')')
-        
-        if (openParen == -1 || closeParen == -1 || closeParen < openParen) {
-            throw IllegalArgumentException("Invalid atom format: $atomStr")
-        }
-        
-        val relationStr = atomStr.substring(0, openParen)
-        val arg = atomStr.substring(openParen + 1, closeParen).trim()
-        
-        val relationId = IdManager.getRelationId(relationStr)
-        
-        // Determine entity ID based on single argument:
-        // Y = binary (X,Y) - for head atoms
-        // * = existence (X,_) - for body atoms  
-        // X = loop (X,X)
-        // /m/entity = constant
-        val entityId = when (arg) {
-            "Y" -> IdManager.getYId()  // Binary: relation(Y) means relation(X,Y)
-            "*" -> 0  // Existence: relation(*) means relation(X,_)
-            "X" -> IdManager.getXId()  // Loop: relation(X) means relation(X,X)
-            else -> IdManager.getEntityId(arg)  // Constant: relation(/m/entity)
-        }
-        
-        return DepAtom(relationId, entityId)
-    }
-    
-    /**
-     * Simplify a single atom by removing Y variable
-     * Examples:
-     * - rel(X,Y) => rel(X)
-     * - rel(Y,X) => INVERSE_rel(X)
-     * - rel(/m/entity,Y) => INVERSE_rel(/m/entity)
-     * - rel(X,/m/entity) => rel(/m/entity)
-     * - rel(A,Y) => rel(A)
-     * - rel(Y,A) => INVERSE_rel(A)
-     */
-    private fun simplifyAtom(atomStr: String, isHead: Boolean): String {
-        // Check if it has arguments
-        val openParen = atomStr.indexOf('(')
-        if (openParen == -1) return atomStr
-        
-        val closeParen = atomStr.lastIndexOf(')')
-        if (closeParen == -1 || closeParen < openParen) return atomStr
-        
-        val relation = atomStr.substring(0, openParen)
-        val argsStr = atomStr.substring(openParen + 1, closeParen)
-        val args = argsStr.split(",").map { it.trim() }
-        
-        // If not 2 arguments, return as-is
-        if (args.size != 2) return atomStr
-        
-        val arg1 = args[0]
-        val arg2 = args[1]
-        
-        // Check if Y is present
-        val hasY = arg1 == "Y" || arg2 == "Y"
-        if (!hasY) return atomStr
-        
-        // Determine the kept argument and whether to inverse
-        val (keptArg, needsInverse) = when {
-            arg1 == "Y" && arg2 != "Y" -> Pair(arg2, true)   // rel(Y,X) => INVERSE_rel(X)
-            arg1 != "Y" && arg2 == "Y" -> Pair(arg1, false)  // rel(X,Y) => rel(X) or rel(Y)
-            else -> return atomStr  // Both Y or neither Y
-        }
-        
-        // Build simplified atom
-        val finalRelation = if (needsInverse) "INVERSE_$relation" else relation
-        
-        // Determine final argument based on type:
-        // - For head atoms with (X,Y): keep Y to indicate binary
-        // - For body atoms with (X,Y) or (X,A/B/C...): use * to indicate existence  
-        // - For constant entities: keep as-is
-        val finalArg = when {
-            keptArg == "X" && isHead -> "Y"  // head(X,Y) => head(Y) - binary
-            keptArg == "X" && !isHead -> "*"  // body(X,Y) => body(*) - existence
-            keptArg.length == 1 && keptArg[0].isUpperCase() && keptArg[0] in 'A'..'Z' -> "*"  // Variables A-Z => *
-            else -> keptArg  // Constant entities like /m/entity
-        }
-        
-        return "$finalRelation($finalArg)"
-    }
-    
-    /**
      * Read rules from file and convert to H2B2metric
      * Rule format: bodySize\tsupport\tconfidence\thead <= body1 body2 ...
      * We only process rules without && (no complex rules)
@@ -319,82 +165,96 @@ object DepLearn {
             return
         }
         
-        var totalLines = 0
-        var parsedRules = 0
-        var skippedComplex = 0
-        var skippedZero = 0
-        var errors = 0
+        println("Reading rules from: $filepath")
+        val startTime = System.currentTimeMillis()
         
+        // First pass: read all lines into memory
+        val allLines = mutableListOf<String>()
         BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8)).use { reader ->
-            var line: String? = reader.readLine()
-            
-            while (line != null) {
-                totalLines++
-                
-                // Skip empty lines and comments
-                if (line.isBlank() || line.startsWith("#")) {
-                    line = reader.readLine()
-                    continue
-                }
-                
-                // Skip complex rules (containing &&)
-                if (line.contains("&&")) {
-                    skippedComplex++
-                    line = reader.readLine()
-                    continue
-                }
-                
-                // Simplify rule before parsing
-                val tokens = line.split("\t")
-                if (tokens.size >= 4) {
-                    val ruleString = tokens[3]
-                    val simplifiedRuleString = simplifyRule(ruleString)
-                    val simplifiedLine = "${tokens[0]}\t${tokens[1]}\t${tokens[2]}\t$simplifiedRuleString"
-                    
-                    // Parse and add simplified rule
-                    try {
-                        parseAndAddRule(simplifiedLine)
-                        parsedRules++
-                        
-                        if (parsedRules % 100000 == 0) {
-                            println("Parsed $parsedRules rules...")
-                        }
-                    } catch (e: Exception) {
-                        errors++
-                        if (errors <= 5) {
-                            println("Error parsing rule line $totalLines: ${e.message}")
-                            println("  Line: $line")
-                        }
-                    }
-                } else {
-                    errors++
-                    if (errors <= 5) {
-                        println("Error: Invalid line format at line $totalLines")
-                        println("  Line: $line")
+            reader.forEachLine { line ->
+                if (line.isNotBlank() && !line.startsWith("#") && !line.contains("&&")) {
+                    val tokens = line.split("\t")
+                    if (tokens.size >= 4) {
+                        allLines.add(line)
                     }
                 }
-                
-                line = reader.readLine()
             }
         }
         
-        println("Total lines read: $totalLines")
-        println("Successfully parsed: $parsedRules rules")
-        println("Skipped complex rules (with &&): $skippedComplex")
-        println("Skipped Zero Rules (empty body): $skippedZero")
-        if (errors > 0) {
-            println("Errors encountered: $errors")
+        println("Read ${allLines.size} valid rules, starting parallel parsing...")
+        
+        // Concurrent counters
+        val parsedRules = java.util.concurrent.atomic.AtomicInteger(0)
+        val errors = java.util.concurrent.atomic.AtomicInteger(0)
+        
+        // Create thread pool
+        val threadPool = java.util.concurrent.Executors.newFixedThreadPool(Settings.WORKER_THREADS)
+        
+        try {
+            // Chunk the lines for better load balancing
+            val chunkSize = maxOf(1000, allLines.size / (Settings.WORKER_THREADS * 4))
+            val chunks = allLines.chunked(chunkSize)
+            
+            val futures = chunks.map { chunk ->
+                threadPool.submit {
+                    chunk.forEach { line ->
+                        try {
+                            parseAndAddRule(line)
+                            val count = parsedRules.incrementAndGet()
+                            if (count % 100000 == 0) {
+                                println("Parsed $count/${allLines.size} rules...")
+                            }
+                        } catch (e: Exception) {
+                            val errorCount = errors.incrementAndGet()
+                            if (errorCount <= 5) {
+                                synchronized(System.out) {
+                                    println("Error parsing rule: ${e.message}")
+                                    println("  Line: $line")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Wait for all tasks to complete
+            futures.forEach { it.get() }
+            
+        } finally {
+            threadPool.shutdown()
         }
+        
+        val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
+        println("\nRule loading completed:")
+        println("  Total lines processed: ${allLines.size}")
+        println("  Successfully parsed: ${parsedRules.get()}")
+        println("  Errors: ${errors.get()}")
+        println("  Time: %.2f seconds".format(elapsed))
+        println("  Speed: %.0f rules/sec".format(parsedRules.get() / elapsed))
     }
 
-    fun setH2F2metric(atom: DepAtom, formula: DepFormula, metric: Metric) {
-        val F2metric = H2F2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
+    fun setH2F2metric(headAtom: DepAtom, formula: DepFormula, metric: Metric) {
+        val F2metric = H2F2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
         F2metric[formula] = metric
+
+        totalRules++
+        if (headAtom.entityId == IdManager.getYId()) {
+            binaryStats[formula.size]++
+        } else {
+            unaryStats[formula.size]++
+        }
     }
 
     fun setH2B2metric(headAtom: DepAtom, bodyAtom: DepAtom, metric: Metric) {
         val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
         B2metric[bodyAtom] = metric
+
+        totalRules++
+        if (headAtom.entityId == IdManager.getYId()) {
+            binaryStats[1]++
+        } else {
+            unaryStats[1]++
+        }
     }
     
     /**
@@ -415,43 +275,16 @@ object DepLearn {
         val confidence = tokens[2].toDouble()
         val ruleString = tokens[3]
         
-        // Parse rule string: "head <= body"
-        val parts = ruleString.split(" <= ")
-        if (parts.size != 2) {
-            throw IllegalArgumentException("Invalid rule format: expected 'head <= body'")
-        }
+        // Use RuleParser to parse the rule
+        val (headAtom, bodyAtom) = tarmorn.structure.TLearn.RuleParser.parseRule(ruleString)
         
-        val headStr = parts[0].trim()
-        val bodyStr = parts[1].trim()
-        
-        // Parse head atom
-        val headAtom = parseAtom(headStr)
         val headSize = getAtomSize(headAtom)
         val metric = Metric(support, headSize, bodySize)
-        if (bodyStr.isEmpty()) {
-            setH2F2metric(headAtom, DepFormula(), metric)
-            // Statistics for empty body (M0)
-            totalRules++
-            if (headAtom.entityId == IdManager.getYId()) {
-                binaryStats[0]++
-            } else {
-                unaryStats[0]++
-            }
-            return
-        }
-        // Parse body as a relation path (not split into atoms)
-        // bodyStr can be:
-        // 1. Simple relation: "/people/person/nationality(X,Y)"
-        // 2. Relation path: "r1*r2(X,Y)" or "r1*INVERSE_r2(X,Y)"
-        // 3. With constant: "r1*r2(/m/entity)"
-        setH2B2metric(headAtom, parseAtom(bodyStr), metric)
         
-        // Statistics for single body atom (M1)
-        totalRules++
-        if (headAtom.entityId == IdManager.getYId()) {
-            binaryStats[1]++
+        if (bodyAtom == null) {
+            setH2F2metric(headAtom, DepFormula(), metric)
         } else {
-            unaryStats[1]++
+            setH2B2metric(headAtom, bodyAtom, metric)
         }
     }
     
@@ -497,9 +330,14 @@ object DepLearn {
                 threadPool.submit {
                     compositionActiveThreadCount.incrementAndGet()
                     try {
-                        processHeadAtom(headAtom, bodyMap)
+                        // Call different function based on headAtom type
+                        if (headAtom.isBinary) {
+                            processBinaryHeadAtom(headAtom, bodyMap)
+                        } else {
+                            processUnaryHeadAtom(headAtom, bodyMap)
+                        }
                         val cnt = processedHeads.incrementAndGet()
-                        if (cnt % 100 == 0) {
+                        if (cnt % 1000 == 0) {
                             println("Processed $cnt/$totalHeads head atoms...")
                         }
                     } finally {
@@ -553,16 +391,170 @@ object DepLearn {
     }
     
     /**
-     * Process single headAtom, perform pairwise combination of bodyAtoms
+     * Process single binary headAtom, perform pairwise combination of bodyAtoms
+     * Uses dynamic sampling strategy to handle large instance sets
      */
-    private fun processHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Metric>) {
+    private fun processBinaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Metric>) {
+        if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
+        
+        // 获取当前线程ID，用于控制日志输出（仅线程0输出详细日志）
+        val threadId = Thread.currentThread().id % Settings.WORKER_THREADS
+        val isDebugThread = (threadId == 0L)
+        
+        // Extract rules with surprisal >= MIN_SURPRISAL_LIFT
+        val newBodyMap = ConcurrentHashMap<DepAtom, Metric>()
+        for ((bodyAtom, metric) in bodyMap) {
+            if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
+                newBodyMap[bodyAtom] = metric
+            }
+        }
+        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }
+
+        if (isDebugThread) {
+            println("[Thread-$threadId] starting processBinaryHeadAtom for $headAtom with ${bodyList.size} body atoms")
+        }
+        
+        var pairCount = 0
+        var validPairCount = 0
+        
+        val headInstances = headAtom.getBinaryInstances()
+        
+        // Pairwise combination with dynamic sampling
+        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+            val (B1, metric1) = bodyList[i]
+            
+            // 先检查 B1 已有的 instances
+            // 只对非L1原子进行采样，L1原子的实例已经在r2instanceSet中
+            if (!B1.isL1Atom && !B1.hasBeenSampled) {
+                B1.sampleBinaryInstancesEDIS()
+            }
+            var S_H1_size = B1.instances.count { it in headInstances }
+            val initialB1Size = B1.instances.size
+            
+            // Sample B1 until S_H1.size >= MIN_SUPP or exhausted
+            // 只对非L1原子进行采样
+            while (S_H1_size < Settings.MIN_SUPP && !B1.isL1Atom && !B1.samplingExhausted) {
+                val newInstances = B1.sampleBinaryInstancesEDIS()
+                // 只检查新采样的实例
+                val newMatchCount = newInstances.count { it in headInstances }
+                S_H1_size += newMatchCount
+                if (isDebugThread)
+                println("\t[Thread-$threadId] B1 sampling round ${B1.samplingRound}: " +
+                        "new=${newInstances.size}, total=${B1.instances.size}, " +
+                        "S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
+            }
+            if (isDebugThread)
+            println("[Thread-$threadId] B1  total sampling rounds ${B1.samplingRound}: " +
+                        "total=${B1.instances.size}, S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
+            
+            
+            if (S_H1_size < Settings.MIN_SUPP) {
+                continue  // Does not meet minimum support even after sampling
+            }
+            
+            for (j in (i + 1) until bodyList.size) {
+                // Check thread interruption
+                if (Thread.currentThread().isInterrupted) {
+                    println("Thread interrupted, exiting processBinaryHeadAtom for $headAtom")
+                    return
+                }
+                
+                val (B2, metric2) = bodyList[j]
+                if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
+                    continue
+                }
+                
+                pairCount++
+                
+                var S_12_size = 0
+                var S_H12_size = 0
+                
+                // 先检查 B1 已有的 instances
+                for (e in B1.instances) {
+                    if (B2.hasBinaryInstance(e)) {
+                        S_12_size++
+                        if (e in headInstances) {
+                            S_H12_size++
+                        }
+                    }
+                }
+                
+                val initialS12 = S_12_size
+                val initialSH12 = S_H12_size
+                
+                // Dynamic sampling loop for B1
+                // 只对非L1原子进行采样
+                while (S_H12_size < Settings.MIN_SUPP && !B1.isL1Atom && !B1.samplingExhausted) {
+                    val newInstances = B1.sampleBinaryInstancesEDIS()
+                    
+                    var newS12 = 0
+                    var newSH12 = 0
+                    
+                    // 只检查新采样的实例
+                    for (e in newInstances) {
+                        if (B2.hasBinaryInstance(e)) {
+                            S_12_size++
+                            newS12++
+                            if (e in headInstances) {
+                                S_H12_size++
+                                newSH12++
+                            }
+                        }
+                    }
+                    if (isDebugThread)
+                    println("\t[Thread-$threadId] Pair($i,$j) sampling round ${B1.samplingRound}: " +
+                            "newInstances=${newInstances.size}, newS12=$newS12, newSH12=$newSH12, S_12=$S_12_size, S_H12=$S_H12_size, " +
+                            "exhausted=${B1.samplingExhausted}")
+                }
+                if (isDebugThread)
+                println("[Thread-$threadId] Pair($i,$j) total sampling rounds ${B1.samplingRound}: " +
+                            "S_12=${S_12_size}, S_H12=${S_H12_size}, exhausted=${B1.samplingExhausted}")
+                
+                if (S_H12_size < Settings.MIN_SUPP) {
+                    continue  // Does not meet minimum support
+                }
+                
+                // Create new metric with bodySize = S_12_size
+                val metric = Metric(
+                    support = S_H12_size.toDouble(),
+                    headSize = headInstances.size,
+                    bodySize = S_12_size
+                )
+                
+                // Calculate lift
+                val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
+                
+                // Only store if lift is significant
+                if (lift > MIN_SURPRISAL_LIFT || lift < -minOf(metric1.surprisal, metric2.surprisal)) {
+                    val formula = DepFormula(B1, B2)
+                    metric.lift = lift
+                    setH2F2metric(headAtom, formula, metric)
+                    validPairCount++
+                    
+                    // Update lift statistics
+                    if (lift > 0) binaryPositiveLift.incrementAndGet()
+                    else binaryNegativeLift.incrementAndGet()
+                }
+            }
+        }
+        if (isDebugThread) {
+            println("[Thread-$threadId] processBinaryHeadAtom completed: $headAtom, " +
+                    "checked $pairCount pairs, found $validPairCount valid combinations")
+        }
+    }
+    
+    /**
+     * Process single unary headAtom, perform pairwise combination of bodyAtoms
+     * Uses exact set operations on unary instances
+     */
+    private fun processUnaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Metric>) {
         if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
         
         // Convert to list for pairwise iteration
         // extract rule with surprisal >= MIN_SURPRISAL_LIFT
         val newBodyMap = ConcurrentHashMap<DepAtom, Metric>()
         for ((bodyAtom, metric) in bodyMap) {
-            if (metric.surprisal >= MIN_SURPRISAL_LIFT) {
+            if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
                 newBodyMap[bodyAtom] = metric
             }
         }
@@ -574,8 +566,8 @@ object DepLearn {
         // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
         for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
             val (B1, metric1) = bodyList[i]
-            val B1_instances = getL1AtomInstances(B1)
-            val headInstances = getL1AtomInstances(headAtom)
+            val B1_instances = B1.getUnaryInstances()
+            val headInstances = headAtom.getUnaryInstances()
             val S_H1 = B1_instances.intersect(headInstances)
             if (S_H1.size < Settings.MIN_SUPP) {
                 continue  // Does not meet minimum support
@@ -589,9 +581,14 @@ object DepLearn {
                 }
 
                 val (B2, metric2) = bodyList[j]
+                if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
+                    println("Skipping pair with high combined surprisal: ${metric1.surprisal} + ${metric2.surprisal}")
+                    continue
+                }
+
                 pairCount++
 
-                val B2_instances = getL1AtomInstances(B2)
+                val B2_instances = B2.getUnaryInstances()
                 var S_H12_size = S_H1.intersect(B2_instances).size
                 
                 if (S_H12_size < Settings.MIN_SUPP) {
@@ -616,42 +613,9 @@ object DepLearn {
                     metric.lift = lift
                     setH2F2metric(headAtom, formula, metric)
                     validPairCount++
-
-                    // Update lift statistics
-                    if (headAtom.entityId == IdManager.getYId()) {
-                        if (lift > 0) binaryPositiveLift.incrementAndGet()
-                        else binaryNegativeLift.incrementAndGet()
-                    } else {
-                        if (lift > 0) unaryPositiveLift.incrementAndGet()
-                        else unaryNegativeLift.incrementAndGet()
-                    }
+                    if (lift > 0) unaryPositiveLift.incrementAndGet()
+                    else unaryNegativeLift.incrementAndGet()
                 }
-            }
-        }
-    }
-    
-    /**
-     * Get instances for a DepAtom from indexes
-     */
-    private fun getL1AtomInstances(atom: DepAtom): Set<Int> {
-        require(atom.isL1Atom) {"Only L1 atoms are supported for instance retrieval"}
-        return when {
-            // Binary atom: all heads that have this relation
-            atom.entityId == IdManager.getYId() -> {
-                r2h2tSet[atom.relationId]?.keys ?: emptySet()
-            }
-            // Loop atom: entities that loop on themselves
-            atom.entityId == IdManager.getXId() -> {
-                ts.r2loopSet[atom.relationId] ?: emptySet()
-            }
-            // Existence atom: all heads that have this relation
-            atom.entityId == 0 -> {
-                r2h2tSet[atom.relationId]?.keys ?: emptySet()
-            }
-            // Constant atom: heads that connect to this specific entity
-            else -> {
-                val inverseRelation = RelationPath.getInverseRelation(atom.relationId)
-                r2h2tSet[inverseRelation]?.get(atom.entityId) ?: emptySet()
             }
         }
     }
