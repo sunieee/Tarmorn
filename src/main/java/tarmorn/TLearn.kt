@@ -139,8 +139,12 @@ object TLearn {
         println("Total atoms in H2B2metric: ${H2B2metric.size}")
         printLSHBuckets()
 
-        // Save H2B2metric to JSON file
-        saveH2B2metricToJson()
+        saveMetricToJson(
+            metricMap = H2B2metric,
+            outputPath = Settings.PATH_H2B2metric,
+            appendMode = false,
+            isFormulaMap = false
+        )
         
         println("\n=== Phase 2: Composition ===")
         // Step 3: Composition phase - combine atoms into formulas using Eclat
@@ -152,8 +156,12 @@ object TLearn {
         } finally {
             println("\nTLearn algorithm completed.")
             
-            // 保存H2F2metric到JSON文件
-            saveH2F2metricToJson()
+            saveMetricToJson(
+                metricMap = H2F2metric,
+                outputPath = Settings.PATH_H2F2metric,
+                appendMode = true,
+                isFormulaMap = true
+            )
         }
 
         // Print rule statistics
@@ -1244,47 +1252,68 @@ object TLearn {
     }
 
     /**
-     * Save H2B2metric to JSON file - streaming output to avoid memory overflow
+     * Save metric map to JSON file - streaming output to avoid memory overflow
+     * @param metricMap The metric map to save (H2B2metric or H2F2metric)
+     * @param outputPath The output JSON file path
+     * @param appendMode Whether to append to existing rules file (true for H2F, false for H2B)
+     * @param isFormulaMap Whether the body type is Formula (true) or MyAtom (false)
      */
-    private fun saveH2B2metricToJson() {
-        val outputFile = File(Settings.PATH_H2B2metric)
+    private fun <T> saveMetricToJson(
+        metricMap: ConcurrentHashMap<MyAtom<*>, ConcurrentHashMap<T, Metric>>,
+        outputPath: String,
+        appendMode: Boolean,
+        isFormulaMap: Boolean
+    ) {
+        val outputFile = File(outputPath)
         val outputRule = File(Settings.PATH_RULES_TXT)
-        outputFile.parentFile?.mkdirs() // Ensure output directory exists
+        outputFile.parentFile?.mkdirs()
         outputRule.parentFile?.mkdirs()
         
-        println("Saving H2B2metric to ${outputFile.absolutePath}...")
+        val metricType = if (isFormulaMap) "H2F2metric" else "H2B2metric"
+        println("Saving $metricType to ${outputFile.absolutePath}...")
         
         BufferedWriter(FileWriter(outputFile)).use { writer ->
-            // FileWriter with false (default) = overwrite mode, clear existing content
-            BufferedWriter(FileWriter(outputRule, false)).use { ruleWriter ->
+            BufferedWriter(FileWriter(outputRule, appendMode)).use { ruleWriter ->
                 writer.write("{\n")
-                val atomEntries = H2B2metric.entries.toList()
+                val atomEntries = metricMap.entries.toList()
 
                 atomEntries.forEachIndexed { atomIndex, (atom, bodyMap) ->
-                    // Escape special characters in JSON string
                     val headAtomString = atom.toString().replace("\"", "\\\"").replace("\n", "\\n")
                     writer.write("  \"$headAtomString\": {\n")
 
                     val bodyEntries = bodyMap.entries.toList()
-                        .sortedByDescending { it.value.confidence } // Sort by metric descending
+                        .sortedByDescending { it.value.confidence }
                     
-                    bodyEntries.forEachIndexed { bodyIndex, (bodyAtom, metric) ->
-                        val bodyString = bodyAtom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                    bodyEntries.forEachIndexed { bodyIndex, (body, metric) ->
+                        val bodyString = body.toString().replace("\"", "\\\"").replace("\n", "\\n")
                         writer.write("    \"$bodyString\": $metric")
                         if (bodyIndex < bodyEntries.size - 1) writer.write(",")
                         writer.write("\n")
                         
-                        // Write rule to text file
-                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.confidence}\t${atom.getRuleString()} <= ${bodyAtom.getRuleString()}"
+                        // Get rule string based on body type
+                        val bodyRuleString = when (body) {
+                            is MyAtom<*> -> body.getRuleString()
+                            is Formula -> body.getRuleString()
+                            else -> body.toString()
+                        }
+                        
+                        // Write rule to text file with lift info for formulas
+                        val liftInfo = if (isFormulaMap) metric.lift else metric.confidence
+                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t$liftInfo\t${atom.getRuleString()} <= $bodyRuleString"
                         ruleWriter.write(ruleLine)
                         ruleWriter.write("\n")
 
                         // Statistics for rules
                         totalRules++
-                        if (atom.isBinary) {
-                            binaryStats[1]++
+                        if (isFormulaMap) {
+                            val bodyLength = (body as Formula).size
+                            if (bodyLength <= MAX_PATH_LENGTH) {
+                                if (atom.isBinary) binaryStats[bodyLength]++
+                                else unaryStats[bodyLength]++
+                            }
                         } else {
-                            unaryStats[1]++
+                            if (atom.isBinary) binaryStats[1]++
+                            else unaryStats[1]++
                         }
                     }
 
@@ -1292,89 +1321,19 @@ object TLearn {
                     if (atomIndex < atomEntries.size - 1) writer.write(",")
                     writer.write("\n")
 
-                    // Flush every 100 atoms to avoid memory accumulation
                     if (atomIndex % 100 == 0) {
                         writer.flush()
                         ruleWriter.flush()
-                        println("[saveH2B2metricToJson] Processed ${atomIndex + 1}/${atomEntries.size} head atoms...")
+                        println("[save${metricType}ToJson] Processed ${atomIndex + 1}/${atomEntries.size} head atoms...")
                     }
                 }
                 writer.write("}\n")
             }
         }
 
-        println("Successfully saved H2B2metric to ${outputFile.absolutePath}")
-        println("Successfully saved H2B rules to ${outputRule.absolutePath}")
-        println("Total head atoms: ${H2B2metric.size}")
-        println("Total body atoms: ${H2B2metric.values.sumOf { it.size }}")
-    }
-
-    /**
-     * Save H2F2metric to JSON file - streaming output to avoid memory overflow
-     */
-    private fun saveH2F2metricToJson() {
-        // val outDir = File("out/" + Settings.DATASET)
-        // outDir.mkdirs() // 确保out目录存在
-        val outputFile = File(Settings.PATH_H2F2metric)
-        val outputRule = File(Settings.PATH_RULES_TXT)
-        
-        println("Saving H2F2metric to ${outputFile.absolutePath}...")
-        
-        BufferedWriter(FileWriter(outputFile)).use { writer ->
-            // FileWriter with true = append mode, preserve H2B rules written by saveH2B2metricToJson
-            BufferedWriter(FileWriter(outputRule, true)).use { ruleWriter ->
-            writer.write("{\n")
-            val atomEntries = H2F2metric.entries.toList()
-
-            atomEntries.forEachIndexed { atomIndex, (atom, formula2Metric) ->
-                // Escape special characters in JSON string
-                val atomString = atom.toString().replace("\"", "\\\"").replace("\n", "\\n")
-                writer.write("  \"$atomString\": {\n")
-
-                val bodyEntries = formula2Metric.entries.toList()
-                    .sortedByDescending { it.value.confidence } // Sort by metric descending
-
-                bodyEntries.forEachIndexed { bodyIndex, (formula, metric) ->
-                    val bodyString = formula.toString()
-                        .replace("\"", "\\\"").replace("\n", "\\n")
-                    writer.write("    \"$bodyString\": $metric")
-                    if (bodyIndex < bodyEntries.size - 1) writer.write(",")
-                    writer.write("\n")
-
-                    val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${metric.lift}\t${atom.getRuleString()} <= ${formula.getRuleString()}"
-                    ruleWriter.write(ruleLine)
-                    ruleWriter.write("\n")
-                    
-                    // Statistics for rules
-                    totalRules++
-                    val bodyLength = formula.size
-                    if (bodyLength <= MAX_PATH_LENGTH) {
-                        if (atom.isBinary) {
-                            binaryStats[bodyLength]++
-                        } else {
-                            unaryStats[bodyLength]++
-                        }
-                    }
-                }
-
-                writer.write("  }")
-                if (atomIndex < atomEntries.size - 1) writer.write(",")
-                writer.write("\n")
-
-                // Flush every 100 atoms to avoid memory accumulation
-                if (atomIndex % 100 == 0) {
-                    writer.flush()
-                    ruleWriter.flush()
-                    println("[saveH2F2metricToJson] Processed ${atomIndex + 1}/${atomEntries.size} atoms...")
-                }
-            }
-            writer.write("}\n")
-            }
-        }
-
-        println("Successfully saved H2F2metric to ${outputFile.absolutePath}")
+        println("Successfully saved $metricType to ${outputFile.absolutePath}")
         println("Successfully saved rules to ${outputRule.absolutePath}")
-        println("Total head atoms: ${H2F2metric.size}")
-        println("Total body formulas: ${H2F2metric.values.sumOf { it.size }}")
+        println("Total head atoms: ${metricMap.size}")
+        println("Total body entries: ${metricMap.values.sumOf { it.size }}")
     }
 }

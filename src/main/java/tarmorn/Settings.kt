@@ -10,7 +10,15 @@ object Settings {
     @JvmField
     var MIN_SUPP: Int = 3
     @JvmField
-    var NUM_UNSEEN: Int = 1
+    var MAX_SURPRISAL: Double = 7.0
+    // MAX_CONF = 1-e^-MAX_SURPRISAL
+    // surprisal = 1, conf = 0.6321205588285577
+    // surprisal = 2, conf = 0.8646647167633873
+    // surprisal = 3, conf = 0.950212931632136
+    // surprisal = 4, conf = 0.9816843611112658
+    // surprisal = 5, conf = 0.9932620530009145
+    // surprisal = 6, conf = 0.9975212478233336
+    // surprisal = 7, conf = 0.9990889488055994
     @JvmField
     var MAX_JOIN_INSTANCES_L2: Int = 20000
     @JvmField

@@ -4,6 +4,7 @@ import tarmorn.data.IdManager
 import tarmorn.data.RelationPath
 import tarmorn.data.TripleSet
 import tarmorn.structure.TLearn.DepAtom
+import tarmorn.structure.TLearn.DepFormula
 import tarmorn.structure.TLearn.Metric
 import java.io.BufferedReader
 import java.io.File
@@ -48,6 +49,12 @@ object DepLearn {
     
     // Rule metric structure: head -> body -> metric
     val H2B2metric = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Metric>>()
+    val H2F2metric = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepFormula, Metric>>()
+    
+    // Statistics variables
+    var totalRules = 0
+    val unaryStats = IntArray(4) // M0, M1, M2, M3
+    val binaryStats = IntArray(4) // M0, M1, M2, M3
     
     /**
      * Main entry point
@@ -70,7 +77,23 @@ object DepLearn {
         println("Reading rules from: ${Settings.PATH_RULES}")
         readRules(Settings.PATH_RULES)
         
-        // Step 3: Print statistics
+        // Step 3: Save H2B2metric and H2F2metric
+        println("\n=== Step 3: Saving Metrics ===")
+        saveMetricToJson(
+            metricMap = H2B2metric,
+            outputPath = Settings.PATH_H2B2metric,
+            appendMode = false,
+            isFormulaMap = false
+        )
+        saveMetricToJson(
+            metricMap = H2F2metric,
+            outputPath = Settings.PATH_H2F2metric,
+            appendMode = true,
+            isFormulaMap = true
+        )
+        
+        // Step 4: Print statistics
+        println("\n=== Step 4: Statistics ===")
         printStatistics()
         
         val endTime = System.currentTimeMillis()
@@ -128,6 +151,9 @@ object DepLearn {
         val simplifiedHead = simplifyAtom(headStr, isHead = true)
         
         // Simplify body atoms (comma-separated)
+        if (bodyStr.isEmpty()) {
+            return "$simplifiedHead <= "
+        }
         val bodyAtoms = splitAtomsByComma(bodyStr)
         val simplifiedBodyAtoms = bodyAtoms.map { simplifyAtom(it.trim(), isHead = false) }
         val simplifiedBody = simplifiedBodyAtoms.joinToString(", ")
@@ -298,20 +324,6 @@ object DepLearn {
                     continue
                 }
                 
-                // Check if it's a Zero Rule before parsing
-                val isZeroRule = if (line.contains(" <= ")) {
-                    val parts = line.split(" <= ")
-                    parts.size >= 2 && parts[1].trim().isEmpty()
-                } else {
-                    false
-                }
-                
-                if (isZeroRule) {
-                    skippedZero++
-                    line = reader.readLine()
-                    continue
-                }
-                
                 // Simplify rule before parsing
                 val tokens = line.split("\t")
                 if (tokens.size >= 4) {
@@ -354,6 +366,16 @@ object DepLearn {
             println("Errors encountered: $errors")
         }
     }
+
+    fun setH2F2metric(atom: DepAtom, formula: DepFormula, metric: Metric) {
+        val F2metric = H2F2metric.computeIfAbsent(atom) { ConcurrentHashMap() }
+        F2metric[formula] = metric
+    }
+
+    fun setH2B2metric(headAtom: DepAtom, bodyAtom: DepAtom, metric: Metric) {
+        val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
+        B2metric[bodyAtom] = metric
+    }
     
     /**
      * Parse a single rule line and add to H2B2metric
@@ -384,27 +406,33 @@ object DepLearn {
         
         // Parse head atom
         val headAtom = parseAtom(headStr)
-        
+        val headSize = getAtomSize(headAtom)
+        val metric = Metric(support, headSize, bodySize)
+        if (bodyStr.isEmpty()) {
+            setH2F2metric(headAtom, DepFormula(), metric)
+            // Statistics for empty body (M0)
+            totalRules++
+            if (headAtom.entityId == IdManager.getYId()) {
+                binaryStats[0]++
+            } else {
+                unaryStats[0]++
+            }
+            return
+        }
         // Parse body as a relation path (not split into atoms)
         // bodyStr can be:
         // 1. Simple relation: "/people/person/nationality(X,Y)"
         // 2. Relation path: "r1*r2(X,Y)" or "r1*INVERSE_r2(X,Y)"
         // 3. With constant: "r1*r2(/m/entity)"
-        val bodyAtom = parseAtom(bodyStr)
+        setH2B2metric(headAtom, parseAtom(bodyStr), metric)
         
-        // Get headSize from index
-        val headSize = getAtomSize(headAtom)
-        
-        // Create metric
-        val metric = Metric(
-            support = support,
-            headSize = headSize,
-            bodySize = bodySize
-        )
-        
-        // Add to H2B2metric
-        val bodyMap = H2B2metric.getOrPut(headAtom) { ConcurrentHashMap() }
-        bodyMap[bodyAtom] = metric
+        // Statistics for single body atom (M1)
+        totalRules++
+        if (headAtom.entityId == IdManager.getYId()) {
+            binaryStats[1]++
+        } else {
+            unaryStats[1]++
+        }
     }
     
     /**
@@ -432,17 +460,92 @@ object DepLearn {
     }
     
     /**
-     * Print statistics about H2B2metric
+     * Save metric map to JSON file - streaming output to avoid memory overflow
+     * @param metricMap The metric map to save (H2B2metric or H2F2metric)
+     * @param outputPath The output JSON file path
+     * @param appendMode Whether to append to existing rules file (true for H2F, false for H2B)
+     * @param isFormulaMap Whether the body type is DepFormula (true) or DepAtom (false)
+     */
+    private fun <T> saveMetricToJson(
+        metricMap: ConcurrentHashMap<DepAtom, ConcurrentHashMap<T, Metric>>,
+        outputPath: String,
+        appendMode: Boolean,
+        isFormulaMap: Boolean
+    ) {
+        val outputFile = File(outputPath)
+        val outputRule = File(Settings.PATH_RULES_TXT)
+        outputFile.parentFile?.mkdirs()
+        outputRule.parentFile?.mkdirs()
+        
+        val metricType = if (isFormulaMap) "H2F2metric" else "H2B2metric"
+        println("Saving $metricType to ${outputFile.absolutePath}...")
+        
+        java.io.BufferedWriter(java.io.FileWriter(outputFile)).use { writer ->
+            java.io.BufferedWriter(java.io.FileWriter(outputRule, appendMode)).use { ruleWriter ->
+                writer.write("{\n")
+                val atomEntries = metricMap.entries.toList()
+
+                atomEntries.forEachIndexed { atomIndex, (atom, bodyMap) ->
+                    val headAtomString = atom.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                    writer.write("  \"$headAtomString\": {\n")
+
+                    val bodyEntries = bodyMap.entries.toList()
+                        .sortedByDescending { it.value.confidence }
+                    
+                    bodyEntries.forEachIndexed { bodyIndex, (body, metric) ->
+                        val bodyString = body.toString().replace("\"", "\\\"").replace("\n", "\\n")
+                        writer.write("    \"$bodyString\": $metric")
+                        if (bodyIndex < bodyEntries.size - 1) writer.write(",")
+                        writer.write("\n")
+                        
+                        // Get rule string based on body type
+                        val bodyRuleString = when (body) {
+                            is DepAtom -> body.getRuleString()
+                            is DepFormula -> body.getRuleString()
+                            else -> body.toString()
+                        }
+                        
+                        // Write rule to text file with lift info for formulas
+                        val liftInfo = if (isFormulaMap) metric.lift else metric.confidence
+                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t$liftInfo\t${atom.getRuleString()} <= $bodyRuleString"
+                        ruleWriter.write(ruleLine)
+                        ruleWriter.write("\n")
+                    }
+
+                    writer.write("  }")
+                    if (atomIndex < atomEntries.size - 1) writer.write(",")
+                    writer.write("\n")
+
+                    if ((atomIndex+1) % 1000 == 0) {
+                        writer.flush()
+                        ruleWriter.flush()
+                        println("[save${metricType}ToJson] Processed ${atomIndex + 1}/${atomEntries.size} head atoms...")
+                    }
+                }
+                writer.write("}\n")
+            }
+        }
+
+        println("Successfully saved $metricType to ${outputFile.absolutePath}")
+        println("Successfully saved rules to ${outputRule.absolutePath}")
+        println("Total head atoms: ${metricMap.size}")
+        println("Total body entries: ${metricMap.values.sumOf { it.size }}")
+    }
+
+    /**
+     * Print statistics about H2B2metric and rules
      */
     fun printStatistics() {
-        println("\n=== H2B2metric Statistics ===")
+        println("=== Metric Statistics ===")
         
         val totalHeads = H2B2metric.size
-        val totalRules = H2B2metric.values.sumOf { it.size }
-        val avgBodyPerHead = if (totalHeads > 0) totalRules.toDouble() / totalHeads else 0.0
+        val totalBodyAtoms = H2B2metric.values.sumOf { it.size }
+        val totalFormulas = H2F2metric.values.sumOf { it.size }
+        val avgBodyPerHead = if (totalHeads > 0) totalBodyAtoms.toDouble() / totalHeads else 0.0
         
         println("Total head atoms: $totalHeads")
-        println("Total rules: $totalRules")
+        println("Total H2B rules: $totalBodyAtoms")
+        println("Total H2F rules: $totalFormulas")
         println("Average body atoms per head: ${"%.2f".format(avgBodyPerHead)}")
         
         // Breakdown by atom type
@@ -463,5 +566,13 @@ object DepLearn {
         println("  Binary (X,Y): $binaryHeads")
         println("  Loop (X,X): $loopHeads")
         println("  Constant (X,e): $constantHeads")
+        
+        // Print rule statistics
+        println("\n=== Rule Statistics ===")
+        println("Total rules: $totalRules")
+        println("Type     M0       M1       M2       M3")
+        println("-".repeat(60))
+        println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
+        println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
     }
 }
