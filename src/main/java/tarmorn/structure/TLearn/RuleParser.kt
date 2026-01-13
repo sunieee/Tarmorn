@@ -410,46 +410,77 @@ object RuleParser {
     
     /**
      * 从原子中提取变量（包括规范化 me_myself_i）
+     * 改进版本：正确处理实体名称中包含括号和逗号的情况
      */
     fun extractVariables(atom: String): List<String> {
         if ('(' !in atom || ')' !in atom) {
             return emptyList()
         }
         
-        val varPart = atom.substringAfter('(').substringBefore(')')
-        var variables = varPart.split(',').map { it.trim() }
+        // 找到最外层的括号对
+        val firstParen = atom.indexOf('(')
+        val lastParen = atom.lastIndexOf(')')
+        
+        if (firstParen >= lastParen || firstParen == -1 || lastParen == -1) {
+            return emptyList()
+        }
+        
+        val varPart = atom.substring(firstParen + 1, lastParen)
+        
+        // 使用智能分割：只在括号层级为0时按逗号分割
+        val variables = smartSplit(varPart)
+        
         // 规范化 me_myself_i
-        variables = normalizeMeMyselfI(variables, "extracted")
-        return variables
+        return normalizeMeMyselfI(variables, "extracted")
+    }
+    
+    /**
+     * 智能分割字符串：只在括号层级为0时按逗号分割
+     * 这样可以正确处理 "Tom_Kelly_(footballer,_born_1964),Y" 这样的字符串
+     */
+    private fun smartSplit(text: String): List<String> {
+        val result = mutableListOf<String>()
+        var current = StringBuilder()
+        var parenDepth = 0
+        
+        for (char in text) {
+            when (char) {
+                '(' -> {
+                    parenDepth++
+                    current.append(char)
+                }
+                ')' -> {
+                    parenDepth--
+                    current.append(char)
+                }
+                ',' -> {
+                    if (parenDepth == 0) {
+                        // 只在括号外的逗号处分割
+                        result.add(current.toString().trim())
+                        current = StringBuilder()
+                    } else {
+                        // 括号内的逗号保留
+                        current.append(char)
+                    }
+                }
+                else -> current.append(char)
+            }
+        }
+        
+        // 添加最后一个部分
+        if (current.isNotEmpty()) {
+            result.add(current.toString().trim())
+        }
+        
+        return result
     }
     
     /**
      * 解析身体部分的原子列表
+     * 改进版本：正确处理原子参数中包含括号和逗号的实体名称
      */
     fun parseBodyAtoms(bodyPart: String): List<String> {
-        val atoms = mutableListOf<String>()
-        var currentAtom = StringBuilder()
-        var parenCount = 0
-        
-        for (char in bodyPart) {
-            when (char) {
-                '(' -> parenCount++
-                ')' -> parenCount--
-                ',' -> {
-                    if (parenCount == 0) {
-                        atoms.add(currentAtom.toString().trim())
-                        currentAtom = StringBuilder()
-                        continue
-                    }
-                }
-            }
-            currentAtom.append(char)
-        }
-        
-        if (currentAtom.isNotBlank()) {
-            atoms.add(currentAtom.toString().trim())
-        }
-        
-        return atoms
+        // 使用智能分割，只在括号层级为0时按逗号分割
+        return smartSplit(bodyPart).filter { it.isNotBlank() }
     }
 }
