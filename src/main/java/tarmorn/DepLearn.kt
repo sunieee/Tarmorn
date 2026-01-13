@@ -56,6 +56,17 @@ object DepLearn {
     val unaryStats = IntArray(4) // M0, M1, M2, M3
     val binaryStats = IntArray(4) // M0, M1, M2, M3
     
+    // Lift statistics for composition phase
+    val unaryPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
+    val unaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
+    val binaryPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
+    val binaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
+    
+    // Constants from TLearn
+    const val MIN_SURPRISAL_LIFT = 0.1
+    const val TOP_K_RULE_COMBO = 200
+    const val MAX_PATH_LENGTH = 3
+    
     /**
      * Main entry point
      */
@@ -77,8 +88,17 @@ object DepLearn {
         println("Reading rules from: ${Settings.PATH_RULES}")
         readRules(Settings.PATH_RULES)
         
-        // Step 3: Save H2B2metric and H2F2metric
-        println("\n=== Step 3: Saving Metrics ===")
+        // Step 3: Composition phase - combine atoms into formulas
+        println("\n=== Step 3: Composition Phase ===")
+        try {
+            compositionPhase()
+        } catch (e: Exception) {
+            println("Error during composition phase: ${e.message}")
+            e.printStackTrace()
+        }
+        
+        // Step 4: Save H2B2metric and H2F2metric
+        println("\n=== Step 4: Saving Metrics ===")
         saveMetricToJson(
             metricMap = H2B2metric,
             outputPath = Settings.PATH_H2B2metric,
@@ -92,8 +112,8 @@ object DepLearn {
             isFormulaMap = true
         )
         
-        // Step 4: Print statistics
-        println("\n=== Step 4: Statistics ===")
+        // Step 5: Print statistics
+        println("\n=== Step 5: Statistics ===")
         printStatistics()
         
         val endTime = System.currentTimeMillis()
@@ -460,6 +480,183 @@ object DepLearn {
     }
     
     /**
+     * Composition Phase - combine frequent atom sets using Eclat algorithm
+     * Called after reading rules, builds formulas based on H2B2metric
+     */
+    fun compositionPhase() {
+        println("Starting Composition Phase with Eclat algorithm...")
+        
+        val processedHeads = java.util.concurrent.atomic.AtomicInteger(0)
+        val totalHeads = H2B2metric.size
+        val threadPool = java.util.concurrent.Executors.newFixedThreadPool(Settings.WORKER_THREADS)
+        val compositionActiveThreadCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val compositionThreadMonitorLock = Object()
+        
+        try {
+            val futures = H2B2metric.entries.map { (headAtom, bodyMap) ->
+                threadPool.submit {
+                    compositionActiveThreadCount.incrementAndGet()
+                    try {
+                        processHeadAtom(headAtom, bodyMap)
+                        val cnt = processedHeads.incrementAndGet()
+                        if (cnt % 100 == 0) {
+                            println("Processed $cnt/$totalHeads head atoms...")
+                        }
+                    } finally {
+                        val activeCount = compositionActiveThreadCount.decrementAndGet()
+                        synchronized(compositionThreadMonitorLock) {
+                            compositionThreadMonitorLock.notifyAll()
+                        }
+                    }
+                }
+            }
+            
+            // Monitor thread activity
+            var lastActiveCount = 0
+            while (true) {
+                val activeCount: Int
+                synchronized(compositionThreadMonitorLock) {
+                    // Wait for thread count changes
+                    while (compositionActiveThreadCount.get() == lastActiveCount && !futures.all { it.isDone }) {
+                        compositionThreadMonitorLock.wait(1000)
+                    }
+                    activeCount = compositionActiveThreadCount.get()
+                    lastActiveCount = activeCount
+                }
+                
+                if (futures.all { it.isDone }) {
+                    println("All composition tasks completed")
+                    break
+                }
+                
+                if (activeCount > 0 && activeCount < Settings.WORKER_THREADS - 5) {
+                    println("Composition thread count: $activeCount/${Settings.WORKER_THREADS} active")
+                }
+                
+                if (activeCount < Settings.WORKER_THREADS / 4 && activeCount > 0) {
+                    println("FORCING SHUTDOWN: Less than 1/4 threads remaining in composition phase")
+                    futures.forEach { it.cancel(true) }
+                    threadPool.shutdownNow()
+                    break
+                }
+            }
+            
+        } catch (e: Exception) {
+            println("Error in composition phase monitoring: ${e.message}")
+            threadPool.shutdownNow()
+        } finally {
+            threadPool.shutdown()
+            threadPool.awaitTermination(1, java.util.concurrent.TimeUnit.HOURS)
+        }
+        
+        println("Composition Phase completed. Total rules: ${H2F2metric.values.sumOf { it.size }}")
+    }
+    
+    /**
+     * Process single headAtom, perform pairwise combination of bodyAtoms
+     */
+    private fun processHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Metric>) {
+        if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
+        
+        // Convert to list for pairwise iteration
+        // extract rule with surprisal >= MIN_SURPRISAL_LIFT
+        val newBodyMap = ConcurrentHashMap<DepAtom, Metric>()
+        for ((bodyAtom, metric) in bodyMap) {
+            if (metric.surprisal >= MIN_SURPRISAL_LIFT) {
+                newBodyMap[bodyAtom] = metric
+            }
+        }
+        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }
+        
+        var pairCount = 0
+        var validPairCount = 0
+
+        // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
+        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+            val (B1, metric1) = bodyList[i]
+            val B1_instances = getL1AtomInstances(B1)
+            val headInstances = getL1AtomInstances(headAtom)
+            val S_H1 = B1_instances.intersect(headInstances)
+            if (S_H1.size < Settings.MIN_SUPP) {
+                continue  // Does not meet minimum support
+            }
+
+            for (j in (i + 1) until bodyList.size) {
+                // === 响应线程中断 ===
+                if (Thread.currentThread().isInterrupted) {
+                    println("Thread interrupted, exiting processHeadAtom for $headAtom")
+                    return
+                }
+
+                val (B2, metric2) = bodyList[j]
+                pairCount++
+
+                val B2_instances = getL1AtomInstances(B2)
+                var S_H12_size = S_H1.intersect(B2_instances).size
+                
+                if (S_H12_size < Settings.MIN_SUPP) {
+                    continue  // Does not meet minimum support
+                }
+                
+                // Calculate common evidence: intersection of two bodyAtom instances
+                val S_12_size = B1_instances.intersect(B2_instances).size
+
+                // Create new metric with bodySize = |S_12|
+                val metric = Metric(
+                    support = S_H12_size.toDouble(),
+                    headSize = headInstances.size,
+                    bodySize = S_12_size
+                )
+
+                // Calculate lift
+                val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
+                // Only store if lift is significant
+                if (lift > MIN_SURPRISAL_LIFT || lift < -maxOf(metric1.surprisal, metric2.surprisal)) {
+                    val formula = DepFormula(B1, B2)
+                    metric.lift = lift
+                    setH2F2metric(headAtom, formula, metric)
+                    validPairCount++
+
+                    // Update lift statistics
+                    if (headAtom.entityId == IdManager.getYId()) {
+                        if (lift > 0) binaryPositiveLift.incrementAndGet()
+                        else binaryNegativeLift.incrementAndGet()
+                    } else {
+                        if (lift > 0) unaryPositiveLift.incrementAndGet()
+                        else unaryNegativeLift.incrementAndGet()
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Get instances for a DepAtom from indexes
+     */
+    private fun getL1AtomInstances(atom: DepAtom): Set<Int> {
+        require(atom.isL1Atom) {"Only L1 atoms are supported for instance retrieval"}
+        return when {
+            // Binary atom: all heads that have this relation
+            atom.entityId == IdManager.getYId() -> {
+                r2h2tSet[atom.relationId]?.keys ?: emptySet()
+            }
+            // Loop atom: entities that loop on themselves
+            atom.entityId == IdManager.getXId() -> {
+                ts.r2loopSet[atom.relationId] ?: emptySet()
+            }
+            // Existence atom: all heads that have this relation
+            atom.entityId == 0 -> {
+                r2h2tSet[atom.relationId]?.keys ?: emptySet()
+            }
+            // Constant atom: heads that connect to this specific entity
+            else -> {
+                val inverseRelation = RelationPath.getInverseRelation(atom.relationId)
+                r2h2tSet[inverseRelation]?.get(atom.entityId) ?: emptySet()
+            }
+        }
+    }
+    
+    /**
      * Save metric map to JSON file - streaming output to avoid memory overflow
      * @param metricMap The metric map to save (H2B2metric or H2F2metric)
      * @param outputPath The output JSON file path
@@ -574,5 +771,15 @@ object DepLearn {
         println("-".repeat(60))
         println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
         println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
+        
+        // Print lift statistics for composition phase
+        println("\nComposition Phase - Lift Statistics:")
+        println("-".repeat(60))
+        println("Type     Positive Lift    Negative Lift    Total")
+        val unaryTotal = unaryPositiveLift.get() + unaryNegativeLift.get()
+        val binaryTotal = binaryPositiveLift.get() + binaryNegativeLift.get()
+        println("Unary    ${unaryPositiveLift.get().toString().padStart(13)}    ${unaryNegativeLift.get().toString().padStart(13)}    ${unaryTotal.toString().padStart(8)}")
+        println("Binary   ${binaryPositiveLift.get().toString().padStart(13)}    ${binaryNegativeLift.get().toString().padStart(13)}    ${binaryTotal.toString().padStart(8)}")
+        println("Total    ${(unaryPositiveLift.get() + binaryPositiveLift.get()).toString().padStart(13)}    ${(unaryNegativeLift.get() + binaryNegativeLift.get()).toString().padStart(13)}    ${(unaryTotal + binaryTotal).toString().padStart(8)}")
     }
 }
