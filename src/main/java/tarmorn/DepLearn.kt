@@ -62,6 +62,7 @@ object DepLearn {
     val unaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
     val binaryPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
     val binaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
+    val thread0Attempts = java.util.concurrent.atomic.AtomicInteger(0)
     
     // Constants from TLearn
     const val MIN_SURPRISAL_LIFT = 0.1
@@ -399,7 +400,7 @@ object DepLearn {
         
         // 获取当前线程ID，用于控制日志输出（仅线程0输出详细日志）
         val threadId = Thread.currentThread().id % Settings.WORKER_THREADS
-        val isDebugThread = (threadId == 0L)
+        val shouldDebug = (threadId == 0L) && thread0Attempts.incrementAndGet() <= 10
         
         // Extract rules with surprisal >= MIN_SURPRISAL_LIFT
         val newBodyMap = ConcurrentHashMap<DepAtom, Metric>()
@@ -410,7 +411,7 @@ object DepLearn {
         }
         val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }
 
-        if (isDebugThread) {
+        if (shouldDebug) {
             println("[Thread-$threadId] starting processBinaryHeadAtom for $headAtom with ${bodyList.size} body atoms")
         }
         
@@ -438,12 +439,12 @@ object DepLearn {
                 // 只检查新采样的实例
                 val newMatchCount = newInstances.count { it in headInstances }
                 S_H1_size += newMatchCount
-                if (isDebugThread)
+                if (shouldDebug)
                 println("\t[Thread-$threadId] B1 sampling round ${B1.samplingRound}: " +
                         "new=${newInstances.size}, total=${B1.instances.size}, " +
                         "S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
             }
-            if (isDebugThread)
+            if (shouldDebug)
             println("[Thread-$threadId] B1  total sampling rounds ${B1.samplingRound}: " +
                         "total=${B1.instances.size}, S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
             
@@ -501,12 +502,12 @@ object DepLearn {
                             }
                         }
                     }
-                    if (isDebugThread)
+                    if (shouldDebug)
                     println("\t[Thread-$threadId] Pair($i,$j) sampling round ${B1.samplingRound}: " +
                             "newInstances=${newInstances.size}, newS12=$newS12, newSH12=$newSH12, S_12=$S_12_size, S_H12=$S_H12_size, " +
                             "exhausted=${B1.samplingExhausted}")
                 }
-                if (isDebugThread)
+                if (shouldDebug)
                 println("[Thread-$threadId] Pair($i,$j) total sampling rounds ${B1.samplingRound}: " +
                             "S_12=${S_12_size}, S_H12=${S_H12_size}, exhausted=${B1.samplingExhausted}")
                 
@@ -537,7 +538,7 @@ object DepLearn {
                 }
             }
         }
-        if (isDebugThread) {
+        if (shouldDebug) {
             println("[Thread-$threadId] processBinaryHeadAtom completed: $headAtom, " +
                     "checked $pairCount pairs, found $validPairCount valid combinations")
         }

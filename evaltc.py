@@ -150,12 +150,14 @@ options.set("loader.b_max_length", args.b_max_length)
 
 # ComboHandler 配置现在是 Loader 的一部分，使用 loader.combo_handler.* 路径
 options.set("loader.combo_handler.aggregation_function", args.aggregation_function)
-options.set("loader.combo_handler.if_load", not args.disable_combo)
-options.set("loader.combo_handler.if_debug", False)
 options.set("loader.combo_handler.noisyor_positive_method", args.noisyor_positive_method)
 options.set("loader.combo_handler.noisyor_negative_method", args.noisyor_negative_method)
 options.set("loader.combo_handler.lift_ratio", args.lift_ratio)
 options.set("loader.combo_handler.query_topk", 100)
+
+# Loader中的Combo规则加载配置（load_combo和combo_debug由RuleFactory使用）
+options.set("loader.load_combo", not args.disable_combo)
+options.set("loader.combo_debug", False)
 
 # *** Set thread count ***
 options.set("prediction_handler.num_threads", -1)
