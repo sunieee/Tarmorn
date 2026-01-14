@@ -19,8 +19,95 @@ import tarmorn.data.RelationPath
  */
 object RuleParser {
     
+    /** 调试模式开关 */
+    var DEBUG = false
+    
+    /** 调试输出函数 */
+    private fun debug(message: String) {
+        if (DEBUG) {
+            println("[DEBUG] $message")
+        }
+    }
+    
     /** 判断参数是否是变量（单字母或me_myself_i） */
     fun isVariable(arg: String) = arg.length == 1 || arg == "me_myself_i"
+    
+    /** 判断实体名称是否包含特殊字符（括号或逗号） */
+    private fun hasSpecialChars(entity: String): Boolean {
+        return ('(' in entity || ')' in entity || ',' in entity) && !entity.startsWith("/m/")
+    }
+    
+    /** 判断是否为实体占位符 (E开头后跟数字) */
+    private fun isEntityPlaceholder(arg: String): Boolean {
+        return arg.matches(Regex("E\\d+"))
+    }
+    
+    /**
+     * 预处理规则字符串：将括号内包含特殊字符的实体替换为占位符
+     * 例如：playsFor(Tom_Kelly_(footballer,born_1964),Y) -> playsFor(E123,Y)
+     * 
+     * 策略：只处理作为参数出现的实体（在括号内），不处理关系名
+     */
+    private fun preprocessRule(ruleStr: String): String {
+        val result = StringBuilder()
+        var i = 0
+        
+        while (i < ruleStr.length) {
+            // 查找关系名后的左括号
+            if (ruleStr[i] == '(') {
+                result.append('(')
+                i++
+                
+                // 现在我们在参数列表内，解析每个参数
+                val argsStart = i
+                var parenDepth = 1
+                val argsEnd = run {
+                    var pos = i
+                    while (pos < ruleStr.length && parenDepth > 0) {
+                        when (ruleStr[pos]) {
+                            '(' -> parenDepth++
+                            ')' -> parenDepth--
+                        }
+                        if (parenDepth > 0) pos++
+                    }
+                    pos
+                }
+                
+                // 提取参数部分并处理
+                val argsString = ruleStr.substring(argsStart, argsEnd)
+                val processedArgs = preprocessArguments(argsString)
+                result.append(processedArgs)
+                
+                i = argsEnd
+            } else {
+                result.append(ruleStr[i])
+                i++
+            }
+        }
+        
+        return result.toString()
+    }
+    
+    /**
+     * 预处理参数列表：将包含特殊字符的实体替换为占位符
+     * 只在顶层逗号处分割，尊重嵌套括号
+     */
+    private fun preprocessArguments(argsString: String): String {
+        val args = smartSplit(argsString)
+        val processedArgs = args.map { arg ->
+            val trimmedArg = arg.trim()
+            // 如果参数包含特殊字符且不是变量，替换为占位符
+            if (hasSpecialChars(trimmedArg) && !isVariable(trimmedArg)) {
+                // 在 IdManager 中注册这个实体并获取ID
+                val entityId = IdManager.getEntityId(trimmedArg)
+                "E${entityId}"
+            } else {
+                trimmedArg
+            }
+        }
+        return processedArgs.joinToString(",")
+    }
+    
     
     /** 规范化me_myself_i为实际变量名 */
     fun normalizeMeMyselfI(args: List<String>, context: String = "head"): List<String> {
@@ -34,7 +121,7 @@ object RuleParser {
      * 解析规则字符串，返回head和body的DepAtom对
      * 
      * 统一规则格式为简写模式：
-     * - 一元规则：/rel(/m/const) <= /rel1* /rel2(/m/const2)
+     * - 一元规则：/rel(const) <= /rel1*rel2(const2)
      * - 二元规则：/rel <= /rel1*INVERSE_/rel2
      * 
      * @param ruleStr 规则字符串
@@ -43,116 +130,82 @@ object RuleParser {
     fun parseRule(ruleStr: String): Pair<DepAtom, DepAtom?> {
         require(ruleStr.contains("<=")) { "规则格式错误：缺少 '<='" }
         
-        val (headPart, bodyPart) = ruleStr.split("<=", limit = 2).map { it.trim() }
+        debug("原始规则: $ruleStr")
+        
+        // 预处理：替换包含特殊字符的实体
+        val preprocessedRule = preprocessRule(ruleStr)
+        debug("预处理后: $preprocessedRule")
+        
+        val (headPart, bodyPart) = preprocessedRule.split("<=", limit = 2).map { it.trim() }
         
         // 转换为简写模式
         val normalizedRule = normalizeToSimplified(headPart, bodyPart)
+        debug("规范化后: $normalizedRule")
+        
         val (normHead, normBody) = normalizedRule.split("<=", limit = 2).map { it.trim() }
         
-        // 构造head的DepAtom
-        val (headRelation, headEntity, headVarPos) = parseSimplifiedHead(normHead)
-        val headAtom = createDepAtom(listOf(headRelation), headEntity, headVarPos)
+        // 解析head和body为DepAtom
+        val headAtom = parseSimplifiedAtom(normHead)
+        debug("HeadAtom解析: relationId=${headAtom.relationId}, entityId=${headAtom.entityId}")
         
-        // 构造body的DepAtom
         val bodyAtom = if (normBody.isNotBlank()) {
-            val (bodyRelations, bodyConstant) = parseSimplifiedBody(normBody)
-            val adjustedConstant = if (normBody.contains("(*)")) null else bodyConstant
-            createDepAtom(bodyRelations, adjustedConstant)
+            val atom = parseSimplifiedAtom(normBody)
+            debug("BodyAtom解析: relationId=${atom.relationId}, entityId=${atom.entityId}")
+            atom
         } else null
         
         return Pair(headAtom, bodyAtom)
     }
     
     /**
-     * 从关系字符串列表和常量创建DepAtom
-     * @param relations 关系名称列表（可能包含INVERSE_前缀）
-     * @param constant 常量实体，null表示无常量
-     * @param varPos 变量位置标记："self_loop"表示自环，null表示二元规则或其他
+     * 解析简化格式的原子
+     * 格式：
+     * 1. relation(constant) - 一元原子，有常量约束
+     * 2. relation(*) - 一元原子，无常量约束
+     * 3. relation - 二元原子
+     * 4. rel1*rel2*rel3(constant) - 关系路径，有常量约束
+     * 5. rel1*rel2*rel3 - 关系路径，无常量约束
+     * 
+     * @return DepAtom
      */
-    private fun createDepAtom(relations: List<String>, constant: String?, varPos: String? = null): DepAtom {
-        if (relations.isEmpty()) {
-            // 空关系，使用特殊表示
-            return DepAtom(0L, 0)
+    private fun parseSimplifiedAtom(atomStr: String): DepAtom {
+        // 检查是否有括号
+        val hasParens = '(' in atomStr && ')' in atomStr
+        
+        val (relationPath, constant) = if (hasParens) {
+            val relationPart = atomStr.substringBefore('(').trim()
+            val constantPart = atomStr.substringAfter('(').substringBefore(')').trim()
+            val actualConstant = if (constantPart == "*") null else constantPart
+            Pair(relationPart, actualConstant)
+        } else {
+            Pair(atomStr.trim(), null)
         }
         
-        // 处理关系路径（IdManager已经在加载数据时创建了INVERSE关系的ID）
-        val relationIds = relations.map { IdManager.getRelationId(it) }
+        // 解析关系路径（可能包含*连接的多个关系）
+        val relations = if ('*' in relationPath) {
+            relationPath.split('*').map { it.trim() }
+        } else {
+            listOf(relationPath)
+        }
         
-        // 如果是多个关系，需要编码为关系路径
+        // 获取关系ID
+        val relationIds = relations.map { IdManager.getRelationId(it) }
         val finalRelationId = if (relationIds.size == 1) {
             relationIds[0]
         } else {
             RelationPath.encode(relationIds.toLongArray())
         }
         
-        // 确定entityId
+        // 获取实体ID
         val entityId = when {
-            varPos == "self_loop" -> IdManager.getXId() // 自环
-            constant != null -> IdManager.getEntityId(constant) // 带常量约束
-            else -> IdManager.getYId() // 二元规则或自由变量
+            constant == null -> IdManager.getYId() // 无常量，二元规则
+            isEntityPlaceholder(constant) -> constant.substring(1).toInt() // 占位符，去掉E
+            else -> IdManager.getEntityId(constant) // 普通实体名
         }
         
         return DepAtom(finalRelationId, entityId)
     }
     
-    /**
-     * 解析简写格式的body部分
-     */
-    private fun parseSimplifiedBody(bodyPart: String): Pair<List<String>, String?> {
-        var bodyConstant: String? = null
-        var processedBodyPart = bodyPart
-        
-        if (bodyPart.isBlank()) return Pair(emptyList(), null)
-        
-        // 检查是否有括号约束
-        if ('(' in bodyPart && ')' in bodyPart) {
-            val lastParenStart = bodyPart.lastIndexOf('(')
-            val lastParenEnd = bodyPart.lastIndexOf(')')
-            
-            if (lastParenStart < lastParenEnd) {
-                val entityPart = bodyPart.substring(lastParenStart + 1, lastParenEnd).trim()
-                when {
-                    entityPart == "*" -> processedBodyPart = bodyPart.substring(0, lastParenStart).trim()
-                    entityPart.startsWith("/m/") -> {
-                        bodyConstant = entityPart
-                        processedBodyPart = bodyPart.substring(0, lastParenStart).trim()
-                    }
-                }
-            }
-        }
-        
-        // 解析关系路径
-        val bodyRelations = if ('*' in processedBodyPart) {
-            processedBodyPart.split('*').map { it.trim() }
-        } else {
-            listOf(processedBodyPart.trim())
-        }
-        
-        return Pair(bodyRelations, bodyConstant)
-    }
-    
-    /**
-     * 解析简写格式的头部
-     */
-    private fun parseSimplifiedHead(headPart: String): Triple<String, String?, String?> {
-        if ('(' in headPart && ')' in headPart) {
-            val relation = headPart.substringBefore('(').trim()
-            val entityPart = headPart.substringAfter('(').substringBefore(')').trim()
-            
-            return when {
-                isVariable(entityPart) -> {
-                    val normalizedVar = if (entityPart == "me_myself_i") "X" else entityPart
-                    Triple(relation, normalizedVar, "self_loop")
-                }
-                entityPart.startsWith("/m/") -> {
-                    Triple(relation, entityPart, if (relation.startsWith("INVERSE_")) "head" else "tail")
-                }
-                else -> Triple(relation, null, null)
-            }
-        } else {
-            return Triple(headPart.trim(), null, null)
-        }
-    }
 
     /**
      * 将完整格式的规则转换为简写格式
@@ -176,6 +229,7 @@ object RuleParser {
         
         // 解析完整格式
         val headRelation = headPart.substringBefore('(').trim()
+        // 由于特殊字符已在预处理中被替换，现在可以安全地使用简单分割
         val headArgs = normalizeMeMyselfI(parenContent.split(',').map { it.trim() }, "head")
         val bodyAtoms = parseBodyAtoms(bodyPart)
         
@@ -477,7 +531,7 @@ object RuleParser {
     
     /**
      * 解析身体部分的原子列表
-     * 改进版本：正确处理原子参数中包含括号和逗号的实体名称
+     * 由于预处理已替换特殊字符，可以安全地使用智能分割
      */
     fun parseBodyAtoms(bodyPart: String): List<String> {
         // 使用智能分割，只在括号层级为0时按逗号分割
