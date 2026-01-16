@@ -39,7 +39,7 @@ object Settings {
     var PATH_VALID: String = "data/{DATASET}/valid.txt"
     // Path to the file that contains the rules that will be refined or will be sued for prediction.
     @JvmField
-    var PATH_RULES: String = "out/{DATASET}/rules-400"
+    var PATH_RULES: String = "out/{DATASET}/rules-100-3"
     @JvmField
     var PATH_H2B2metric: String = "out/{DATASET}/H2B2metric.json"
     @JvmField

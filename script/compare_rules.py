@@ -999,7 +999,7 @@ python script\compare_rules.py --max_length 1
     
     parser.add_argument('--dataset', type=str, default='FB15k-237',
                         help='数据集名称 (默认: FB15k-237)')
-    parser.add_argument('--file1', type=str, default='rules-100-10',
+    parser.add_argument('--file1', type=str, default='rules-100-3',
                         help='第一个规则文件名，相对于out/{dataset}/的文件名 (默认: rules-100-10)')
     parser.add_argument('--file2', type=str, default='rule.txt',
                         help='第二个规则文件名，相对于out/{dataset}/的文件名 (默认: rule.txt)')

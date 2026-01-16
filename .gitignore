@@ -1,7 +1,6 @@
 .idea
 /data
 /build
-/out
 *.tar.gz
 /target
 .vscode
@@ -9,4 +8,4 @@
 *.log
 r2h2t_index.json
 baseline
-/out-TLearn
+/out*

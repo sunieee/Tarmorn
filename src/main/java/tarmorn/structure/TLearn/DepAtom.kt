@@ -170,6 +170,62 @@ class DepAtom(
     }
 
     /**
+     * 具象化原子：获取满足当前原子的所有实体实例
+     * 
+     * 对于一元原子（unary atom，仅支持L1）：
+     * - 返回所有满足该原子的实体集合
+     * - 例如：rel(const) 返回所有满足 rel(X, const) 的 X 集合
+     * 
+     * 对于二元原子（binary atom）：
+     * - 需要提供 entityId 和 isHead 参数
+     * - isHead=true: 给定head实体，返回所有可能的tail实体
+     * - isHead=false: 给定tail实体，返回所有可能的head实体
+     * 
+     * @param givenEntityId 对于二元原子，需要提供的实体ID（作为head或tail）
+     * @param isHead 对于二元原子，givenEntityId是否作为head（true）还是tail（false）
+     * @return 满足条件的实体ID集合
+     */
+    fun materialize(givenEntityId: Int = -1, isHead: Boolean = true): Set<Int> {
+        return if (isBinary) {
+            materializeBinary(givenEntityId, isHead)
+        } else {
+            require(isL1Atom) { "materialize only supports L1 unary atoms, got: $this" }
+            getUnaryInstances()
+        }
+    }
+
+    /**
+     * 具象化二元原子：给定一个实体（作为head或tail），返回所有能与之形成关系的另一端实体
+     */
+    private fun materializeBinary(givenEntityId: Int, isHead: Boolean): Set<Int> {
+        require(givenEntityId > 0) { "Binary atom materialize requires a valid entityId, got: $givenEntityId" }
+        
+        // 根据isHead决定使用正向还是反向关系
+        val actualRelation = if (isHead) relationId else RelationPath.getInverseRelation(relationId)
+        
+        // 对于L1原子，直接查询
+        if (isL1Atom) {
+            return tarmorn.DepLearn.r2h2tSet[actualRelation]?.get(givenEntityId) ?: emptySet()
+        }
+        
+        // 对于L2+原子，沿着关系路径逐步扩展
+        val relations = RelationPath.decode(actualRelation)
+        var currentLayer = setOf(givenEntityId)
+        
+        for (relation in relations) {
+            val nextLayer = mutableSetOf<Int>()
+            for (entity in currentLayer) {
+                val successors = tarmorn.DepLearn.r2h2tSet[relation]?.get(entity) ?: continue
+                nextLayer.addAll(successors)
+            }
+            currentLayer = nextLayer
+            if (currentLayer.isEmpty()) break
+        }
+        
+        return currentLayer
+    }
+
+    /**
      * Check if a binary instance exists using bi-directional DFS
      * 验证成功后会将实例添加到缓存
      * @param instance The (head, tail) pair as Long
@@ -283,94 +339,6 @@ class DepAtom(
         // 如果验证成功，添加到缓存
         if (verified) _instances?.add(instance)
         return verified
-    }
-
-    /**
-     * 级联采样验证 - 用于复杂规则的评估
-     * 先对grounding较少的atom进行EDIS采样，然后验证另一个atom是否满足
-     * 
-     * @param otherAtom 另一个要验证的atom
-     * @param maxAttempts 最大采样尝试次数
-     * @param maxGroundings 最大grounding数量
-     * @return (predictedBoth, correctlyPredictedBoth, headSize)三元组
-     */
-    fun cascadeSamplingWith(
-        otherAtom: DepAtom,
-        headRelation: Long,
-        maxAttempts: Int = Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS,
-        maxGroundings: Int = Settings.BEAM_SAMPLING_MAX_BODY_GROUNDINGS
-    ): Triple<Int, Int, Int> {
-        require(isBinary && otherAtom.isBinary) { "Cascade sampling only supports binary atoms" }
-        
-        // 1. 估算哪个atom的grounding更少（选择性更强）
-        val thisSize = estimateGroundingSize()
-        val otherSize = otherAtom.estimateGroundingSize()
-        
-        val (strictAtom, looseAtom) = if (thisSize <= otherSize) {
-            Pair(this, otherAtom)
-        } else {
-            Pair(otherAtom, this)
-        }
-        
-        println("  Strict: $strictAtom")
-        println("  Loose: $looseAtom")
-        
-        // 2. 对strict atom进行EDIS采样（返回新采样的实例）
-        val newSamples = strictAtom.sampleBinaryInstancesEDIS(
-            maxAttempts = maxAttempts,
-            maxGroundings = maxGroundings
-        )
-        
-        // 使用所有已采样的实例（包括之前的）
-        val strictSamples = strictAtom.instances
-        
-        println("  Sampled ${strictSamples.size} instances from strict atom")
-        
-        // 3. 对每个采样实例，验证loose atom是否也满足
-        var predictedBoth = 0
-        var correctlyPredictedBoth = 0
-        
-        val headSize = tarmorn.DepLearn.r2instanceSet[headRelation]?.size ?: 0
-        
-        for (instance in strictSamples) {
-            // 使用bi-directional DFS验证loose atom
-            if (looseAtom.hasBinaryInstance(instance)) {
-                predictedBoth++
-                
-                // 验证head relation是否也满足
-                val h = unpackHead(instance)
-                val t = unpackTail(instance)
-                if (tarmorn.DepLearn.r2h2tSet[headRelation]?.get(h)?.contains(t) == true) {
-                    correctlyPredictedBoth++
-                }
-            }
-        }
-        
-        println("  PredictedBoth=$predictedBoth, CorrectlyPredictedBoth=$correctlyPredictedBoth")
-        
-        return Triple(predictedBoth, correctlyPredictedBoth, headSize)
-    }
-    
-    /**
-     * 估算grounding大小（用于选择strict atom）
-     * 对于L1 atom返回精确大小，对于L2+返回估算值
-     */
-    fun estimateGroundingSize(): Int {
-        if (!isBinary) return 0
-        
-        if (isL1Atom) {
-            return tarmorn.DepLearn.r2instanceSet[relationId]?.size ?: 0
-        }
-        
-        // 对于L2+原子，估算大小 = 第一个关系的三元组数 * 平均度数^(路径长度-1)
-        val relations: LongArray = RelationPath.decode(relationId)
-        val firstRelSize: Int = tarmorn.DepLearn.r2instanceSet[relations[0]]?.size ?: 0
-        
-        // 简单估算：假设平均度数为10
-        val avgDegree = 10.0
-        val pathLength = relations.size
-        
-        return (firstRelSize * Math.pow(avgDegree, (pathLength - 1).toDouble())).toInt()
     }
     
     /**

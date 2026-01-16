@@ -24,9 +24,9 @@ argparser.add_argument("--aggregation_function", type=str, default="noisyor", he
 argparser.add_argument("--binary_weight", type=float, default=1.0, help="λ: weight for binary rules (unary rules have fixed weight 1.0)")
 argparser.add_argument("--aggregate_sharpness", type=float, default=0.0, help="τ: aggregate sharpness (noisyor↔maxplus)")
 argparser.add_argument("--negative_weight", type=float, default=0.0, help="β: negative edge suppression strength")
-argparser.add_argument("--positive_weight", type=float, default=1.0, help="ρ: positive edge synergy strength")
+argparser.add_argument("--positive_weight", type=float, default=0.0, help="ρ: positive edge synergy strength")
 argparser.add_argument("--positive_method", type=str, default="matching1", help="positive method: mst, matching1, matching2, all")
-argparser.add_argument("--no_grouping", action="store_true", help="disable grouping of rules")
+argparser.add_argument("--grouping", action="store_true", help="disable grouping of rules")
 argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
 argparser.add_argument("--disable_combo", action="store_true", help="whether to disable combo rules")
 argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
@@ -57,7 +57,7 @@ rules = args.rules if args.rules else f"data/rules/{dataset}.txt"
 ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{dataset}.txt"
 
 options = Options()
-options.set("loader.combo_handler.aggregation_function", "maxplus")
+# options.set("ranking_handler.aggregation_function", args.aggregation_function)
 options.set("ranking_handler.topk", 100)
 
 options.set("loader.load_b_rules", not args.disable_b)
@@ -78,7 +78,8 @@ options.set("loader.combo_handler.aggregation_function", args.aggregation_functi
 options.set("loader.combo_handler.query_topk", 100)
 
 # Loader中的Combo规则加载配置（load_combo和combo_debug由RuleFactory使用）
-options.set("loader.load_combo", not args.disable_combo)
+# options.set("loader.load_combo", not args.disable_combo)
+# load_combo没有绑定，默认加载
 options.set("loader.combo_debug", args.debug)
 
 # 新增超参数配置
@@ -87,7 +88,7 @@ options.set("loader.combo_handler.aggregate_sharpness", args.aggregate_sharpness
 options.set("loader.combo_handler.negative_weight", args.negative_weight)
 options.set("loader.combo_handler.positive_weight", args.positive_weight)
 options.set("loader.combo_handler.positive_method", args.positive_method)
-options.set("loader.combo_handler.if_grouping", not args.no_grouping)
+options.set("loader.combo_handler.if_grouping", not args.grouping)
 
 
 # *** 关键：设置线程数 ***

@@ -161,10 +161,10 @@ object RuleParser {
      * 解析简化格式的原子
      * 格式：
      * 1. relation(constant) - 一元原子，有常量约束
-     * 2. relation(*) - 一元原子，无常量约束
+     * 2. relation(*) - 存在性原子，有中间变量但无常量约束
      * 3. relation - 二元原子
      * 4. rel1*rel2*rel3(constant) - 关系路径，有常量约束
-     * 5. rel1*rel2*rel3 - 关系路径，无常量约束
+     * 5. rel1*rel2*rel3(*) - 关系路径，存在性原子
      * 
      * @return DepAtom
      */
@@ -172,11 +172,10 @@ object RuleParser {
         // 检查是否有括号
         val hasParens = '(' in atomStr && ')' in atomStr
         
-        val (relationPath, constant) = if (hasParens) {
+        val (relationPath, constantPart) = if (hasParens) {
             val relationPart = atomStr.substringBefore('(').trim()
             val constantPart = atomStr.substringAfter('(').substringBefore(')').trim()
-            val actualConstant = if (constantPart == "*") null else constantPart
-            Pair(relationPart, actualConstant)
+            Pair(relationPart, constantPart)
         } else {
             Pair(atomStr.trim(), null)
         }
@@ -198,9 +197,10 @@ object RuleParser {
         
         // 获取实体ID
         val entityId = when {
-            constant == null -> IdManager.getYId() // 无常量，二元规则
-            isEntityPlaceholder(constant) -> constant.substring(1).toInt() // 占位符，去掉E
-            else -> IdManager.getEntityId(constant) // 普通实体名
+            constantPart == null -> IdManager.getYId() // 无括号，二元规则
+            constantPart == "*" -> 0 // 存在性原子，有中间变量但无常量
+            isEntityPlaceholder(constantPart) -> constantPart.substring(1).toInt() // 占位符，去掉E
+            else -> IdManager.getEntityId(constantPart) // 普通实体名
         }
         
         return DepAtom(finalRelationId, entityId)

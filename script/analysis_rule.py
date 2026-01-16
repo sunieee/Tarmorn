@@ -264,7 +264,7 @@ class RuleParser:
         统一规则格式为简写模式：
         - 一元规则：/rel(/m/const) <= /rel1*/rel2(/m/const2)
         - 二元规则：/rel <= /rel1*INVERSE_/rel2
-        - 复杂规则（Complex Rule）：body包含分号，表示多个branch
+        - 复杂规则（Complex Rule）：body包含&&，表示多个branch
         
         Args:
             rule_str: 规则字符串
@@ -279,9 +279,9 @@ class RuleParser:
         head_part = head_part.strip()
         body_part = body_part.strip()
         
-        # 检测是否是complex rule（body包含分号）
-        if ';' in body_part:
-            debug(f"[DEBUG] 检测到Complex Rule（包含分号）")
+        # 检测是否是complex rule（body包含&&）
+        if '&&' in body_part:
+            debug(f"[DEBUG] 检测到Complex Rule（包含&&）")
             return RuleParser._parse_complex_rule(head_part, body_part, rule_str)
         
         # 首先检测规则类型和转换为简写模式
@@ -303,15 +303,15 @@ class RuleParser:
     @staticmethod
     def _parse_complex_rule(head_part: str, body_part: str, rule_str: str) -> Tuple[str, List[str], int, Dict]:
         """
-        解析Complex Rule（body包含分号的规则）
+        解析Complex Rule（body包含&&的规则）
         
         Complex Rule分为两种：
-        1. Complex Binary Rule: head是二元关系，body有多个branch（用分号分隔）
-           例如：/location/country/form_of_government(X,Y) <= branch1; branch2; branch3
+        1. Complex Binary Rule: head是二元关系，body有多个branch（用&&分隔）
+           例如：/location/country/form_of_government(X,Y) <= branch1&&branch2&&branch3
            
-        2. Complex Unary Rule: head是一元关系，body有多个branch（用分号分隔）
+        2. Complex Unary Rule: head是一元关系，body有多个branch（用&&分隔）
            例如：INVERSE_/government/legislative_session/members./government/government_position_held/legislative_sessions(/m/01gsvb) 
-                 <= branch1; branch2
+                 <= branch1&&branch2
         
         处理方式：
         - 将每个branch转换为简写形式（如果尚未简写）
@@ -320,7 +320,7 @@ class RuleParser:
         
         Args:
             head_part: 头部字符串
-            body_part: 身体字符串（包含分号）
+            body_part: 身体字符串（包含&&）
             rule_str: 原始规则字符串
             
         Returns:
@@ -330,8 +330,8 @@ class RuleParser:
         debug(f"[DEBUG]   Head: {head_part}")
         debug(f"[DEBUG]   Body: {body_part}")
         
-        # 将body按分号分割成多个branches
-        branches = [branch.strip() for branch in body_part.split(';')]
+        # 将body按&&分割成多个branches
+        branches = [branch.strip() for branch in body_part.split('&&')]
         debug(f"[DEBUG]   发现 {len(branches)} 个branches")
         
         # 确定规则类型（一元或二元）
@@ -439,7 +439,7 @@ class RuleParser:
         # 构建rule_info
         rule_info = {
             'original_rule': rule_str,
-            'normalized_rule': f"{head_part} <= {'; '.join(simplified_branches)}",
+            'normalized_rule': f"{head_part} <= {'&&'.join(simplified_branches)}",
             'is_simplified': True,
             'is_complex': True,
             'branch_count': len(branches),
@@ -1936,7 +1936,7 @@ class RuleSupportCalculator:
         """
         获取Complex Rule的body instances
         
-        对于complex rule，body有多个branches（用分号分隔）：
+        对于complex rule，body有多个branches（用&&分隔）：
         - 分别计算每个branch的instances
         - body instances = branch1_instances ∩ branch2_instances ∩ ...
         
@@ -2758,12 +2758,12 @@ if __name__ == "__main__":
     # 用户提供的Complex Rules测试用例
     test_rules = [
         # 典型Complex Binary rule（M3 binary rule）：
-        # body有3个branch（由2个分号隔开）
-        "/location/country/form_of_government(X,Y) <= /government/politician/government_positions_held./government/government_position_held/jurisdiction_of_office(A,X), /people/person/nationality(A,B), /location/country/form_of_government(B,Y); /location/country/form_of_government(X,A), /location/country/form_of_government(B,A), /location/country/form_of_government(B,Y); /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/country/form_of_government(B,Y)",
+        # body有3个branch（由2个&&隔开）
+        "/location/country/form_of_government(X,Y) <= /government/politician/government_positions_held./government/government_position_held/jurisdiction_of_office(A,X), /people/person/nationality(A,B), /location/country/form_of_government(B,Y)&&/location/country/form_of_government(X,A), /location/country/form_of_government(B,A), /location/country/form_of_government(B,Y)&&/location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(X,A), /location/statistical_region/gni_per_capita_in_ppp_dollars./measurement_unit/dated_money_value/currency(B,A), /location/country/form_of_government(B,Y)",
         
         # 典型Complex Unary rule（M2 unary rule）：
-        # body有2个branch（由1个分号隔开）
-        "INVERSE_/government/legislative_session/members./government/government_position_held/legislative_sessions(/m/01gsvb) <= /government/legislative_session/members./government/government_position_held/district_represented(/m/05kkh); /government/legislative_session/members./government/government_position_held/district_represented(/m/07_f2)"
+        # body有2个branch（由1个&&隔开）
+        "INVERSE_/government/legislative_session/members./government/government_position_held/legislative_sessions(/m/01gsvb) <= /government/legislative_session/members./government/government_position_held/district_represented(/m/05kkh)&&/government/legislative_session/members./government/government_position_held/district_represented(/m/07_f2)"
     ]
 
     # 下面这些rules理论上supp都应该是0，因为 currency 都是多对一关系，所以后半段 INVERSE_currency*currency 不可能有实例

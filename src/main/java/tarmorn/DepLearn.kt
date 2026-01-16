@@ -66,7 +66,7 @@ object DepLearn {
     
     // Constants from TLearn
     const val MIN_SURPRISAL_LIFT = 0.1
-    const val TOP_K_RULE_COMBO = 200
+    const val TOP_K_RULE_COMBO = 300
     const val MAX_PATH_LENGTH = 3
     
     /**
@@ -419,16 +419,19 @@ object DepLearn {
         var validPairCount = 0
         
         val headInstances = headAtom.getBinaryInstances()
-        
-        // Pairwise combination with dynamic sampling
+
         for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
             val (B1, metric1) = bodyList[i]
-            
             // 先检查 B1 已有的 instances
             // 只对非L1原子进行采样，L1原子的实例已经在r2instanceSet中
             if (!B1.isL1Atom && !B1.hasBeenSampled) {
                 B1.sampleBinaryInstancesEDIS()
             }
+        }
+        
+        // Pairwise combination with dynamic sampling
+        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+            val (B1, metric1) = bodyList[i]
             var S_H1_size = B1.instances.count { it in headInstances }
             val initialB1Size = B1.instances.size
             
@@ -453,7 +456,7 @@ object DepLearn {
                 continue  // Does not meet minimum support even after sampling
             }
             
-            for (j in (i + 1) until bodyList.size) {
+            for (j in (i + 1) until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
                 // Check thread interruption
                 if (Thread.currentThread().isInterrupted) {
                     println("Thread interrupted, exiting processBinaryHeadAtom for $headAtom")
@@ -537,6 +540,15 @@ object DepLearn {
                     else binaryNegativeLift.incrementAndGet()
                 }
             }
+            // 使用新指标更新B1
+            // val S_H1 = B1.instances.count { it in headInstances }
+            // val newMetric = Metric(
+            //     support = S_H1.toDouble(),
+            //     headSize = headInstances.size,
+            //     bodySize = B1.instances.size
+            // )
+            // val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
+            // B2metric[B1] = newMetric
         }
         if (shouldDebug) {
             println("[Thread-$threadId] processBinaryHeadAtom completed: $headAtom, " +
