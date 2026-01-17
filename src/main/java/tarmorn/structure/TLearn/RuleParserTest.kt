@@ -72,7 +72,9 @@ object RuleParserTest {
             "/education/university/local_tuition./measurement_unit/dated_money_value/currency",
             "/time/event/instance_of_recurring_event",
             "/award/award_category/category_of",
-            "/award/award_winner/awards_won./award/award_honor/award_winner"
+            "/award/award_winner/awards_won./award/award_honor/award_winner",
+            "/education/educational_institution_campus/educational_institution",
+            "/award/award_category/category_of"
         )
         
         testRelations.forEach { relation ->
@@ -85,7 +87,7 @@ object RuleParserTest {
             "/m/01xqqp", "/m/0257w4", "/m/02cg41", "/m/05pd94v", "/m/0m2l9",
             "/m/0gs9p", "/m/0j8f09z", "/m/0gs96", "/m/02r79_h", "/m/0f4x7",
             "/m/02_fj", "/m/01ck6v", "/m/07z31v", "/m/0b90_r", "/m/07ylj",
-            "/m/06by7",
+            "/m/06by7", "/m/02gsvk",
             "Tom_Kelly_(footballer,born_1964)", "Shaun_Taylor",
             "Scott_Brown(footballer,born_May_1985)", "Danny_Welbeck"
         )
@@ -149,7 +151,12 @@ object RuleParserTest {
             
             "playsFor(Tom_Kelly_(footballer,born_1964),Y) <= isAffiliatedTo(Shaun_Taylor,Y)",
             
-            "isAffiliatedTo(Scott_Brown(footballer,born_May_1985),Y) <= playsFor(Danny_Welbeck,Y)"
+            "isAffiliatedTo(Scott_Brown(footballer,born_May_1985),Y) <= playsFor(Danny_Welbeck,Y)",
+
+            "/education/educational_institution_campus/educational_institution(me_myself_i,Y) <= /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(Y,/m/02gsvk)",
+            "/education/educational_institution_campus/educational_institution(X,me_myself_i) <= /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,/m/02gsvk)",
+            "/award/award_category/category_of(X,me_myself_i) <= /award/award_category/category_of(me_myself_i,X)",
+            "/award/award_category/category_of(me_myself_i,Y) <= /award/award_category/category_of(Y,me_myself_i)"
         )
         
         // 测试每条规则

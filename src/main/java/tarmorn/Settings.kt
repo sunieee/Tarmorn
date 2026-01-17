@@ -53,6 +53,13 @@ object Settings {
     // Path to the output file where the rules / predictions  will be stored.
     @JvmField
     var PATH_OUTPUT: String = "out/{DATASET}/predictions"
+    // DepLearn mode
+    // 0: read PATH_RULES, composition, save PATH_RULES_TXT
+    // 1: read PATH_RULES, apply H2B2metric
+    // 2: read PATH_RULES_TXT, apply H2B2metric + H2F2metric
+    // 3: read PATH_RULES, composition, apply H2B2metric + H2F2metric
+    @JvmField
+    var MODE: Int = 0
     // The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
     @JvmField
     var WORKER_THREADS: Int = 20
@@ -243,7 +250,8 @@ object Settings {
     // Defines how to combine probabilities that come from different rules
     // Possible values are: maxplus, max2, noisyor, maxgroup (not yet implemented)
     @JvmField
-    var AGGREGATION_TYPE: String = "maxplus"
+    // var AGGREGATION_TYPE: String = "maxplus"
+    var AGGREGATION_TYPE: String = "noisyor"
 
     // This value is overwritten by the choice made vie the AGGREGATION_TYPE parameter
     @JvmField

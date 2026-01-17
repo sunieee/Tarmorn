@@ -111,7 +111,12 @@ object IdManager {
     }
     
     // Check if a relation is an inverse relation (much more efficient now!)
-    fun isInverseRelation(relation: Long)= relation > originalRelationCount
+    fun isInverseRelation(relation: Long): Boolean {
+        require(relation in 1..RelationPath.MAX_RELATION_ID) {
+            "Relation must be L1, got $relation"
+        }
+        return relation > originalRelationCount
+    }
 
     // Get the inverse relation ID for a given relation
     fun getInverseRelation(relation: Long) =

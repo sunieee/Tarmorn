@@ -15,9 +15,8 @@ echo "Log file: out/${dataset}/run.log"
 
 # JVM memory settings for Maven
 export MAVEN_OPTS="-Xms256g -Xmx256g -XX:MaxMetaspaceSize=2g"
-
-mvn clean compile
-mvn exec:java -Dexec.mainClass="tarmorn.TLearn" > "out/${dataset}/run.log" 2>&1
+export MODE=0
+# mvn clean compile exec:java > "out/${dataset}/run.log" 2>&1
 
 # baseline: aggregation_function: "noisyor"
 # if_grouping: false

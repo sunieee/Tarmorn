@@ -108,15 +108,6 @@ object RuleParser {
         return processedArgs.joinToString(",")
     }
     
-    
-    /** 规范化me_myself_i为实际变量名 */
-    fun normalizeMeMyselfI(args: List<String>, context: String = "head"): List<String> {
-        if ("me_myself_i" !in args) return args
-        
-        val firstVar = args.firstOrNull { isVariable(it) && it != "me_myself_i" } ?: "X"
-        return args.map { if (it == "me_myself_i") firstVar else it }
-    }
-    
     /**
      * 解析规则字符串，返回head和body的DepAtom对
      * 
@@ -133,16 +124,22 @@ object RuleParser {
         debug("原始规则: $ruleStr")
         
         // 预处理：替换包含特殊字符的实体
-        val preprocessedRule = preprocessRule(ruleStr)
+        var preprocessedRule = preprocessRule(ruleStr)
+        // 替换 me_myself_i,Y 或 Y,me_myself_i 或 me_myself_i,X 或 X,me_myself_i 为 X,X
+        preprocessedRule = preprocessedRule
+            .replace("me_myself_i,Y", "X,X")
+            .replace("Y,me_myself_i", "X,X")
+            .replace("me_myself_i,X", "X,X")
+            .replace("X,me_myself_i", "X,X")
+
         debug("预处理后: $preprocessedRule")
         
         val (headPart, bodyPart) = preprocessedRule.split("<=", limit = 2).map { it.trim() }
         
-        // 转换为简写模式
-        val normalizedRule = normalizeToSimplified(headPart, bodyPart)
-        debug("规范化后: $normalizedRule")
-        
-        val (normHead, normBody) = normalizedRule.split("<=", limit = 2).map { it.trim() }
+        // 对 head/body 分别归一化，保证调用相同函数
+        val normHead = normalizeAtomToSimplified(headPart)
+        val normBody = normalizeAtomToSimplified(bodyPart)
+        debug("规范化后: $normHead <= $normBody")
         
         // 解析head和body为DepAtom
         val headAtom = parseSimplifiedAtom(normHead)
@@ -216,240 +213,134 @@ object RuleParser {
      * 2. 二元规则：rel(X,Y) <= body1(X,A), body2(Y,A)
      *    -> rel <= body_path
      */
-    fun normalizeToSimplified(headPart: String, bodyPart: String): String {
-        // 检查是否已经是简写格式
-        if ('(' !in headPart || ')' !in headPart) {
-            return "$headPart <= $bodyPart"
+    fun normalizeAtomToSimplified(atomPart: String): String {
+        val atom = atomPart.trim()
+        if (atom.isBlank()) return ""
+
+        val atoms = parseBodyAtoms(atom)
+        if (atoms.size > 1) {
+            return normalizeAtomListToSimplified(atoms)
         }
-        
-        val parenContent = headPart.substringAfter('(').substringBefore(')')
+
+        // 单个 atom 处理
+        if ('(' !in atom || ')' !in atom) {
+            return atom
+        }
+
+        val parenContent = atom.substringAfter('(').substringBefore(')')
         if (',' !in parenContent) {
-            return "$headPart <= $bodyPart"
+            return atom
         }
-        
-        // 解析完整格式
-        val headRelation = headPart.substringBefore('(').trim()
-        // 由于特殊字符已在预处理中被替换，现在可以安全地使用简单分割
-        val headArgs = normalizeMeMyselfI(parenContent.split(',').map { it.trim() }, "head")
-        val bodyAtoms = parseBodyAtoms(bodyPart)
-        
-        // 判断规则类型
-        val isSelfLoop = headArgs.size == 2 && headArgs[0].length == 1 && headArgs[0] == headArgs[1]
-        val freeVarsCount = headArgs.filter { isVariable(it) }.toSet().size
-        
-        return when {
-            freeVarsCount == 1 || isSelfLoop -> convertUnaryToSimplified(headRelation, headArgs, bodyAtoms, isSelfLoop)
-            else -> convertBinaryToSimplified(headRelation, headArgs, bodyAtoms)
+
+        val relation = atom.substringBefore('(').trim()
+        val args = parenContent.split(',').map { it.trim() }
+
+        val isSelfLoop = args.size == 2 && args[0] == args[1]
+        if (isSelfLoop) return "$relation(X)"
+
+        val constant = args.firstOrNull { !isVariable(it) }
+        if (constant != null && args.size == 2) {
+            val varPos = args.indexOfFirst { isVariable(it) }
+            return when (varPos) {
+                0 -> "$relation($constant)"
+                1 -> "INVERSE_$relation($constant)"
+                else -> "$relation($constant)"
+            }
         }
+
+        if (args.size == 2) {
+            val freeVars = args.filter { it == "X" || it == "Y" }
+            if (freeVars.size == 1) {
+                val freeVar = freeVars[0]
+                val inverse = args.indexOf(freeVar) == 1
+                val rel = if (inverse) "INVERSE_$relation" else relation
+                return "$rel(*)"
+            }
+        }
+
+        return relation
     }
-    
-    /** 将一元规则转换为简写格式 */
-    fun convertUnaryToSimplified(
-        headRelation: String, 
-        headArgs: List<String>, 
-        bodyAtoms: List<String>, 
-        isSelfLoop: Boolean = false
-    ): String {
-        val freeVar = headArgs.firstOrNull { isVariable(it) } ?: "X"
-        val (bodyPath, bodyConstant) = buildUnaryBodyPath(bodyAtoms, freeVar)
-        
-        val simplifiedHead = when {
-            isSelfLoop -> "$headRelation(X)"
-            else -> {
-                val headConstant = headArgs.firstOrNull { !isVariable(it) }
-                val varPos = headArgs.indexOfFirst { isVariable(it) }
-                when {
-                    headConstant != null && varPos == 0 -> "$headRelation($headConstant)"
-                    headConstant != null -> "INVERSE_$headRelation($headConstant)"
-                    else -> "$headRelation(X)"
+
+    private fun normalizeAtomListToSimplified(atoms: List<String>): String {
+        val parsedAtoms = atoms.map { atom ->
+            mapOf(
+                "relation" to extractRelationFromAtom(atom),
+                "args" to extractVariables(atom)
+            )
+        }
+
+        val varCounts = mutableMapOf<String, Int>()
+        val constants = mutableListOf<String>()
+        parsedAtoms.forEach { atom ->
+            val args = atom["args"] as List<String>
+            args.forEach { arg ->
+                if (isVariable(arg)) {
+                    varCounts[arg] = (varCounts[arg] ?: 0) + 1
+                } else {
+                    constants.add(arg)
                 }
             }
         }
-        
-        val simplifiedBody = formatUnaryBody(bodyPath, bodyConstant, bodyAtoms)
-        return "$simplifiedHead <= $simplifiedBody"
-    }
-    
-    /** 格式化一元规则的body部分 */
-    private fun formatUnaryBody(bodyPath: String, bodyConstant: String?, bodyAtoms: List<String>): String {
+
+        val freeVars = listOf("X", "Y").filter { varCounts.containsKey(it) }
+        val fallbackPath = parsedAtoms.joinToString("*") { it["relation"] as String }
+
         return when {
-            bodyConstant != null -> "$bodyPath($bodyConstant)"
-            hasIntermediateVars(bodyAtoms) -> "$bodyPath(*)"
-            else -> bodyPath
+            freeVars.size >= 2 -> {
+                val path = buildRelationPath(parsedAtoms, freeVars[0], freeVars[1]) ?: fallbackPath
+                path
+            }
+            freeVars.size == 1 -> {
+                val freeVar = freeVars[0]
+                val target = constants.firstOrNull()
+                    ?: varCounts.keys.firstOrNull { it != freeVar }
+                val path = buildRelationPath(parsedAtoms, freeVar, target) ?: fallbackPath
+                if (target != null && !isVariable(target)) "$path($target)" else "$path(*)"
+            }
+            else -> fallbackPath
         }
     }
-    
-    /** 检查是否有中间变量 */
-    private fun hasIntermediateVars(bodyAtoms: List<String>): Boolean {
-        if (bodyAtoms.size > 1) return true
-        if (bodyAtoms.isEmpty()) return false
-        val args = normalizeMeMyselfI(extractVariables(bodyAtoms[0]), "body")
-        return args.size == 2 && args.all { isVariable(it) }
-    }
-    
-    /** 构建一元规则的body路径 */
-    fun buildUnaryBodyPath(bodyAtoms: List<String>, freeVar: String): Pair<String, String?> {
-        if (bodyAtoms.isEmpty()) return Pair("", null)
-        
-        val parsedAtoms = bodyAtoms.map { atom ->
-            val relation = extractRelationFromAtom(atom)
-            val args = extractVariables(atom)
-            mapOf("relation" to relation, "args" to args)
+
+    private fun buildRelationPath(
+        parsedAtoms: List<Map<String, Any>>,
+        start: String?,
+        end: String?
+    ): String? {
+        if (start == null || end == null) return null
+
+        data class Edge(val to: String, val relation: String)
+
+        val graph = mutableMapOf<String, MutableList<Edge>>()
+        parsedAtoms.forEach { atom ->
+            val relation = atom["relation"] as String
+            val args = atom["args"] as List<String>
+            if (args.size < 2) return@forEach
+            val a0 = args[0]
+            val a1 = args[1]
+            graph.getOrPut(a0) { mutableListOf() }.add(Edge(a1, relation))
+            graph.getOrPut(a1) { mutableListOf() }.add(Edge(a0, "INVERSE_$relation"))
         }
-        
-        val bodyConstant = parsedAtoms.flatMap { it["args"] as List<String> }
-            .firstOrNull { it.length > 1 }
-        
-        if (parsedAtoms.size == 1) {
-            val args = parsedAtoms[0]["args"] as List<String>
-            val relation = parsedAtoms[0]["relation"] as String
-            val inversePrefix = if (args.indexOf(freeVar) == 0) "" else "INVERSE_"
-            return Pair("$inversePrefix$relation", bodyConstant)
-        }
-        
-        return analyzeUnaryConnection(parsedAtoms, freeVar, bodyConstant)
-    }
-    
-    /** 分析一元规则中多个原子的连接方式 */
-    @Suppress("UNCHECKED_CAST")
-    private fun analyzeUnaryConnection(
-        parsedAtoms: List<Map<String, Any>>, 
-        freeVar: String, 
-        bodyConstant: String?
-    ): Pair<String, String?> {
-        if (parsedAtoms.size <= 1) {
-            return Pair(parsedAtoms[0]["relation"] as String, bodyConstant)
-        }
-        
-        val startIdx = parsedAtoms.indexOfFirst { freeVar in (it["args"] as List<String>) }.takeIf { it >= 0 } ?: 0
-        val pathRelations = mutableListOf<String>()
-        val usedAtoms = mutableSetOf(startIdx)
-        
-        var currentAtom = parsedAtoms[startIdx]
-        val args = currentAtom["args"] as List<String>
-        val freeVarPos = args.indexOf(freeVar)
-        
-        var currentVar = if (freeVarPos == 0) {
-            pathRelations.add(currentAtom["relation"] as String)
-            args[1]
-        } else {
-            pathRelations.add("INVERSE_${currentAtom["relation"]}")
-            args[0]
-        }
-        
-        while (usedAtoms.size < parsedAtoms.size) {
-            val nextAtom = parsedAtoms.withIndex()
-                .firstOrNull { (i, atom) -> i !in usedAtoms && currentVar in (atom["args"] as List<String>) }
-                ?: break
-                
-            val (i, atom) = nextAtom
-            usedAtoms.add(i)
-            
-            val atomArgs = atom["args"] as List<String>
-            val varPos = atomArgs.indexOf(currentVar)
-            
-            currentVar = if (varPos == 0) {
-                pathRelations.add(atom["relation"] as String)
-                atomArgs.getOrElse(1) { "" }
-            } else {
-                pathRelations.add("INVERSE_${atom["relation"]}")
-                atomArgs[0]
+
+        val visited = mutableSetOf<String>()
+        val queue: ArrayDeque<Pair<String, List<String>>> = ArrayDeque()
+        queue.add(start to emptyList())
+        visited.add(start)
+
+        while (queue.isNotEmpty()) {
+            val (node, path) = queue.removeFirst()
+            if (node == end) return path.joinToString("*")
+            val edges = graph[node].orEmpty()
+            edges.forEach { edge ->
+                if (edge.to !in visited) {
+                    visited.add(edge.to)
+                    queue.add(edge.to to (path + edge.relation))
+                }
             }
         }
-        
-        return Pair(pathRelations.joinToString("*"), bodyConstant)
+
+        return null
     }
     
-    /** 将二元规则转换为简写格式 */
-    fun convertBinaryToSimplified(
-        headRelation: String, 
-        headArgs: List<String>, 
-        bodyAtoms: List<String>
-    ): String {
-        val normalizedHeadArgs = normalizeMeMyselfI(headArgs, "head")
-        val freeVars = normalizedHeadArgs.filter { isVariable(it) }
-        require(freeVars.size == 2) { "二元规则必须有两个自由变量，当前有 ${freeVars.size} 个" }
-        
-        val bodyPath = buildBinaryBodyPath(bodyAtoms, freeVars)
-        return "$headRelation <= $bodyPath"
-    }
-    
-    /** 构建二元规则的body路径 */
-    @Suppress("UNCHECKED_CAST")
-    fun buildBinaryBodyPath(bodyAtoms: List<String>, freeVars: List<String>): String {
-        if (bodyAtoms.isEmpty()) return ""
-        
-        val parsedAtoms = bodyAtoms.map { atom ->
-            mapOf("relation" to extractRelationFromAtom(atom), "args" to extractVariables(atom))
-        }
-        
-        if (parsedAtoms.size == 1) {
-            return buildSingleAtomPath(parsedAtoms[0], freeVars)
-        }
-        
-        require(freeVars.size == 2) { "二元规则需要两个自由变量" }
-        return buildMultiAtomPath(parsedAtoms, freeVars)
-    }
-    
-    /** 构建单原子的路径 */
-    @Suppress("UNCHECKED_CAST")
-    private fun buildSingleAtomPath(atom: Map<String, Any>, freeVars: List<String>): String {
-        val relation = atom["relation"] as String
-        if (freeVars.size != 2) return relation
-        
-        val args = atom["args"] as List<String>
-        val (X, Y) = freeVars
-        return when {
-            args[0] == X && args[1] == Y -> relation
-            args[0] == Y && args[1] == X -> "INVERSE_$relation"
-            else -> relation
-        }
-    }
-    
-    /** 构建多原子的连接路径 */
-    @Suppress("UNCHECKED_CAST")
-    private fun buildMultiAtomPath(parsedAtoms: List<Map<String, Any>>, freeVars: List<String>): String {
-        val (X, Y) = freeVars
-        val startIdx = parsedAtoms.indexOfFirst { X in (it["args"] as List<String>) }
-            .takeIf { it >= 0 } ?: return parsedAtoms.joinToString("*") { it["relation"] as String }
-        
-        val pathRelations = mutableListOf<String>()
-        val usedAtoms = mutableSetOf(startIdx)
-        
-        var currentAtom = parsedAtoms[startIdx]
-        val args = currentAtom["args"] as List<String>
-        val xPos = args.indexOf(X)
-        
-        var currentVar = if (xPos == 0) {
-            pathRelations.add(currentAtom["relation"] as String)
-            args[1]
-        } else {
-            pathRelations.add("INVERSE_${currentAtom["relation"]}")
-            args[0]
-        }
-        
-        while (currentVar != Y && usedAtoms.size < parsedAtoms.size) {
-            val nextAtom = parsedAtoms.withIndex()
-                .firstOrNull { (i, atom) -> i !in usedAtoms && currentVar in (atom["args"] as List<String>) }
-                ?: break
-            
-            val (i, atom) = nextAtom
-            usedAtoms.add(i)
-            
-            val atomArgs = atom["args"] as List<String>
-            val varPos = atomArgs.indexOf(currentVar)
-            
-            currentVar = if (varPos == 0) {
-                pathRelations.add(atom["relation"] as String)
-                atomArgs[1]
-            } else {
-                pathRelations.add("INVERSE_${atom["relation"]}")
-                atomArgs[0]
-            }
-        }
-        
-        return pathRelations.joinToString("*")
-    }
     
     /**
      * 从原子中提取关系名
@@ -485,7 +376,7 @@ object RuleParser {
         val variables = smartSplit(varPart)
         
         // 规范化 me_myself_i
-        return normalizeMeMyselfI(variables, "extracted")
+        return variables
     }
     
     /**

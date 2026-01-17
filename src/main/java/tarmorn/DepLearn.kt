@@ -3,16 +3,22 @@ package tarmorn
 import tarmorn.data.IdManager
 import tarmorn.data.RelationPath
 import tarmorn.data.TripleSet
+import tarmorn.eval.HitsAtK
+import tarmorn.eval.ResultSet
 import tarmorn.structure.TLearn.DepAtom
 import tarmorn.structure.TLearn.DepFormula
 import tarmorn.structure.TLearn.Metric
+import tarmorn.structure.TLearn.DepRule
 import tarmorn.structure.TLearn.RuleParser
+import tarmorn.data.MyTriple
 import java.io.BufferedReader
 import java.io.File
 import java.io.FileInputStream
 import java.io.InputStreamReader
+import java.io.PrintWriter
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * DepLearn - Dependency-based learning algorithm
@@ -63,11 +69,12 @@ object DepLearn {
     val binaryPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
     val binaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
     val thread0Attempts = java.util.concurrent.atomic.AtomicInteger(0)
+    val dependencyGraphPrintCount = java.util.concurrent.atomic.AtomicInteger(0)
     
     // Constants from TLearn
-    const val MIN_SURPRISAL_LIFT = 0.1
-    const val TOP_K_RULE_COMBO = 300
-    const val MAX_PATH_LENGTH = 3
+    const val MIN_SURPRISAL_LIFT = 0.05
+    const val TOP_K_RULE_COMBO = 400
+
     
     /**
      * Main entry point
@@ -75,6 +82,9 @@ object DepLearn {
     @JvmStatic
     fun main(args: Array<String>) {
         Settings.load()
+        if (args.isNotEmpty()) {
+            Settings.MODE = parseMode(args[0])
+        }
         println("DepLearn - Dependency-based learning algorithm")
         println("=".repeat(60))
         
@@ -84,38 +94,46 @@ object DepLearn {
         println("\n=== Step 1: Loading Triple Set ===")
         println("Loading triple set from: ${Settings.PATH_TRAINING}")
         loadTripleSet()
-        
-        // Step 2: Read rules and convert to H2B2metric
-        println("\n=== Step 2: Reading Rules ===")
-        println("Reading rules from: ${Settings.PATH_RULES}")
-        readRules(Settings.PATH_RULES)
 
-        saveMetricToJson(
-            metricMap = H2B2metric,
-            outputPath = Settings.PATH_H2B2metric,
-            appendMode = false,
-            isFormulaMap = false
-        )
-        
-        // Step 3: Composition phase - combine atoms into formulas
-        println("\n=== Step 3: Composition Phase ===")
-        try {
-            compositionPhase()
-        } catch (e: Exception) {
-            println("Error during composition phase: ${e.message}")
-            e.printStackTrace()
+        when (Settings.MODE) {
+            0 -> {
+                readRules(Settings.PATH_RULES)
+                try {
+                    compositionPhase()
+                } catch (e: Exception) {
+                    println("Error during composition phase: ${e.message}")
+                    e.printStackTrace()
+                }
+                printStatistics()
+            }
+            1 -> {
+                readRules(Settings.PATH_RULES)
+                printStatistics()
+
+                applyForLinkPrediction(useFormulaGraph = false)
+            }
+            2 -> {
+                readRules(Settings.PATH_RULES_TXT)
+                printStatistics()
+
+                applyForLinkPrediction(useFormulaGraph = true)
+            }
+            3 -> {
+                readRules(Settings.PATH_RULES)
+                try {
+                    compositionPhase()
+                } catch (e: Exception) {
+                    println("Error during composition phase: ${e.message}")
+                    e.printStackTrace()
+                }
+                printStatistics()
+
+                applyForLinkPrediction(useFormulaGraph = true)
+            }
+            else -> {
+                throw IllegalArgumentException("Unsupported MODE: ${Settings.MODE}")
+            }
         }
-
-        saveMetricToJson(
-            metricMap = H2F2metric,
-            outputPath = Settings.PATH_H2F2metric,
-            appendMode = true,
-            isFormulaMap = true
-        )
-        
-        // Step 5: Print statistics
-        println("\n=== Step 4: Statistics ===")
-        printStatistics()
         
         val endTime = System.currentTimeMillis()
         val elapsedSeconds = (endTime - startTime) / 1000.0
@@ -160,20 +178,21 @@ object DepLearn {
      * We only process rules without && (no complex rules)
      */
     private fun readRules(filepath: String) {
+        println("\n=== Step 2: Reading Rules ===")
+        println("Reading rules from: $filepath")
         val file = File(filepath)
         if (!file.exists()) {
             println("Warning: Rule file not found: $filepath")
             return
         }
         
-        println("Reading rules from: $filepath")
         val startTime = System.currentTimeMillis()
         
         // First pass: read all lines into memory
         val allLines = mutableListOf<String>()
         BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8)).use { reader ->
             reader.forEachLine { line ->
-                if (line.isNotBlank() && !line.startsWith("#") && !line.contains("&&")) {
+                if (line.isNotBlank() && !line.startsWith("#")) {
                     val tokens = line.split("\t")
                     if (tokens.size >= 4) {
                         allLines.add(line)
@@ -232,6 +251,13 @@ object DepLearn {
         println("  Errors: ${errors.get()}")
         println("  Time: %.2f seconds".format(elapsed))
         println("  Speed: %.0f rules/sec".format(parsedRules.get() / elapsed))
+
+        saveMetricToJson(
+            metricMap = H2B2metric,
+            outputPath = Settings.PATH_H2B2metric,
+            appendMode = false,
+            isFormulaMap = false
+        )
     }
 
     fun setH2F2metric(headAtom: DepAtom, formula: DepFormula, metric: Metric) {
@@ -275,13 +301,44 @@ object DepLearn {
         val support = tokens[1].toDouble()
         val confidence = tokens[2].toDouble()
         val ruleString = tokens[3]
-        
-        // Use RuleParser to parse the rule
-        val (headAtom, bodyAtom) = tarmorn.structure.TLearn.RuleParser.parseRule(ruleString)
-        
+
+        if (ruleString.contains("&&")) {
+            val parts = ruleString.split("<=", limit = 2)
+            if (parts.size < 2) return
+            val headStr = parts[0].trim()
+            val bodyParts = parts[1].split("&&").map { it.trim() }.filter { it.isNotEmpty() }
+            if (bodyParts.isEmpty()) return
+
+            val (headAtom, _) = RuleParser.parseRule("$headStr <=")
+            val bodyAtoms = bodyParts.map { bodyStr ->
+                val (_, bodyAtom) = RuleParser.parseRule("$headStr <= $bodyStr")
+                bodyAtom
+            }.filterNotNull().sortedBy { it.hashCode() }
+
+            val headSize = getAtomSize(headAtom)
+            val metric = Metric(support, headSize, bodySize)
+            metric.lift = confidence
+
+            val formula = when (bodyAtoms.size) {
+                1 -> DepFormula(bodyAtoms[0])
+                2 -> DepFormula(bodyAtoms[0], bodyAtoms[1])
+                else -> DepFormula(bodyAtoms[0], bodyAtoms[1], bodyAtoms[2])
+            }
+            setH2F2metric(headAtom, formula, metric)
+            return
+        }
+
+        val (headAtom, bodyAtom) = RuleParser.parseRule(ruleString)
+        // val isVariableY = !headAtom.isBinary && headAtom.isInverseRelation
+        // val currentString = if (bodyAtom != null)  "${headAtom.getRuleString(isVariableY)} <= ${bodyAtom.getRuleString(isVariableY)}"
+        // else "${headAtom.getRuleString(isVariableY)} <= "
+        // require(currentString == ruleString) {
+        //     "Parsed rule does not match original string: $ruleString"
+        // }
+
         val headSize = getAtomSize(headAtom)
         val metric = Metric(support, headSize, bodySize)
-        
+
         if (bodyAtom == null) {
             setH2F2metric(headAtom, DepFormula(), metric)
         } else {
@@ -318,7 +375,8 @@ object DepLearn {
      * Called after reading rules, builds formulas based on H2B2metric
      */
     fun compositionPhase() {
-        println("Starting Composition Phase with Eclat algorithm...")
+        println("\n=== Composition Phase ===")
+        println("Starting Composition Phase...")
         
         val processedHeads = java.util.concurrent.atomic.AtomicInteger(0)
         val totalHeads = H2B2metric.size
@@ -389,6 +447,13 @@ object DepLearn {
         }
         
         println("Composition Phase completed. Total rules: ${H2F2metric.values.sumOf { it.size }}")
+
+        saveMetricToJson(
+            metricMap = H2F2metric,
+            outputPath = Settings.PATH_H2F2metric,
+            appendMode = true,
+            isFormulaMap = true
+        )
     }
     
     /**
@@ -409,8 +474,8 @@ object DepLearn {
                 newBodyMap[bodyAtom] = metric
             }
         }
-        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }
-
+        // 获取TOP_K_RULE_COMBO个body atoms，按confidence排序
+        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }.take(TOP_K_RULE_COMBO)
         if (shouldDebug) {
             println("[Thread-$threadId] starting processBinaryHeadAtom for $headAtom with ${bodyList.size} body atoms")
         }
@@ -420,7 +485,7 @@ object DepLearn {
         
         val headInstances = headAtom.getBinaryInstances()
 
-        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+        for (i in 0 until bodyList.size) {
             val (B1, metric1) = bodyList[i]
             // 先检查 B1 已有的 instances
             // 只对非L1原子进行采样，L1原子的实例已经在r2instanceSet中
@@ -430,7 +495,7 @@ object DepLearn {
         }
         
         // Pairwise combination with dynamic sampling
-        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+        for (i in 0 until bodyList.size) {
             val (B1, metric1) = bodyList[i]
             var S_H1_size = B1.instances.count { it in headInstances }
             val initialB1Size = B1.instances.size
@@ -443,12 +508,12 @@ object DepLearn {
                 val newMatchCount = newInstances.count { it in headInstances }
                 S_H1_size += newMatchCount
                 if (shouldDebug)
-                println("\t[Thread-$threadId] B1 sampling round ${B1.samplingRound}: " +
+                println("\t[Thread-$threadId] ${B1} sampling round ${B1.samplingRound}: " +
                         "new=${newInstances.size}, total=${B1.instances.size}, " +
                         "S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
             }
             if (shouldDebug)
-            println("[Thread-$threadId] B1  total sampling rounds ${B1.samplingRound}: " +
+            println("[Thread-$threadId] ${B1} total sampling rounds ${B1.samplingRound}: " +
                         "total=${B1.instances.size}, S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
             
             
@@ -456,7 +521,7 @@ object DepLearn {
                 continue  // Does not meet minimum support even after sampling
             }
             
-            for (j in (i + 1) until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+            for (j in (i + 1) until bodyList.size) {
                 // Check thread interruption
                 if (Thread.currentThread().isInterrupted) {
                     println("Thread interrupted, exiting processBinaryHeadAtom for $headAtom")
@@ -505,14 +570,13 @@ object DepLearn {
                             }
                         }
                     }
-                    if (shouldDebug)
-                    println("\t[Thread-$threadId] Pair($i,$j) sampling round ${B1.samplingRound}: " +
-                            "newInstances=${newInstances.size}, newS12=$newS12, newSH12=$newSH12, S_12=$S_12_size, S_H12=$S_H12_size, " +
-                            "exhausted=${B1.samplingExhausted}")
+                    // if (shouldDebug)
+                    // println("\t[Thread-$threadId] Pair($i,$j) sampling round ${B1.samplingRound}: " +
+                    //         "newInstances=${newInstances.size}, newS12=$newS12, newSH12=$newSH12, S_12=$S_12_size, S_H12=$S_H12_size, " + "exhausted=${B1.samplingExhausted}")
                 }
-                if (shouldDebug)
-                println("[Thread-$threadId] Pair($i,$j) total sampling rounds ${B1.samplingRound}: " +
-                            "S_12=${S_12_size}, S_H12=${S_H12_size}, exhausted=${B1.samplingExhausted}")
+                // if (shouldDebug)
+                // println("[Thread-$threadId] Pair($i,$j) total sampling rounds ${B1.samplingRound}: " +
+                //             "S_12=${S_12_size}, S_H12=${S_H12_size}, exhausted=${B1.samplingExhausted}")
                 
                 if (S_H12_size < Settings.MIN_SUPP) {
                     continue  // Does not meet minimum support
@@ -571,13 +635,13 @@ object DepLearn {
                 newBodyMap[bodyAtom] = metric
             }
         }
-        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }
+        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }.take(TOP_K_RULE_COMBO)
         
         var pairCount = 0
         var validPairCount = 0
 
         // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
-        for (i in 0 until minOf(bodyList.size, TOP_K_RULE_COMBO)) {
+        for (i in 0 until bodyList.size) {
             val (B1, metric1) = bodyList[i]
             val B1_instances = B1.getUnaryInstances()
             val headInstances = headAtom.getUnaryInstances()
@@ -710,6 +774,7 @@ object DepLearn {
      * Print statistics about H2B2metric and rules
      */
     fun printStatistics() {
+        println("\n=== Statistics ===")
         println("=== Metric Statistics ===")
         
         val totalHeads = H2B2metric.size
@@ -758,5 +823,418 @@ object DepLearn {
         println("Unary    ${unaryPositiveLift.get().toString().padStart(13)}    ${unaryNegativeLift.get().toString().padStart(13)}    ${unaryTotal.toString().padStart(8)}")
         println("Binary   ${binaryPositiveLift.get().toString().padStart(13)}    ${binaryNegativeLift.get().toString().padStart(13)}    ${binaryTotal.toString().padStart(8)}")
         println("Total    ${(unaryPositiveLift.get() + binaryPositiveLift.get()).toString().padStart(13)}    ${(unaryNegativeLift.get() + binaryNegativeLift.get()).toString().padStart(13)}    ${(unaryTotal + binaryTotal).toString().padStart(8)}")
+    }
+
+    private fun applyForLinkPrediction(useFormulaGraph: Boolean) {
+        val title = if (useFormulaGraph) "Apply (H2B2metric + H2F2metric)" else "Apply (H2B2metric)"
+        println("\n=== $title ===")
+        val trainingSet = TripleSet(Settings.PATH_TRAINING)
+        val validationSet = TripleSet(Settings.PATH_VALID, evaluate = true)
+        val testSet = TripleSet(Settings.PATH_TEST, evaluate = true)
+
+        val relationId2Rules = buildRelationId2Rules()
+        val totalRules = relationId2Rules.values.sumOf { it.size }
+        println("* Built $totalRules DepRules from H2B2metric across ${relationId2Rules.size} relations")
+
+        if (totalRules == 0) {
+            println("* No rules to apply after filtering. Skipping prediction/evaluation.")
+            return
+        }
+
+        val outputPath = Settings.PATH_OUTPUT
+        val predictionWriter = PrintWriter(File(outputPath))
+        println("* Writing predictions to: $outputPath")
+
+        val predictionTasks = ConcurrentLinkedQueue<MyTriple>()
+        for (triple in testSet) {
+            predictionTasks.add(triple)
+        }
+
+        val processedPredictions = java.util.concurrent.atomic.AtomicInteger(0)
+        val totalPredictions = testSet.size
+
+        val workers = Array(Settings.WORKER_THREADS) {
+            Thread {
+                while (true) {
+                    val triple = predictionTasks.poll() ?: break
+                    predictOneTriple(
+                        triple,
+                        relationId2Rules,
+                        trainingSet,
+                        validationSet,
+                        testSet,
+                        predictionWriter,
+                        Settings.TOP_K_OUTPUT,
+                        useFormulaGraph
+                    )
+                    val done = processedPredictions.incrementAndGet()
+                    if (done % 500 == 0) {
+                        synchronized(System.out) {
+                            println("* Progress: $done/$totalPredictions predictions")
+                        }
+                    }
+                }
+            }
+        }
+
+        print("* creating worker threads ")
+        for (i in workers.indices) {
+            print("#$i ")
+            workers[i].start()
+        }
+        println()
+
+        for (worker in workers) {
+            worker.join()
+        }
+
+        predictionWriter.flush()
+        predictionWriter.close()
+
+        evaluatePredictions(outputPath, trainingSet, validationSet, testSet)
+    }
+
+    private fun buildRelationId2Rules(): Map<Long, List<DepRule>> {
+        val relation2Rules = mutableMapOf<Long, MutableList<DepRule>>()
+        var count = 0
+        for ((headAtom, bodyMap) in H2B2metric) {
+            for ((bodyAtom, metric) in bodyMap) {
+                val rule = DepRule(headAtom, bodyAtom, metric)
+                relation2Rules.computeIfAbsent(rule.relationId) { mutableListOf() }.add(rule)
+                count++
+            }
+        }
+        for ((_, rules) in relation2Rules) {
+            rules.sortByDescending { it.realConfidence }
+        }
+        println("* Indexed and sorted $count DepRules for prediction")
+        return relation2Rules
+    }
+
+    private fun predictOneTriple(
+        triple: MyTriple,
+        relationId2Rules: Map<Long, List<DepRule>>,
+        trainingSet: TripleSet,
+        validationSet: TripleSet,
+        testSet: TripleSet,
+        writer: PrintWriter,
+        k: Int,
+        useFormulaGraph: Boolean
+    ) {
+        val rules = relationId2Rules[triple.r] ?: emptyList()
+
+        // 先预测 head
+        val headScores = mutableMapOf<Int, MutableList<Double>>()
+        for (rule in rules) {
+            val headCandidates = rule.predictHead(triple.t)
+            val filteredHead = getFilteredEntities(trainingSet, validationSet, testSet, triple, headCandidates, false)
+            for (cand in filteredHead) {
+                headScores.computeIfAbsent(cand) { mutableListOf() }.add(rule.realConfidence)
+            }
+        }
+
+        // 再预测 tail
+        val tailScores = mutableMapOf<Int, MutableList<Double>>()
+        val tailRuleHits = mutableMapOf<Int, MutableList<DepRule>>()
+        for (rule in rules) {
+            val tailCandidates = rule.predictTail(triple.h)
+            val filteredTail = getFilteredEntities(trainingSet, validationSet, testSet, triple, tailCandidates, true)
+            for (cand in filteredTail) {
+                tailScores.computeIfAbsent(cand) { mutableListOf() }.add(rule.realConfidence)
+                tailRuleHits.computeIfAbsent(cand) { mutableListOf() }.add(rule)
+            }
+        }
+
+        val kHeadCandidates = aggregateCandidates(headScores)
+        val kTailCandidates = aggregateCandidates(tailScores)
+
+        writeTopKCandidates(triple, testSet, kHeadCandidates, kTailCandidates, writer, k)
+
+        if (useFormulaGraph) {
+            if (dependencyGraphPrintCount.getAndIncrement() < 500) {
+                val line = buildDependencyGraphLine(triple, rules, tailRuleHits, kTailCandidates)
+                if (line.isNotEmpty()) {
+                    println(line)
+                }
+            }
+        }
+    }
+
+    private fun aggregateCandidates(scoresByCandidate: Map<Int, MutableList<Double>>): LinkedHashMap<String, Double> {
+        val scored = mutableListOf<Pair<Int, Double>>()
+        val useNoisyOr = Settings.AGGREGATION_TYPE == "noisyor"
+
+        for ((candidate, scores) in scoresByCandidate) {
+            val score = if (useNoisyOr) computeNoisyOrScore(scores) else computeMaxplusScore(scores)
+            scored.add(candidate to score)
+        }
+
+        scored.sortByDescending { it.second }
+        val result = LinkedHashMap<String, Double>()
+        for ((candidate, score) in scored) {
+            result[IdManager.getEntityString(candidate)] = score
+        }
+        return result
+    }
+
+    private fun computeMaxplusScore(scores: MutableList<Double>): Double {
+        return scores.maxOrNull() ?: 0.0
+    }
+
+    private fun computeNoisyOrScore(scores: MutableList<Double>): Double {
+        scores.sortDescending()
+        val maxRules = Settings.AGGREGATION_MAX_NUM_RULES_PER_CANDIDATE
+        var sum = 0.0
+        var ctr = 0
+        for (s in scores) {
+            sum += s
+            ctr++
+            if (maxRules > 0 && ctr >= maxRules) break
+        }
+        return 1 - kotlin.math.exp(-sum)
+    }
+
+    private fun buildDependencyGraphLine(
+        triple: MyTriple,
+        rules: List<DepRule>,
+        tailRuleHits: Map<Int, List<DepRule>>,
+        kTailCandidates: LinkedHashMap<String, Double>
+    ): String {
+        if (rules.isEmpty()) return ""
+
+        val appliedRules = LinkedHashMap<DepRule, Int>()
+        tailRuleHits.values.flatten().distinct().forEachIndexed { idx, rule ->
+            appliedRules[rule] = idx
+        }
+        if (appliedRules.isEmpty()) return ""
+
+        val nodeIndexByBody = mutableMapOf<DepAtom, Int>()
+        val nodes = appliedRules.keys.mapIndexed { idx, rule ->
+            nodeIndexByBody[rule.bodyAtom] = idx
+            val ruleStr = "${rule.headAtom} <= ${rule.bodyAtom}"
+            listOf(ruleStr, rule.metric.bodySize, rule.metric.support.toInt(), rule.realSurprisal)
+        }
+
+        val edges = mutableListOf<List<Any>>()
+        val edgeIndex = mutableMapOf<Pair<Int, Int>, Int>()
+
+        for ((headAtom, formulaMap) in H2F2metric) {
+            if (headAtom.relationId != triple.r) continue
+            for ((formula, metric) in formulaMap) {
+                val atoms = listOfNotNull(formula.atom1, formula.atom2, formula.atom3)
+                if (atoms.size < 2) continue
+                val idx1 = nodeIndexByBody[atoms[0]] ?: -1
+                val idx2 = nodeIndexByBody[atoms[1]] ?: -1
+                if (idx1 < 0 || idx2 < 0) continue
+                val key = if (idx1 <= idx2) Pair(idx1, idx2) else Pair(idx2, idx1)
+                if (!edgeIndex.containsKey(key)) {
+                    val entry = listOf(key.first, key.second, metric.bodySize, metric.support.toInt(), metric.surprisal)
+                    edgeIndex[key] = edges.size
+                    edges.add(entry)
+                }
+            }
+        }
+
+        val candidates = mutableListOf<String>()
+        val candidateOrder = kTailCandidates.keys.toList()
+        val rankMap = candidateOrder.mapIndexed { idx, name -> name to (idx + 1) }.toMap()
+
+        val gtName = IdManager.getEntityString(triple.t)
+        val selectedNames = mutableListOf<String>()
+        selectedNames.addAll(candidateOrder.take(10))
+        if (gtName !in selectedNames) {
+            selectedNames.add(gtName)
+        }
+
+        for (name in selectedNames) {
+            val score = kTailCandidates[name] ?: 0.0
+            val entityId = IdManager.getEntityId(name)
+            val nodeIdxs = tailRuleHits[entityId]?.mapNotNull { appliedRules[it] }?.distinct() ?: emptyList()
+            val edgeIdxs = edgeIndex.filterKeys { nodeIdxs.contains(it.first) && nodeIdxs.contains(it.second) }.values.sorted()
+            val gt = entityId == triple.t
+            val rank = rankMap[name] ?: -1
+            val candidateJson = "{" +
+                "\"name\":\"$name\"," +
+                "\"nodes\":[${nodeIdxs.joinToString(",")}]," +
+                "\"edges\":[${edgeIdxs.joinToString(",")}]," +
+                "\"GT\":${gt}," +
+                "\"originalSurprisal\":$score," +
+                "\"baseSurprisal\":$score," +
+                "\"newSurprisal\":$score," +
+                "\"rankBefore\":$rank," +
+                "\"rankAfter\":$rank" +
+                "}"
+            candidates.add(candidateJson)
+        }
+
+        val query = "${IdManager.getEntityString(triple.h)} ${IdManager.getRelationString(triple.r)} ?"
+
+        val nodesJson = nodes.joinToString(",") { n ->
+            val ruleStr = n[0].toString().replace("\\", "\\\\").replace("\"", "\\\"")
+            "[\"$ruleStr\",${n[1]},${n[2]},${n[3]}]"
+        }
+        val edgesJson = edges.joinToString(",") { e ->
+            "[${e[0]},${e[1]},${e[2]},${e[3]},${e[4]}]"
+        }
+
+        return "{" +
+            "\"query\":\"$query\"," +
+            "\"nodes\":[${nodesJson}]," +
+            "\"edges\":[${edgesJson}]," +
+            "\"candidates\":[${candidates.joinToString(",")}]" +
+            "}"
+    }
+
+    private fun parseMode(arg: String): Int {
+        return if (arg.startsWith("MODE=", true)) {
+            arg.substringAfter("=").trim().toInt()
+        } else {
+            arg.trim().toInt()
+        }
+    }
+
+    private fun getFilteredEntities(
+        trainingSet: TripleSet,
+        validationSet: TripleSet,
+        testSet: TripleSet,
+        t: MyTriple,
+        candidateEntities: Set<Int>,
+        tailNotHead: Boolean
+    ): HashSet<Int> {
+        val filteredEntities = HashSet<Int>()
+        for (entity in candidateEntities) {
+            if (!tailNotHead) {
+                if (!validationSet.isTrue(entity, t.r, t.t) && !trainingSet.isTrue(entity, t.r, t.t) && !testSet.isTrue(
+                        entity,
+                        t.r,
+                        t.t
+                    )
+                ) {
+                    filteredEntities.add(entity)
+                }
+                if (testSet.isTrue(entity, t.r, t.t)) {
+                    if (entity == t.h) filteredEntities.add(entity)
+                }
+            }
+            if (tailNotHead) {
+                if (!validationSet.isTrue(t.h, t.r, entity) && !trainingSet.isTrue(t.h, t.r, entity) && !testSet.isTrue(
+                        t.h,
+                        t.r,
+                        entity
+                    )
+                ) {
+                    filteredEntities.add(entity)
+                }
+                if (testSet.isTrue(t.h, t.r, entity)) {
+                    if (entity == t.t) filteredEntities.add(entity)
+                }
+            }
+        }
+        return filteredEntities
+    }
+
+    @Synchronized
+    private fun writeTopKCandidates(
+        t: MyTriple,
+        testSet: TripleSet,
+        kHeadCandidates: LinkedHashMap<String, Double>,
+        kTailCandidates: LinkedHashMap<String, Double>,
+        writer: PrintWriter,
+        k: Int
+    ) {
+        writer.println(t)
+        var i = 0
+        writer.print("Heads: ")
+        for (entry in kHeadCandidates.entries) {
+            val entityId = IdManager.getEntityId(entry.key)
+            if (t.h == entityId || !testSet.isTrue(entityId, t.r, t.t)) {
+                writer.print(entry.key + "\t" + entry.value + "\t")
+                i++
+            }
+            if (i == k) break
+        }
+        writer.println()
+        i = 0
+        writer.print("Tails: ")
+        for (entry in kTailCandidates.entries) {
+            val entityId = IdManager.getEntityId(entry.key)
+            if (t.t == entityId || !testSet.isTrue(t.h, t.r, entityId)) {
+                writer.print(entry.key + "\t" + entry.value + "\t")
+                i++
+            }
+            if (i == k) break
+        }
+        writer.println()
+        writer.flush()
+    }
+
+    private fun evaluatePredictions(
+        predictionFile: String,
+        trainingSet: TripleSet,
+        validationSet: TripleSet,
+        testSet: TripleSet
+    ) {
+        println("* Starting evaluation of prediction file: $predictionFile")
+
+        val hitsAtK = HitsAtK()
+        hitsAtK.addFilterTripleSet(trainingSet)
+        hitsAtK.addFilterTripleSet(validationSet)
+        hitsAtK.addFilterTripleSet(testSet)
+
+        try {
+            val resultSet = ResultSet(predictionFile, true, Settings.TOP_K_OUTPUT)
+            println("* Successfully loaded ${resultSet.triples.size} prediction results")
+
+            hitsAtK.reset()
+            var evaluatedTriples = 0
+            var successfulEvaluations = 0
+
+            println("* Starting evaluation of ${testSet.size} test triples...")
+
+            for ((tripleIndex, triple) in testSet.withIndex()) {
+                if (tripleIndex % 10000 == 0 && tripleIndex > 0) {
+                    println("* Evaluated $tripleIndex/${testSet.size} triples...")
+                }
+
+                val tripleString = "${IdManager.getEntityString(triple.h)} ${IdManager.getRelationString(triple.r)} ${IdManager.getEntityString(triple.t)}"
+
+                try {
+                    val headCandidates = resultSet.getHeadCandidates(tripleString)
+                    val tailCandidates = resultSet.getTailCandidates(tripleString)
+
+                    hitsAtK.evaluateHead(headCandidates, triple)
+                    hitsAtK.evaluateTail(tailCandidates, triple)
+                    successfulEvaluations++
+                } catch (e: Exception) {
+                    if (evaluatedTriples < 5) {
+                        println("Warning: Could not find predictions for triple: $tripleString")
+                    }
+                }
+
+                evaluatedTriples++
+            }
+
+            println("\nEvaluation Results:")
+            println("==================")
+            println("Total test triples: ${testSet.size}")
+            println("Successfully evaluated: $successfulEvaluations")
+            println("Coverage: ${String.format("%.2f", (successfulEvaluations.toDouble() / testSet.size) * 100)}%")
+            println()
+            println("Metrics:")
+            println("--------")
+            println("Hits@1:  ${hitsAtK.getHitsAtK(0)}")
+            println("Hits@3:  ${hitsAtK.getHitsAtK(2)}")
+            println("Hits@10: ${hitsAtK.getHitsAtK(9)}")
+            println("MRR:     ${hitsAtK.approxMRR}")
+        } catch (e: Exception) {
+            println("Error evaluating $predictionFile: ${e.message}")
+            e.printStackTrace()
+            val file = File(predictionFile)
+            if (!file.exists()) {
+                println("File does not exist: $predictionFile")
+            } else {
+                println("File exists but has ${file.length()} bytes")
+            }
+        }
     }
 }

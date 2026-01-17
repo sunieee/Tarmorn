@@ -97,6 +97,7 @@
                 <version>3.1.0</version>
                 <configuration>
                     <mainClass>tarmorn.DepLearn</mainClass>
+                    <!-- <mainClass>tarmorn.Apply</mainClass> -->
                     <!-- <mainClass>tarmorn.structure.TLearn.RuleParserTest</mainClass> -->
                     <!-- 设置UTF-8编码 -->
                     <systemProperties>

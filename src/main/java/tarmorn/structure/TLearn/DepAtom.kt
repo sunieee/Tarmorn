@@ -58,6 +58,8 @@ class DepAtom(
     val isInverseInstances: Boolean
         get() = isBinary && isL1Atom && IdManager.isInverseRelation(relationId)
 
+    val isInverseRelation: Boolean
+        get() = IdManager.isInverseRelation(relationId)
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -83,7 +85,10 @@ class DepAtom(
         }
     }
 
-    fun getRuleString(): String {
+    fun getRuleString(isVariableY: Boolean = false): String {
+        if (isVariableY) {
+            require(!isBinary) { "isVariableY is only allowed for unary atoms" }
+        }
         // Resolve terminal argument
         fun termString(eid: Int): String = when (eid) {
             IdManager.getYId() -> "Y"
@@ -99,7 +104,7 @@ class DepAtom(
 
         // Build node list: X, A, B, ..., tailTerm
         val nodes = Array(n + 1) { "" }
-        nodes[0] = "X"
+        nodes[0] = if(isVariableY) "Y" else "X"
         for (i in 1 until n+1) {
             nodes[i] = ('A'.code + (i - 1)).toChar().toString()
         }
@@ -352,8 +357,8 @@ class DepAtom(
      * @return 本次新增的实例集合
      */
     fun sampleBinaryInstancesEDIS(
-        maxAttempts: Int = 10000,
-        maxGroundings: Int = 100,
+        maxAttempts: Int = Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS,
+        maxGroundings: Int = Settings.BEAM_SAMPLING_MAX_BODY_GROUNDINGS,
         maxRepetitions: Int = Settings.BEAM_SAMPLING_MAX_REPETITIONS
     ): Set<Long> {
         require(isBinary) { "EDIS sampling only supports binary atoms, got: $this" }
@@ -369,41 +374,82 @@ class DepAtom(
         }
         
         // 判断是否为首次采样，如果是则使用更大的参数
-        val actualMaxAttempts = if (samplingRound==0) Settings.BEAM_SAMPLING_MAX_BODY_GROUNDING_ATTEMPTS else maxAttempts
-        val actualMaxGroundings = if (samplingRound==0) Settings.BEAM_SAMPLING_MAX_BODY_GROUNDINGS else maxGroundings
+        val actualMaxAttempts = if (samplingRound==0) maxAttempts else maxAttempts / 10
+        val actualMaxGroundings = if (samplingRound==0) maxGroundings else maxGroundings / 10
         
         // 确保_instances已初始化
         val instances = _instances ?: return emptySet()
         
-        // 对于L2+原子，使用EDIS采样
-        val relations = RelationPath.decode(relationId)
+        // 双向采样：forward + inverse
+        val forwardInstances = sampleBinaryInstancesEDISDirection(
+            relationPathId = relationId,
+            isForward = true,
+            maxAttempts = actualMaxAttempts,
+            maxGroundings = actualMaxGroundings,
+            maxRepetitions = maxRepetitions
+        )
+        val inverseInstances = sampleBinaryInstancesEDISDirection(
+            relationPathId = RelationPath.getInverseRelation(relationId),
+            isForward = false,
+            maxAttempts = actualMaxAttempts,
+            maxGroundings = actualMaxGroundings,
+            maxRepetitions = maxRepetitions
+        )
+        
+        val newInstances = mutableSetOf<Long>()
+        newInstances.addAll(forwardInstances)
+        newInstances.addAll(inverseInstances)
+        
+        samplingRound++
+        
+        val totalAttempts = actualMaxAttempts * 2
+        if (samplingRound >= 100 ||
+            newInstances.isEmpty() ||
+            newInstances.size.toDouble() / totalAttempts < 0.05) {
+            samplingExhausted = true
+        }
+        
+        instances.addAll(newInstances)
+        return newInstances
+    }
+
+    /**
+     * 单向EDIS采样的内部实现
+     */
+    private fun sampleBinaryInstancesEDISDirection(
+        relationPathId: Long,
+        isForward: Boolean,
+        maxAttempts: Int,
+        maxGroundings: Int,
+        maxRepetitions: Int
+    ): Set<Long> {
+        val instances = _instances ?: return emptySet()
+
+        val relations = RelationPath.decode(relationPathId)
         val firstRelation = relations[0]
-        
-        // 1. 获取起始实体（均匀分布）
-        val startEntities = getSampledStartEntities(firstRelation, actualMaxAttempts)
-        require(startEntities.isNotEmpty()) { "No start entities available for relation $firstRelation" }
-        
-        // 2. 使用本地缓存收集新实例，避免并发冲突
+
+        val startEntities = getSampledStartEntities(firstRelation, maxAttempts)
+        if (startEntities.isEmpty()) return emptySet()
+
         val newInstances = mutableSetOf<Long>()
         var attempts = 0
         var repetitions = 0
-        val currentSize = instances.size
-        
+
         for (startEntity in startEntities) {
-            // 检查停止条件（考虑已有实例和新采样的实例）
-            if (attempts >= actualMaxAttempts) break
-            if (newInstances.size >= actualMaxGroundings) break
+            if (attempts >= maxAttempts) break
+            if (newInstances.size >= maxGroundings) break
             if (repetitions >= maxRepetitions) break
-            
+
             attempts++
-            
-            // 随机游走完成路径
+
             val endEntity = beamCyclicPath(startEntity, relations.toList())
-            
             if (endEntity != null && endEntity != startEntity) {
-                val instance = packLong(startEntity, endEntity)
-                
-                // 检查是否已存在于旧实例或新实例中
+                val instance = if (isForward) {
+                    packLong(startEntity, endEntity)
+                } else {
+                    packLong(endEntity, startEntity)
+                }
+
                 if (instance !in instances && instance !in newInstances) {
                     newInstances.add(instance)
                     repetitions = 0
@@ -412,18 +458,7 @@ class DepAtom(
                 }
             }
         }
-        
-        samplingRound++
-        
-        // 强制停止：如果采样轮次过多，标记为耗尽并立即返回
-        // 检查采样效率：如果新增实例占尝试次数的比例太低，标记为采样耗尽
-        if (samplingRound >= 100 || 
-            attempts == 0 || 
-            repetitions >= maxRepetitions ||
-            newInstances.size.toDouble() / attempts < 0.05) 
-            samplingExhausted = true        
-        // 批量添加新实例到_instances，避免并发冲突
-        instances.addAll(newInstances)
+
         return newInstances
     }
     

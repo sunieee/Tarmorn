@@ -43,7 +43,7 @@ def parse_rule_line(line: str) -> Tuple[str, Dict, str]:
     
     return None, None, line
 
-def load_rules_with_target_relation(file_path: str, target_relation: str = None) -> Dict[str, List[Tuple[str, Dict, str]]]:
+def load_rules_with_target_relation(file_path: str, args) -> Dict[str, List[Tuple[str, Dict, str]]]:
     """
     加载文件中的规则
     如果target_relation为None，加载所有规则
@@ -52,11 +52,11 @@ def load_rules_with_target_relation(file_path: str, target_relation: str = None)
     """
     rules_dict = defaultdict(list)
     
-    if target_relation is None:
+    if args.target_relation is None:
         print(f"Loading all rules from: {file_path}")
     else:
         print(f"Loading rules from: {file_path}")
-        print(f"Target relation: {target_relation}")
+        print(f"Target relation: {args.target_relation}")
     
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -64,9 +64,12 @@ def load_rules_with_target_relation(file_path: str, target_relation: str = None)
             target_rule_count = 0
             
             for line in f:
+                if args.only_normal:
+                    if '&&' in line:
+                        continue
                 line_count += 1
                 if line_count % 100000 == 0:
-                    if target_relation is None:
+                    if args.target_relation is None:
                         print(f"  Processed {line_count} lines, loaded {target_rule_count} rules")
                     else:
                         print(f"  Processed {line_count} lines, found {target_rule_count} target rules")
@@ -74,14 +77,14 @@ def load_rules_with_target_relation(file_path: str, target_relation: str = None)
                 rule, metrics, original_line = parse_rule_line(line)
                 
                 # 如果target_relation为None，加载所有规则；否则只加载匹配的规则
-                if rule and (target_relation is None or rule.startswith(target_relation)):
+                if rule and (args.target_relation is None or rule.startswith(args.target_relation)):
                     target_rule_count += 1
                     # 标准化规则（移除置信度差异，便于比较）
                     normalized_rule = normalize_rule(rule)
                     rules_dict[normalized_rule].append((rule, metrics, original_line.strip()))
             
             print(f"  Total lines: {line_count}")
-            if target_relation is None:
+            if args.target_relation is None:
                 print(f"  Loaded {target_rule_count} total rules")
             else:
                 print(f"  Found {target_rule_count} rules with target relation")
@@ -922,8 +925,8 @@ def main(args):
     
     # 加载规则
     print(f"\n=== 加载规则 ===")
-    rules1 = load_rules_with_target_relation(file1_path, args.target_relation)
-    rules2 = load_rules_with_target_relation(file2_path, args.target_relation)
+    rules1 = load_rules_with_target_relation(file1_path, args)
+    rules2 = load_rules_with_target_relation(file2_path, args)
     print(f"已加载 {file1_name}: {len(rules1)} 条规则")
     print(f"已加载 {file2_name}: {len(rules2)} 条规则")
     
@@ -1011,6 +1014,8 @@ python script\compare_rules.py --max_length 1
                         help='仅比较unary规则，且body中不能出现rp(A,X)和rp(X,A)')
     parser.add_argument('--only_u_d', action='store_true',
                         help='仅比较unary规则，且body中只能是rp(A,X)和rp(X,A)')
+    parser.add_argument('--only_normal', action='store_true',
+                        help='仅比较normal规则')
     parser.add_argument('--list_only', type=int, default=0, choices=[0, 1, 2],
                         help='列举模式: 0=默认(显示差异), 1=仅列举file1独有规则, 2=仅列举file2独有规则 (默认: 0)')
     parser.add_argument('--max_length', type=int, default=3, choices=[1, 2, 3],
