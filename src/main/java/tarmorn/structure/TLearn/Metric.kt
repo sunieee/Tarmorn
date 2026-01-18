@@ -24,8 +24,13 @@ data class Metric(
     val needValidation: Boolean
         get() = support < Settings.MIN_SUPP * 2 || support > min(headSize, bodySize).toDouble()
 
+    private fun format5(value: Double): String {
+        val formatted = String.format(java.util.Locale.US, "%.5f", value)
+        return formatted.trimEnd('0').trimEnd('.')
+    }
+
     override fun toString(): String {
-        return "{\"support\":$support, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":$confidence, \"lift\":$lift}"
+        return "{\"support\":${format5(support)}, \"headSize\":$headSize, \"bodySize\":$bodySize, \"confidence\":${format5(confidence)}, \"lift\":${format5(lift)}}"
     }
 
     fun inverse() =  Metric(support, bodySize, headSize)

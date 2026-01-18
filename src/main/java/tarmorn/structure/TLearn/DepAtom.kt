@@ -67,6 +67,11 @@ class DepAtom(
         return relationId == other.relationId && entityId == other.entityId
     }
 
+    fun getBinaryAtom(): DepAtom {
+        require(!isBinary) { "getBinaryAtom can only be called on unary atoms" }
+        return DepAtom(if (isInverseRelation) IdManager.getInverseRelation(relationId) else relationId, IdManager.getYId())
+    }
+
     override fun hashCode(): Int {
         // IMPORTANT: 注意不能使用简单的31 * relationId.hashCode() + entityId，很容易冲突
         return pairHash32(relationId.hashCode(), entityId)

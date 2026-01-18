@@ -30,41 +30,22 @@ for dataset in "${datasets[@]}"; do
     # All evaluation commands from run_para.sh
     
     # if_grouping
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --grouping > "out/${dataset}/eval-grouping.log"
     python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" > "out/${dataset}/eval-noisyor.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_function maxplus > "out/${dataset}/eval-maxplus.log"
-
-    # binary_weight
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 0 > "out/${dataset}/eval-binary_weight0.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 0.25 > "out/${dataset}/eval-binary_weight0.25.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 0.5 > "out/${dataset}/eval-binary_weight0.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 0.75 > "out/${dataset}/eval-binary_weight0.75.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 1.5 > "out/${dataset}/eval-binary_weight1.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 2 > "out/${dataset}/eval-binary_weight2.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --binary_weight 4 > "out/${dataset}/eval-binary_weight4.log"
 
     # aggregate_sharpness
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.1 > "out/${dataset}/eval-aggregate_sharpness0.1.log"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.25 > "out/${dataset}/eval-aggregate_sharpness0.25.log"
     python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.5 > "out/${dataset}/eval-aggregate_sharpness0.5.log"
     python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 1 > "out/${dataset}/eval-aggregate_sharpness1.log"
     python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 2 > "out/${dataset}/eval-aggregate_sharpness2.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.5 --grouping > "out/${dataset}/eval-grouping-aggregate_sharpness0.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 1 --grouping > "out/${dataset}/eval-grouping-aggregate_sharpness1.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 2 --grouping > "out/${dataset}/eval-grouping-aggregate_sharpness2.log"
 
-    # negative_weight
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --negative_weight 0.5 > "out/${dataset}/eval-negative_weight0.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --negative_weight 1 > "out/${dataset}/eval-negative_weight1.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --negative_weight 2 > "out/${dataset}/eval-negative_weight2.log"
-
-    # positive_weight
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_weight 0.5 > "out/${dataset}/eval-positive_weight0.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_weight 1 > "out/${dataset}/eval-positive_weight1.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_weight 2 > "out/${dataset}/eval-positive_weight2.log"
-
-    # positive_method
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method mst > "out/${dataset}/eval-positive_method_mst.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method matching2 > "out/${dataset}/eval-positive_method_matching2.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method all > "out/${dataset}/eval-positive_method_all.log"
+    for aggregate_sharpness in 0.25 0.5 1 2; do
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method strength --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_strength-${aggregate_sharpness}.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method positive --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_positive-${aggregate_sharpness}.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method negative --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_negative-${aggregate_sharpness}.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method positive_first --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_positive_first-${aggregate_sharpness}.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method negative_first --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_negative_first-${aggregate_sharpness}.log"
+    done
 
     # d_weight
     python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --d_weight 0.3 > "out/${dataset}/eval-d_weight0.3.log"

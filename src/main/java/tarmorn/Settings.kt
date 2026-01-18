@@ -41,6 +41,8 @@ object Settings {
     @JvmField
     var PATH_RULES: String = "out/{DATASET}/rules-100-3"
     @JvmField
+    var PATH_DEPENDENCY: String = "out/{DATASET}/dependency.txt"
+    @JvmField
     var PATH_H2B2metric: String = "out/{DATASET}/H2B2metric.json"
     @JvmField
     var PATH_RULES_TXT: String = "out/{DATASET}/rule.txt"
@@ -53,13 +55,6 @@ object Settings {
     // Path to the output file where the rules / predictions  will be stored.
     @JvmField
     var PATH_OUTPUT: String = "out/{DATASET}/predictions"
-    // DepLearn mode
-    // 0: read PATH_RULES, composition, save PATH_RULES_TXT
-    // 1: read PATH_RULES, apply H2B2metric
-    // 2: read PATH_RULES_TXT, apply H2B2metric + H2F2metric
-    // 3: read PATH_RULES, composition, apply H2B2metric + H2F2metric
-    @JvmField
-    var MODE: Int = 0
     // The number of worker threads which compute the scores of the constructed rules, should be one less then the number of available cores.
     @JvmField
     var WORKER_THREADS: Int = 20
@@ -407,5 +402,6 @@ object Settings {
         PATH_H2B2metric = PATH_H2B2metric.replace("{DATASET}", DATASET)
         PATH_RULES_TXT = PATH_RULES_TXT.replace("{DATASET}", DATASET)
         PATH_H2F2metric = PATH_H2F2metric.replace("{DATASET}", DATASET)
+        PATH_DEPENDENCY = PATH_DEPENDENCY.replace("{DATASET}", DATASET)
     }
 }

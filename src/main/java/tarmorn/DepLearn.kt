@@ -6,9 +6,7 @@ import tarmorn.data.TripleSet
 import tarmorn.eval.HitsAtK
 import tarmorn.eval.ResultSet
 import tarmorn.structure.TLearn.DepAtom
-import tarmorn.structure.TLearn.DepFormula
 import tarmorn.structure.TLearn.Metric
-import tarmorn.structure.TLearn.DepRule
 import tarmorn.structure.TLearn.RuleParser
 import tarmorn.data.MyTriple
 import java.io.BufferedReader
@@ -54,25 +52,53 @@ object DepLearn {
     lateinit var r2instanceSet: Map<Long, Set<Long>>
     lateinit var r2tSet: Map<Long, IntArray>
     
-    // Rule metric structure: head -> body -> metric
-    val H2B2metric = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Metric>>()
-    val H2F2metric = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepFormula, Metric>>()
+    // Rule metric structure: head -> body -> ruleId
+    val H2B2ID = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Int>>()
+    val ID2metric = ConcurrentHashMap<Int, Metric>()
+    val dependency2metric = ConcurrentHashMap<Pair<Int, Int>, Metric>()
     
     // Statistics variables
     var totalRules = 0
-    val unaryStats = IntArray(4) // M0, M1, M2, M3
-    val binaryStats = IntArray(4) // M0, M1, M2, M3
-    
     // Lift statistics for composition phase
     val unaryPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
     val unaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
     val binaryPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
     val binaryNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
+    val mixPositiveLift = java.util.concurrent.atomic.AtomicInteger(0)
+    val mixNegativeLift = java.util.concurrent.atomic.AtomicInteger(0)
     val thread0Attempts = java.util.concurrent.atomic.AtomicInteger(0)
     
     // Constants from TLearn
     const val MIN_SURPRISAL_LIFT = 0.05
     const val TOP_K_RULE_COMBO = 400
+
+    private fun format5(value: Double): String {
+        val formatted = String.format(java.util.Locale.US, "%.5f", value)
+        return formatted.trimEnd('0').trimEnd('.')
+    }
+
+    private fun packBinaryInstance(head: Int, tail: Int): Long {
+        return (head.toLong() shl 32) or (tail.toLong() and 0xFFFFFFFFL)
+    }
+
+    private fun storeDependency(
+        ruleId1: Int,
+        ruleId2: Int,
+        metric: Metric,
+        metric1: Metric,
+        metric2: Metric,
+        positiveCounter: java.util.concurrent.atomic.AtomicInteger,
+        negativeCounter: java.util.concurrent.atomic.AtomicInteger
+    ) {
+        val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
+        val maxSurprisal = maxOf(metric1.surprisal, metric2.surprisal)
+        if (lift > 0 || metric.surprisal < maxSurprisal) {
+            metric.lift = if (lift > 0) lift else metric.surprisal - maxSurprisal
+            dependency2metric[ruleId1 to ruleId2] = metric
+            if (metric.lift > 0) positiveCounter.incrementAndGet()
+            else negativeCounter.incrementAndGet()
+        }
+    }
 
     
     /**
@@ -81,9 +107,6 @@ object DepLearn {
     @JvmStatic
     fun main(args: Array<String>) {
         Settings.load()
-        if (args.isNotEmpty()) {
-            Settings.MODE = parseMode(args[0])
-        }
         println("DepLearn - Dependency-based learning algorithm")
         println("=".repeat(60))
         
@@ -94,46 +117,25 @@ object DepLearn {
         println("Loading triple set from: ${Settings.PATH_TRAINING}")
         loadTripleSet()
 
-        when (Settings.MODE) {
-            0 -> {
-                readRules(Settings.PATH_RULES)
-                try {
-                    compositionPhase()
-                } catch (e: Exception) {
-                    println("Error during composition phase: ${e.message}")
-                    e.printStackTrace()
-                }
-                printStatistics()
-            }
-            1 -> {
-                readRules(Settings.PATH_RULES)
-                printStatistics()
+        readRules(Settings.PATH_RULES)
 
-                applyForLinkPrediction(useFormulaGraph = false)
-            }
-            2 -> {
-                readRules(Settings.PATH_RULES_TXT)
-                printStatistics()
+        saveMetricToJson(
+            metricMap = H2B2ID,
+            outputPath = Settings.PATH_H2B2metric,
+            appendMode = false,
+            isFormulaMap = false
+        )
 
-                applyForLinkPrediction(useFormulaGraph = true)
-            }
-            3 -> {
-                readRules(Settings.PATH_RULES)
-                try {
-                    compositionPhase()
-                } catch (e: Exception) {
-                    println("Error during composition phase: ${e.message}")
-                    e.printStackTrace()
-                }
-                printStatistics()
-
-                applyForLinkPrediction(useFormulaGraph = true)
-            }
-            else -> {
-                throw IllegalArgumentException("Unsupported MODE: ${Settings.MODE}")
-            }
+        try {
+            compositionPhase()
+        } catch (e: Exception) {
+            println("Error during composition phase: ${e.message}")
+            e.printStackTrace()
         }
-        
+        printStatistics()
+
+        saveDependencyToFile(Settings.PATH_DEPENDENCY)
+
         val endTime = System.currentTimeMillis()
         val elapsedSeconds = (endTime - startTime) / 1000.0
         
@@ -188,13 +190,15 @@ object DepLearn {
         val startTime = System.currentTimeMillis()
         
         // First pass: read all lines into memory
-        val allLines = mutableListOf<String>()
+        val allLines = mutableListOf<Pair<Int, String>>()
         BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8)).use { reader ->
+            var lineNumber = 0
             reader.forEachLine { line ->
+                lineNumber++
                 if (line.isNotBlank() && !line.startsWith("#")) {
                     val tokens = line.split("\t")
                     if (tokens.size >= 4) {
-                        allLines.add(line)
+                        allLines.add(lineNumber to line)
                     }
                 }
             }
@@ -216,9 +220,9 @@ object DepLearn {
             
             val futures = chunks.map { chunk ->
                 threadPool.submit {
-                    chunk.forEach { line ->
+                    chunk.forEach { (lineNumber, line) ->
                         try {
-                            parseAndAddRule(line)
+                            parseAndAddRule(line, lineNumber)
                             val count = parsedRules.incrementAndGet()
                             if (count % 100000 == 0) {
                                 println("Parsed $count/${allLines.size} rules...")
@@ -250,37 +254,13 @@ object DepLearn {
         println("  Errors: ${errors.get()}")
         println("  Time: %.2f seconds".format(elapsed))
         println("  Speed: %.0f rules/sec".format(parsedRules.get() / elapsed))
-
-        saveMetricToJson(
-            metricMap = H2B2metric,
-            outputPath = Settings.PATH_H2B2metric,
-            appendMode = false,
-            isFormulaMap = false
-        )
     }
 
-    fun setH2F2metric(headAtom: DepAtom, formula: DepFormula, metric: Metric) {
-        val F2metric = H2F2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
-        F2metric[formula] = metric
-
+    fun setH2B2ID(headAtom: DepAtom, bodyAtom: DepAtom, ruleId: Int, metric: Metric) {
+        val B2id = H2B2ID.computeIfAbsent(headAtom) { ConcurrentHashMap() }
+        B2id[bodyAtom] = ruleId
+        ID2metric[ruleId] = metric
         totalRules++
-        if (headAtom.entityId == IdManager.getYId()) {
-            binaryStats[formula.size]++
-        } else {
-            unaryStats[formula.size]++
-        }
-    }
-
-    fun setH2B2metric(headAtom: DepAtom, bodyAtom: DepAtom, metric: Metric) {
-        val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
-        B2metric[bodyAtom] = metric
-
-        totalRules++
-        if (headAtom.entityId == IdManager.getYId()) {
-            binaryStats[1]++
-        } else {
-            unaryStats[1]++
-        }
     }
     
     /**
@@ -290,7 +270,7 @@ object DepLearn {
      * Note: body is a relation path string like "r1*r2(const)" or "r1*INVERSE_r2"
      * It will be parsed as a single DepAtom with encoded relationId
      */
-    private fun parseAndAddRule(line: String) {
+    private fun parseAndAddRule(line: String, ruleId: Int) {
         val tokens = line.split("\t")
         if (tokens.size < 4) {
             throw IllegalArgumentException("Invalid rule format: expected at least 4 tokens")
@@ -302,46 +282,17 @@ object DepLearn {
         val ruleString = tokens[3]
 
         if (ruleString.contains("&&")) {
-            val parts = ruleString.split("<=", limit = 2)
-            if (parts.size < 2) return
-            val headStr = parts[0].trim()
-            val bodyParts = parts[1].split("&&").map { it.trim() }.filter { it.isNotEmpty() }
-            if (bodyParts.isEmpty()) return
-
-            val (headAtom, _) = RuleParser.parseRule("$headStr <=")
-            val bodyAtoms = bodyParts.map { bodyStr ->
-                val (_, bodyAtom) = RuleParser.parseRule("$headStr <= $bodyStr")
-                bodyAtom
-            }.filterNotNull().sortedBy { it.hashCode() }
-
-            val headSize = getAtomSize(headAtom)
-            val metric = Metric(support, headSize, bodySize)
-            metric.lift = confidence
-
-            val formula = when (bodyAtoms.size) {
-                1 -> DepFormula(bodyAtoms[0])
-                2 -> DepFormula(bodyAtoms[0], bodyAtoms[1])
-                else -> DepFormula(bodyAtoms[0], bodyAtoms[1], bodyAtoms[2])
-            }
-            setH2F2metric(headAtom, formula, metric)
             return
         }
 
         val (headAtom, bodyAtom) = RuleParser.parseRule(ruleString)
-        // val isVariableY = !headAtom.isBinary && headAtom.isInverseRelation
-        // val currentString = if (bodyAtom != null)  "${headAtom.getRuleString(isVariableY)} <= ${bodyAtom.getRuleString(isVariableY)}"
-        // else "${headAtom.getRuleString(isVariableY)} <= "
-        // require(currentString == ruleString) {
-        //     "Parsed rule does not match original string: $ruleString"
-        // }
+        
 
         val headSize = getAtomSize(headAtom)
         val metric = Metric(support, headSize, bodySize)
 
-        if (bodyAtom == null) {
-            setH2F2metric(headAtom, DepFormula(), metric)
-        } else {
-            setH2B2metric(headAtom, bodyAtom, metric)
+        if (bodyAtom != null) {
+            setH2B2ID(headAtom, bodyAtom, ruleId, metric)
         }
     }
     
@@ -378,17 +329,16 @@ object DepLearn {
         println("Starting Composition Phase...")
         
         val processedHeads = java.util.concurrent.atomic.AtomicInteger(0)
-        val totalHeads = H2B2metric.size
+        val totalHeads = H2B2ID.size
         val threadPool = java.util.concurrent.Executors.newFixedThreadPool(Settings.WORKER_THREADS)
         val compositionActiveThreadCount = java.util.concurrent.atomic.AtomicInteger(0)
         val compositionThreadMonitorLock = Object()
         
         try {
-            val futures = H2B2metric.entries.map { (headAtom, bodyMap) ->
+            val futures = H2B2ID.entries.map { (headAtom, bodyMap) ->
                 threadPool.submit {
                     compositionActiveThreadCount.incrementAndGet()
                     try {
-                        // Call different function based on headAtom type
                         if (headAtom.isBinary) {
                             processBinaryHeadAtom(headAtom, bodyMap)
                         } else {
@@ -406,7 +356,7 @@ object DepLearn {
                     }
                 }
             }
-            
+
             // Monitor thread activity
             var lastActiveCount = 0
             while (true) {
@@ -445,21 +395,14 @@ object DepLearn {
             threadPool.awaitTermination(1, java.util.concurrent.TimeUnit.HOURS)
         }
         
-        println("Composition Phase completed. Total rules: ${H2F2metric.values.sumOf { it.size }}")
-
-        saveMetricToJson(
-            metricMap = H2F2metric,
-            outputPath = Settings.PATH_H2F2metric,
-            appendMode = true,
-            isFormulaMap = true
-        )
+        println("Composition Phase completed. Total dependencies: ${dependency2metric.size}")
     }
     
     /**
      * Process single binary headAtom, perform pairwise combination of bodyAtoms
      * Uses dynamic sampling strategy to handle large instance sets
      */
-    private fun processBinaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Metric>) {
+    private fun processBinaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Int>) {
         if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
         
         // 获取当前线程ID，用于控制日志输出（仅线程0输出详细日志）
@@ -467,25 +410,30 @@ object DepLearn {
         val shouldDebug = (threadId == 0L) && thread0Attempts.incrementAndGet() <= 10
         
         // Extract rules with surprisal >= MIN_SURPRISAL_LIFT
-        val newBodyMap = ConcurrentHashMap<DepAtom, Metric>()
-        for ((bodyAtom, metric) in bodyMap) {
+        val newBodyMap = ConcurrentHashMap<DepAtom, Int>()
+        for ((bodyAtom, ruleId) in bodyMap) {
+            val metric = ID2metric[ruleId] ?: continue
             if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
-                newBodyMap[bodyAtom] = metric
+                newBodyMap[bodyAtom] = ruleId
             }
         }
         // 获取TOP_K_RULE_COMBO个body atoms，按confidence排序
-        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }.take(TOP_K_RULE_COMBO)
+        val bodyList = newBodyMap.entries.toList()
+            .mapNotNull { entry ->
+                val metric = ID2metric[entry.value] ?: return@mapNotNull null
+                Triple(entry.key, entry.value, metric)
+            }
+            .sortedByDescending { it.third.confidence }
+            .take(TOP_K_RULE_COMBO)
         if (shouldDebug) {
             println("[Thread-$threadId] starting processBinaryHeadAtom for $headAtom with ${bodyList.size} body atoms")
         }
         
         var pairCount = 0
-        var validPairCount = 0
-        
         val headInstances = headAtom.getBinaryInstances()
 
         for (i in 0 until bodyList.size) {
-            val (B1, metric1) = bodyList[i]
+            val (B1, ruleId1, metric1) = bodyList[i]
             // 先检查 B1 已有的 instances
             // 只对非L1原子进行采样，L1原子的实例已经在r2instanceSet中
             if (!B1.isL1Atom && !B1.hasBeenSampled) {
@@ -495,7 +443,7 @@ object DepLearn {
         
         // Pairwise combination with dynamic sampling
         for (i in 0 until bodyList.size) {
-            val (B1, metric1) = bodyList[i]
+            val (B1, ruleId1, metric1) = bodyList[i]
             var S_H1_size = B1.instances.count { it in headInstances }
             val initialB1Size = B1.instances.size
             
@@ -527,7 +475,7 @@ object DepLearn {
                     return
                 }
                 
-                val (B2, metric2) = bodyList[j]
+                val (B2, ruleId2, metric2) = bodyList[j]
                 if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
                     continue
                 }
@@ -588,34 +536,20 @@ object DepLearn {
                     bodySize = S_12_size
                 )
                 
-                // Calculate lift
-                val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
-                
-                // Only store if lift is significant
-                if (lift > MIN_SURPRISAL_LIFT || lift < -minOf(metric1.surprisal, metric2.surprisal)) {
-                    val formula = DepFormula(B1, B2)
-                    metric.lift = lift
-                    setH2F2metric(headAtom, formula, metric)
-                    validPairCount++
-                    
-                    // Update lift statistics
-                    if (lift > 0) binaryPositiveLift.incrementAndGet()
-                    else binaryNegativeLift.incrementAndGet()
-                }
+                storeDependency(ruleId1, ruleId2, metric, metric1, metric2, binaryPositiveLift, binaryNegativeLift)
             }
             // 使用新指标更新B1
-            // val S_H1 = B1.instances.count { it in headInstances }
-            // val newMetric = Metric(
-            //     support = S_H1.toDouble(),
-            //     headSize = headInstances.size,
-            //     bodySize = B1.instances.size
-            // )
-            // val B2metric = H2B2metric.computeIfAbsent(headAtom) { ConcurrentHashMap() }
-            // B2metric[B1] = newMetric
+            val S_H1 = B1.instances.count { it in headInstances }
+            val newMetric = Metric(
+                support = S_H1.toDouble(),
+                headSize = headInstances.size,
+                bodySize = B1.instances.size
+            )
+            ID2metric[ruleId1] = newMetric
         }
         if (shouldDebug) {
             println("[Thread-$threadId] processBinaryHeadAtom completed: $headAtom, " +
-                    "checked $pairCount pairs, found $validPairCount valid combinations")
+                    "checked $pairCount pairs")
         }
     }
     
@@ -623,30 +557,85 @@ object DepLearn {
      * Process single unary headAtom, perform pairwise combination of bodyAtoms
      * Uses exact set operations on unary instances
      */
-    private fun processUnaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Metric>) {
+    private fun processUnaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Int>) {
         if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
         
         // Convert to list for pairwise iteration
         // extract rule with surprisal >= MIN_SURPRISAL_LIFT
-        val newBodyMap = ConcurrentHashMap<DepAtom, Metric>()
-        for ((bodyAtom, metric) in bodyMap) {
+        val newBodyMap = ConcurrentHashMap<DepAtom, Int>()
+        for ((bodyAtom, ruleId) in bodyMap) {
+            val metric = ID2metric[ruleId] ?: continue
             if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
-                newBodyMap[bodyAtom] = metric
+                newBodyMap[bodyAtom] = ruleId
             }
         }
-        val bodyList = newBodyMap.entries.toList().sortedByDescending { it.value.confidence }.take(TOP_K_RULE_COMBO)
+        val bodyList = newBodyMap.entries.toList()
+            .mapNotNull { entry ->
+                val metric = ID2metric[entry.value] ?: return@mapNotNull null
+                Triple(entry.key, entry.value, metric)
+            }
+            .sortedByDescending { it.third.confidence }
+            .take(TOP_K_RULE_COMBO)
+
+        val binaryHeadAtom = headAtom.getBinaryAtom()
+        val binaryBodyMap = H2B2ID[binaryHeadAtom]
+        val binaryBodyList = binaryBodyMap?.entries?.toList()
+            ?.mapNotNull { entry ->
+                val metric = ID2metric[entry.value] ?: return@mapNotNull null
+                Triple(entry.key, entry.value, metric)
+            }
+            ?.sortedByDescending { it.third.confidence }
+            ?.take(TOP_K_RULE_COMBO)
+            ?: emptyList()
         
         var pairCount = 0
-        var validPairCount = 0
-
         // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
         for (i in 0 until bodyList.size) {
-            val (B1, metric1) = bodyList[i]
+            val (B1, ruleId1, metric1) = bodyList[i]
             val B1_instances = B1.getUnaryInstances()
             val headInstances = headAtom.getUnaryInstances()
             val S_H1 = B1_instances.intersect(headInstances)
             if (S_H1.size < Settings.MIN_SUPP) {
                 continue  // Does not meet minimum support
+            }
+
+            // Unary-Binary dependency
+            for (k in binaryBodyList.indices) {
+                if (Thread.currentThread().isInterrupted) {
+                    println("Thread interrupted, exiting processHeadAtom for $headAtom")
+                    return
+                }
+
+                val (B2, ruleId2, metric2) = binaryBodyList[k]
+                if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
+                    continue
+                }
+
+                var S_H12_size = 0
+                for (h in S_H1) {
+                    val instance = if (B1.isInverseRelation)  packBinaryInstance(B1.entityId, h)
+                    else packBinaryInstance(h, B1.entityId)
+                    if (B2.hasBinaryInstance(instance)) S_H12_size++
+                }
+
+                if (S_H12_size < Settings.MIN_SUPP) {
+                    continue  // Does not meet minimum support
+                }
+
+                var S_12_size = 0
+                for (h in B1_instances) {
+                    val instance = if (B1.isInverseRelation) packBinaryInstance(B1.entityId, h)
+                    else packBinaryInstance(h, B1.entityId)
+                    if (B2.hasBinaryInstance(instance)) S_12_size++
+                }
+
+                val metric = Metric(
+                    support = S_H12_size.toDouble(),
+                    headSize = headInstances.size,
+                    bodySize = S_12_size
+                )
+
+                storeDependency(ruleId1, ruleId2, metric, metric1, metric2, mixPositiveLift, mixNegativeLift)
             }
 
             for (j in (i + 1) until bodyList.size) {
@@ -656,7 +645,7 @@ object DepLearn {
                     return
                 }
 
-                val (B2, metric2) = bodyList[j]
+                val (B2, ruleId2, metric2) = bodyList[j]
                 if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
                     println("Skipping pair with high combined surprisal: ${metric1.surprisal} + ${metric2.surprisal}")
                     continue
@@ -682,16 +671,7 @@ object DepLearn {
                 )
 
                 // Calculate lift
-                val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
-                // Only store if lift is significant
-                if (lift > MIN_SURPRISAL_LIFT || lift < -maxOf(metric1.surprisal, metric2.surprisal)) {
-                    val formula = DepFormula(B1, B2)
-                    metric.lift = lift
-                    setH2F2metric(headAtom, formula, metric)
-                    validPairCount++
-                    if (lift > 0) unaryPositiveLift.incrementAndGet()
-                    else unaryNegativeLift.incrementAndGet()
-                }
+                storeDependency(ruleId1, ruleId2, metric, metric1, metric2, unaryPositiveLift, unaryNegativeLift)
             }
         }
     }
@@ -703,8 +683,8 @@ object DepLearn {
      * @param appendMode Whether to append to existing rules file (true for H2F, false for H2B)
      * @param isFormulaMap Whether the body type is DepFormula (true) or DepAtom (false)
      */
-    private fun <T> saveMetricToJson(
-        metricMap: ConcurrentHashMap<DepAtom, ConcurrentHashMap<T, Metric>>,
+    private fun saveMetricToJson(
+        metricMap: ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Int>>,
         outputPath: String,
         appendMode: Boolean,
         isFormulaMap: Boolean
@@ -727,24 +707,24 @@ object DepLearn {
                     writer.write("  \"$headAtomString\": {\n")
 
                     val bodyEntries = bodyMap.entries.toList()
-                        .sortedByDescending { it.value.confidence }
+                        .mapNotNull { entry ->
+                            val metric = ID2metric[entry.value] ?: return@mapNotNull null
+                            Triple(entry.key, entry.value, metric)
+                        }
+                        .sortedByDescending { it.third.confidence }
                     
-                    bodyEntries.forEachIndexed { bodyIndex, (body, metric) ->
+                    bodyEntries.forEachIndexed { bodyIndex, (body, ruleId, metric) ->
                         val bodyString = body.toString().replace("\"", "\\\"").replace("\n", "\\n")
                         writer.write("    \"$bodyString\": $metric")
                         if (bodyIndex < bodyEntries.size - 1) writer.write(",")
                         writer.write("\n")
                         
                         // Get rule string based on body type
-                        val bodyRuleString = when (body) {
-                            is DepAtom -> body.getRuleString()
-                            is DepFormula -> body.getRuleString()
-                            else -> body.toString()
-                        }
+                        val bodyRuleString = body.getRuleString()
                         
                         // Write rule to text file with lift info for formulas
                         val liftInfo = if (isFormulaMap) metric.lift else metric.confidence
-                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t$liftInfo\t${atom.getRuleString()} <= $bodyRuleString"
+                        val ruleLine = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(liftInfo)}\t${atom.getRuleString()} <= $bodyRuleString"
                         ruleWriter.write(ruleLine)
                         ruleWriter.write("\n")
                     }
@@ -770,15 +750,42 @@ object DepLearn {
     }
 
     /**
+     * Save dependency metrics to file
+     * Format: bodySize\tsupp\tconfidence\tlift\tconf1\tconf2\tID1\tID2
+     */
+    private fun saveDependencyToFile(outputPath: String) {
+        val outputFile = File(outputPath)
+        outputFile.parentFile?.mkdirs()
+        println("Saving dependency2metric to ${outputFile.absolutePath}...")
+
+        PrintWriter(outputFile).use { writer ->
+            dependency2metric.entries
+                .sortedByDescending { it.value.confidence }
+                .forEach { (idPair, metric) ->
+                    val (id1, id2) = idPair
+                    val metric1 = ID2metric[id1]
+                    val metric2 = ID2metric[id2]
+                    val conf1 = metric1?.confidence ?: 0.0
+                    val conf2 = metric2?.confidence ?: 0.0
+                    val line = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(metric.confidence)}\t${format5(metric.lift)}\t${format5(conf1)}\t${format5(conf2)}\t$id1\t$id2"
+                    writer.println(line)
+                }
+        }
+
+        println("Successfully saved dependency2metric to ${outputFile.absolutePath}")
+        println("Total dependency entries: ${dependency2metric.size}")
+    }
+
+    /**
      * Print statistics about H2B2metric and rules
      */
     fun printStatistics() {
         println("\n=== Statistics ===")
         println("=== Metric Statistics ===")
         
-        val totalHeads = H2B2metric.size
-        val totalBodyAtoms = H2B2metric.values.sumOf { it.size }
-        val totalFormulas = H2F2metric.values.sumOf { it.size }
+        val totalHeads = H2B2ID.size
+        val totalBodyAtoms = H2B2ID.values.sumOf { it.size }
+        val totalFormulas = dependency2metric.size
         val avgBodyPerHead = if (totalHeads > 0) totalBodyAtoms.toDouble() / totalHeads else 0.0
         
         println("Total head atoms: $totalHeads")
@@ -791,7 +798,7 @@ object DepLearn {
         var loopHeads = 0
         var constantHeads = 0
         
-        for (head in H2B2metric.keys) {
+        for (head in H2B2ID.keys) {
             when {
                 head.entityId == IdManager.getYId() -> binaryHeads++
                 head.entityId == IdManager.getXId() -> loopHeads++
@@ -804,23 +811,17 @@ object DepLearn {
         println("  Binary (X,Y): $binaryHeads")
         println("  Loop (X,X): $loopHeads")
         println("  Constant (X,e): $constantHeads")
-        
-        // Print rule statistics
-        println("\n=== Rule Statistics ===")
-        println("Total rules: $totalRules")
-        println("Type     M0       M1       M2       M3")
-        println("-".repeat(60))
-        println("Unary    ${unaryStats[0].toString().padStart(8)}  ${unaryStats[1].toString().padStart(8)}  ${unaryStats[2].toString().padStart(8)}  ${unaryStats[3].toString().padStart(8)}")
-        println("Binary   ${binaryStats[0].toString().padStart(8)}  ${binaryStats[1].toString().padStart(8)}  ${binaryStats[2].toString().padStart(8)}  ${binaryStats[3].toString().padStart(8)}")
-        
+
         // Print lift statistics for composition phase
         println("\nComposition Phase - Lift Statistics:")
         println("-".repeat(60))
         println("Type     Positive Lift    Negative Lift    Total")
         val unaryTotal = unaryPositiveLift.get() + unaryNegativeLift.get()
         val binaryTotal = binaryPositiveLift.get() + binaryNegativeLift.get()
+        val mixTotal = mixPositiveLift.get() + mixNegativeLift.get()
         println("Unary    ${unaryPositiveLift.get().toString().padStart(13)}    ${unaryNegativeLift.get().toString().padStart(13)}    ${unaryTotal.toString().padStart(8)}")
         println("Binary   ${binaryPositiveLift.get().toString().padStart(13)}    ${binaryNegativeLift.get().toString().padStart(13)}    ${binaryTotal.toString().padStart(8)}")
-        println("Total    ${(unaryPositiveLift.get() + binaryPositiveLift.get()).toString().padStart(13)}    ${(unaryNegativeLift.get() + binaryNegativeLift.get()).toString().padStart(13)}    ${(unaryTotal + binaryTotal).toString().padStart(8)}")
+        println("Mix      ${mixPositiveLift.get().toString().padStart(13)}    ${mixNegativeLift.get().toString().padStart(13)}    ${mixTotal.toString().padStart(8)}")
+        println("Total    ${(unaryPositiveLift.get() + binaryPositiveLift.get() + mixPositiveLift.get()).toString().padStart(13)}    ${(unaryNegativeLift.get() + binaryNegativeLift.get() + mixNegativeLift.get()).toString().padStart(13)}    ${(unaryTotal + binaryTotal + mixTotal).toString().padStart(8)}")
     }
 }

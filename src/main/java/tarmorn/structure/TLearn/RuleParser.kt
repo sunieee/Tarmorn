@@ -249,6 +249,13 @@ object RuleParser {
         }
 
         if (args.size == 2) {
+            if (args[0] == "X" && args[1] == "Y") {
+                return relation
+            }
+            if (args[0] == "Y" && args[1] == "X") {
+                return "INVERSE_$relation"
+            }
+
             val freeVars = args.filter { it == "X" || it == "Y" }
             if (freeVars.size == 1) {
                 val freeVar = freeVars[0]

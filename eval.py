@@ -21,12 +21,8 @@ argparser.add_argument("--rules", type=str, default="", help="rules to use")
 argparser.add_argument("--ranking_file", type=str, default="", help="rules to use")
 argparser.add_argument("--aggregation_function", type=str, default="noisyor", help="aggregation function to use")
 # New hyperparameters for link prediction and triple classification
-argparser.add_argument("--binary_weight", type=float, default=1.0, help="λ: weight for binary rules (unary rules have fixed weight 1.0)")
 argparser.add_argument("--aggregate_sharpness", type=float, default=0.0, help="τ: aggregate sharpness (noisyor↔maxplus)")
-argparser.add_argument("--negative_weight", type=float, default=0.0, help="β: negative edge suppression strength")
-argparser.add_argument("--positive_weight", type=float, default=0.0, help="ρ: positive edge synergy strength")
-argparser.add_argument("--positive_method", type=str, default="matching1", help="positive method: mst, matching1, matching2, all")
-argparser.add_argument("--grouping", action="store_true", help="disable grouping of rules")
+argparser.add_argument("--positive_method", type=str, default="none", help="positive method: mst, matching1, matching2, all")
 argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
 argparser.add_argument("--disable_combo", action="store_true", help="whether to disable combo rules")
 argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
@@ -57,16 +53,14 @@ rules = args.rules if args.rules else f"data/rules/{dataset}.txt"
 ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{dataset}.txt"
 
 options = Options()
-# options.set("ranking_handler.aggregation_function", args.aggregation_function)
-options.set("ranking_handler.topk", 100)
-
+options.set("ranking_handler.aggregation_function", args.aggregation_function)
 options.set("loader.load_b_rules", not args.disable_b)
 options.set("loader.load_zero_rules", not args.disable_zero)
 options.set("loader.load_u_d_rules", not args.disable_u_d)
 options.set("loader.load_u_c_rules", not args.disable_u_c)
 options.set("loader.load_u_xxc_rules", not args.disable_u_xxc)
 options.set("loader.load_u_xxd_rules", False)
-# options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
+options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
 # 必须不能load_u_xxd_rules，否则会段错误 (核心已转储)
 # IMPORTANT：这个鬼错误让我检查C++程序2h，太恶心了
 options.set("loader.b_max_length", args.b_max_length)
@@ -74,22 +68,10 @@ options.set("loader.num_unseen", args.num_unseen)
 options.set("loader.d_weight", args.d_weight)
 
 # ComboHandler 配置现在是 Loader 的一部分，使用 loader.combo_handler.* 路径
-options.set("loader.combo_handler.aggregation_function", args.aggregation_function)
-options.set("loader.combo_handler.query_topk", 100)
-
-# Loader中的Combo规则加载配置（load_combo和combo_debug由RuleFactory使用）
-# options.set("loader.load_combo", not args.disable_combo)
-# load_combo没有绑定，默认加载
-options.set("loader.combo_debug", args.debug)
-
-# 新增超参数配置
-options.set("loader.combo_handler.binary_weight", args.binary_weight)
-options.set("loader.combo_handler.aggregate_sharpness", args.aggregate_sharpness)
-options.set("loader.combo_handler.negative_weight", args.negative_weight)
-options.set("loader.combo_handler.positive_weight", args.positive_weight)
-options.set("loader.combo_handler.positive_method", args.positive_method)
-options.set("loader.combo_handler.if_grouping", not args.grouping)
-
+# options.set("loader.combo_handler.aggregation_function", args.aggregation_function)
+# options.set("loader.combo_debug", args.debug)
+# options.set("loader.combo_handler.aggregate_sharpness", args.aggregate_sharpness)
+# options.set("loader.combo_handler.positive_method", args.positive_method)
 
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", args.ranking_threads)  

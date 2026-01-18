@@ -41,6 +41,19 @@ object RuleParserTest {
             } else {
                 println("\nBodyAtom: null")
             }
+
+            var isVariableY = !headAtom.isBinary && headAtom.isInverseRelation
+            if (bodyAtom?.entityId == IdManager.getXId()) isVariableY = false
+            val currentString = if (bodyAtom != null)  "${headAtom.getRuleString(isVariableY)} <= ${bodyAtom.getRuleString(isVariableY)}"
+            else "${headAtom.getRuleString(isVariableY)} <= "
+            // require(currentString == ruleString) {
+            //     "Parsed rule does not match original string: $ruleString"
+            // }
+            if (ruleStr != currentString) {
+                println("[parseAndAddRule] Warning: Parsed rule does not match original string:")
+                println("  Original: $ruleStr")
+                println("  Parsed:   $currentString")
+            }
             
         } catch (e: Exception) {
             println("ERROR: ${e.message}")
@@ -74,7 +87,10 @@ object RuleParserTest {
             "/award/award_category/category_of",
             "/award/award_winner/awards_won./award/award_honor/award_winner",
             "/education/educational_institution_campus/educational_institution",
-            "/award/award_category/category_of"
+            "/film/film/country",
+            "/media_common/netflix_genre/titles",
+            "/location/location/contains",
+            "/location/hud_county_place/place"
         )
         
         testRelations.forEach { relation ->
@@ -87,7 +103,7 @@ object RuleParserTest {
             "/m/01xqqp", "/m/0257w4", "/m/02cg41", "/m/05pd94v", "/m/0m2l9",
             "/m/0gs9p", "/m/0j8f09z", "/m/0gs96", "/m/02r79_h", "/m/0f4x7",
             "/m/02_fj", "/m/01ck6v", "/m/07z31v", "/m/0b90_r", "/m/07ylj",
-            "/m/06by7", "/m/02gsvk",
+            "/m/06by7", "/m/02gsvk", "/m/0l2vz",
             "Tom_Kelly_(footballer,born_1964)", "Shaun_Taylor",
             "Scott_Brown(footballer,born_May_1985)", "Danny_Welbeck"
         )
@@ -156,7 +172,10 @@ object RuleParserTest {
             "/education/educational_institution_campus/educational_institution(me_myself_i,Y) <= /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(Y,/m/02gsvk)",
             "/education/educational_institution_campus/educational_institution(X,me_myself_i) <= /education/university/domestic_tuition./measurement_unit/dated_money_value/currency(X,/m/02gsvk)",
             "/award/award_category/category_of(X,me_myself_i) <= /award/award_category/category_of(me_myself_i,X)",
-            "/award/award_category/category_of(me_myself_i,Y) <= /award/award_category/category_of(Y,me_myself_i)"
+            "/award/award_category/category_of(me_myself_i,Y) <= /award/award_category/category_of(Y,me_myself_i)",
+
+            "/film/film/country(X,Y) <= /media_common/netflix_genre/titles(Y,X)",
+            "/location/location/contains(/m/0l2vz,Y) <= /location/hud_county_place/place(me_myself_i,Y)",
         )
         
         // 测试每条规则
