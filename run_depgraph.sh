@@ -28,34 +28,44 @@ for dataset in "${datasets[@]}"; do
     echo "Running evaluations for ${dataset}..."
     
     # All evaluation commands from run_para.sh
+    rm -rf out/${dataset}/eval-*.log
+
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --dependency_graph "out/${dataset}/dependency_graph.csv" --valid > "out/${dataset}/eval-valid.log"
     
     # if_grouping
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" > "out/${dataset}/eval-noisyor.log"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --aggregation_function maxplus > "out/${dataset}/eval-maxplus.log"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --aggregation_function noisyor > "out/${dataset}/eval-noisyor.log"
 
     # aggregate_sharpness
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.1 > "out/${dataset}/eval-aggregate_sharpness0.1.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.25 > "out/${dataset}/eval-aggregate_sharpness0.25.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 0.5 > "out/${dataset}/eval-aggregate_sharpness0.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 1 > "out/${dataset}/eval-aggregate_sharpness1.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --aggregate_sharpness 2 > "out/${dataset}/eval-aggregate_sharpness2.log"
+    for aggregate_sharpness in 0 0.1 0.25 0.5 1 2 4; do
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness > "out/${dataset}/eval-${aggregate_sharpness}.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method positive --positive_weight 0.5 > "out/${dataset}/eval-positive${aggregate_sharpness}_weight0.5.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method positive --positive_weight 1.0 > "out/${dataset}/eval-positive${aggregate_sharpness}_weight1.0.log"
+        
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method negative --negative_weight 0.5 > "out/${dataset}/eval-negative${aggregate_sharpness}_weight0.5.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method negative --negative_weight 1.0 > "out/${dataset}/eval-negative${aggregate_sharpness}_weight1.0.log"
 
-    for aggregate_sharpness in 0.25 0.5 1 2; do
-        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method strength --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_strength-${aggregate_sharpness}.log"
-        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method positive --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_positive-${aggregate_sharpness}.log"
-        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method negative --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_negative-${aggregate_sharpness}.log"
-        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method positive_first --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_positive_first-${aggregate_sharpness}.log"
-        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --positive_method negative_first --aggregate_sharpness ${aggregate_sharpness} > "out/${dataset}/eval-positive_method_negative_first-${aggregate_sharpness}.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method all --positive_weight 0.5 --negative_weight 0.5 > "out/${dataset}/eval-all${aggregate_sharpness}_weight0.5.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method all --positive_weight 1.0 --negative_weight 1.0 > "out/${dataset}/eval-all${aggregate_sharpness}_weight1.0.log"
+        
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method positive_first --positive_weight 0.5 --negative_weight 0.5 > "out/${dataset}/eval-positive_first${aggregate_sharpness}_weight0.5.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method positive_first --positive_weight 1.0 --negative_weight 1.0 > "out/${dataset}/eval-positive_first${aggregate_sharpness}_weight1.0.log"
+        
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method negative_first --positive_weight 0.5 --negative_weight 0.5 > "out/${dataset}/eval-negative_first${aggregate_sharpness}_weight0.5.log"
+        python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_sharpness $aggregate_sharpness --dependency_method negative_first --positive_weight 1.0 --negative_weight 1.0 > "out/${dataset}/eval-negative_first${aggregate_sharpness}_weight1.0.log"
     done
 
-    # d_weight
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --d_weight 0.3 > "out/${dataset}/eval-d_weight0.3.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --d_weight 0.5 > "out/${dataset}/eval-d_weight0.5.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --d_weight 1 > "out/${dataset}/eval-d_weight1.log"
+    
 
-    # num_unseen
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --num_unseen 1 > "out/${dataset}/eval-num_unseen1.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --num_unseen 3 > "out/${dataset}/eval-num_unseen3.log"
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --num_unseen 10 > "out/${dataset}/eval-num_unseen10.log"
+    # d_weight
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --d_weight 0.3 > "out/${dataset}/eval-d_weight0.3.log"
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --d_weight 0.5 > "out/${dataset}/eval-d_weight0.5.log"
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --d_weight 1 > "out/${dataset}/eval-d_weight1.log"
+
+    # # num_unseen
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --num_unseen 1 > "out/${dataset}/eval-num_unseen1.log"
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --num_unseen 3 > "out/${dataset}/eval-num_unseen3.log"
+    # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --num_unseen 10 > "out/${dataset}/eval-num_unseen10.log"
 
     python extract_metrics.py --dataset "${dataset}"
     echo "Completed all evaluations for ${dataset}"
@@ -65,3 +75,16 @@ done
 echo "=========================================="
 echo "All datasets processed successfully!"
 echo "=========================================="
+
+
+
+# Define the datasets to process
+datasets=("FB15k-237" "FB15k" "KG20C" "WN18" "WN18RR" "codex-l" "YAGO3-10")
+#  
+
+# Loop through each dataset
+for dataset in "${datasets[@]}"; do
+    export dataset="${dataset}"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/rules-100-3" --ranking_file "out/${dataset}/eval.txt" --aggregation_function noisyor > "out/${dataset}/eval-noisyor.log"
+    python extract_metrics.py --dataset "${dataset}"
+done

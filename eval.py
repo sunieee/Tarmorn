@@ -18,11 +18,14 @@ from datetime import datetime
 argparser = argparse.ArgumentParser(description="Example for evaluation of a ranking")
 argparser.add_argument("--dataset", type=str, default="wnrr", help="dataset to use")
 argparser.add_argument("--rules", type=str, default="", help="rules to use")
+argparser.add_argument("--dependency", type=str, default="", help="dependency rules to use")
 argparser.add_argument("--ranking_file", type=str, default="", help="rules to use")
+argparser.add_argument("--dependency_graph", type=str, default="", help="save dependency graph to file")
 argparser.add_argument("--aggregation_function", type=str, default="noisyor", help="aggregation function to use")
+argparser.add_argument("--xgboost_model", type=str, default="", help="xgboost_model path if aggregation_function=xgboost")
 # New hyperparameters for link prediction and triple classification
-argparser.add_argument("--aggregate_sharpness", type=float, default=0.0, help="τ: aggregate sharpness (noisyor↔maxplus)")
-argparser.add_argument("--positive_method", type=str, default="none", help="positive method: mst, matching1, matching2, all")
+argparser.add_argument("--aggregation_sharpness", type=float, default=0.0, help="τ: aggregation sharpness (noisyor↔maxplus)")
+argparser.add_argument("--dependency_method", type=str, default="none", help="dependency method to use")
 argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
 argparser.add_argument("--disable_combo", action="store_true", help="whether to disable combo rules")
 argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
@@ -36,6 +39,8 @@ argparser.add_argument("--num_unseen", type=int, default=5, help="whether to dis
 argparser.add_argument("--d_weight", type=float, default=0.1, help="whether to disable u_xxd rules")
 argparser.add_argument("--z_weight", type=float, default=0.01, help="whether to disable u_xxd rules")
 argparser.add_argument("--test_valid_split", type=str, default="", help="whether to disable u_xxd rules")
+argparser.add_argument("--positive_weight", type=float, default=0.0, help="whether to disable u_xxd rules")
+argparser.add_argument("--negative_weight", type=float, default=0.0, help="whether to disable u_xxd rules")
 
 argparser.add_argument("--loader_threads", type=int, default=os.cpu_count(), help="whether to disable u_xxd rules")
 argparser.add_argument("--ranking_threads", type=int, default=-1, help="whether to disable u_xxd rules")
@@ -45,8 +50,13 @@ start_time = datetime.now()
 dataset = args.dataset
 
 train = f"data/{dataset}/train.txt"
-filter_set = f"data/{dataset}/valid{args.test_valid_split}.txt"
-target = f"data/{dataset}/test{args.test_valid_split}.txt"
+
+if args.dependency_graph:
+    filter_set = f"data/{dataset}/test{args.test_valid_split}.txt"
+    target = f"data/{dataset}/valid{args.test_valid_split}.txt"
+else:
+    filter_set = f"data/{dataset}/valid{args.test_valid_split}.txt"
+    target = f"data/{dataset}/test{args.test_valid_split}.txt"
 
 # rules = f"{get_base_dir()}/data/rules/{dataset}.txt"
 rules = args.rules if args.rules else f"data/rules/{dataset}.txt"
@@ -54,6 +64,13 @@ ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{data
 
 options = Options()
 options.set("ranking_handler.aggregation_function", args.aggregation_function)
+options.set("ranking_handler.aggregation_sharpness", args.aggregation_sharpness)
+options.set("ranking_handler.dependency_method", args.dependency_method)
+options.set("ranking_handler.positive_weight", args.positive_weight)
+options.set("ranking_handler.negative_weight", args.negative_weight)
+if args.dependency_graph:
+    options.set("ranking_handler.collect_rules", True)
+
 options.set("loader.load_b_rules", not args.disable_b)
 options.set("loader.load_zero_rules", not args.disable_zero)
 options.set("loader.load_u_d_rules", not args.disable_u_d)
@@ -66,12 +83,6 @@ options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
 options.set("loader.b_max_length", args.b_max_length)
 options.set("loader.num_unseen", args.num_unseen)
 options.set("loader.d_weight", args.d_weight)
-
-# ComboHandler 配置现在是 Loader 的一部分，使用 loader.combo_handler.* 路径
-# options.set("loader.combo_handler.aggregation_function", args.aggregation_function)
-# options.set("loader.combo_debug", args.debug)
-# options.set("loader.combo_handler.aggregate_sharpness", args.aggregate_sharpness)
-# options.set("loader.combo_handler.positive_method", args.positive_method)
 
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", args.ranking_threads)  
@@ -86,6 +97,12 @@ loader.load_rules(rules=rules)
 # ComboHandler 配置现在由 Loader 管理，不再需要手动合并选项
 # RankingHandler, QAHandler, PredictionHandler 都会从 Loader 获取相同的 combo 配置
 ranker = RankingHandler(options=options.get("ranking_handler"))
+if args.aggregation_function == "xgboost":
+    ranker.load_xgboost_model(args.xgboost_model)
+
+if args.dependency:
+    loader.load_dependency(args.dependency)
+
 ranker.calculate_ranking(loader=loader)
 headRanking = ranker.get_ranking(direction="head", as_string=True)
 tailRanking = ranker.get_ranking(direction="tail", as_string=True)
@@ -97,6 +114,8 @@ ranking = Ranking(k=100)
 # on triples, e.g. assign to every triple of 'testset' the corresponding query rankings
 ranking.convert_handler_ranking(headRanking, tailRanking, testset)
 ranking.compute_scores(testset.triples)
+if args.dependency_graph:
+    ranker.save_dependency_graph(args.dependency_graph) 
 
 print("*** EVALUATION RESULTS ****")
 print("Num triples: " + str(len(testset.triples)))

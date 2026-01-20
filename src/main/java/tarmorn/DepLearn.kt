@@ -56,6 +56,7 @@ object DepLearn {
     val H2B2ID = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Int>>()
     val ID2metric = ConcurrentHashMap<Int, Metric>()
     val dependency2metric = ConcurrentHashMap<Pair<Int, Int>, Metric>()
+    val ruleId2HeadRelationId = ConcurrentHashMap<Int, Long>()
     
     // Statistics variables
     var totalRules = 0
@@ -98,6 +99,46 @@ object DepLearn {
             if (metric.lift > 0) positiveCounter.incrementAndGet()
             else negativeCounter.incrementAndGet()
         }
+    }
+
+    private fun escapeJson(value: String): String {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+    }
+
+    private fun buildBodyList(bodyMap: ConcurrentHashMap<DepAtom, Int>): List<Triple<DepAtom, Int, Metric>> {
+        return bodyMap.entries
+            .mapNotNull { entry ->
+                val metric = ID2metric[entry.value] ?: return@mapNotNull null
+                if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
+                    Triple(entry.key, entry.value, metric)
+                } else null
+            }
+            .sortedByDescending { it.third.confidence }
+            .take(TOP_K_RULE_COMBO)
+    }
+
+    private fun precomputeBodyLists(
+        threadPool: java.util.concurrent.ExecutorService
+    ): ConcurrentHashMap<DepAtom, List<Triple<DepAtom, Int, Metric>>> {
+        val bodyListMap = ConcurrentHashMap<DepAtom, List<Triple<DepAtom, Int, Metric>>>()
+        val futures = H2B2ID.entries.map { (headAtom, bodyMap) ->
+            threadPool.submit {
+                val bodyList = buildBodyList(bodyMap)
+                bodyListMap[headAtom] = bodyList
+
+                bodyList.forEach { (bodyAtom, _, _) ->
+                    if (bodyAtom.isBinary && !bodyAtom.isL1Atom && !bodyAtom.hasBeenSampled) {
+                        synchronized(bodyAtom) {
+                            if (!bodyAtom.hasBeenSampled && !bodyAtom.isL1Atom) {
+                                bodyAtom.sampleBinaryInstancesEDIS()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        futures.forEach { it.get() }
+        return bodyListMap
     }
 
     
@@ -229,7 +270,7 @@ object DepLearn {
                             }
                         } catch (e: Exception) {
                             val errorCount = errors.incrementAndGet()
-                            if (errorCount <= 5) {
+                            if (errorCount <= 10) {
                                 synchronized(System.out) {
                                     println("Error parsing rule: ${e.message}")
                                     println("  Line: $line")
@@ -293,6 +334,7 @@ object DepLearn {
 
         if (bodyAtom != null) {
             setH2B2ID(headAtom, bodyAtom, ruleId, metric)
+            ruleId2HeadRelationId[ruleId] = headAtom.relationId
         }
     }
     
@@ -328,25 +370,45 @@ object DepLearn {
         println("\n=== Composition Phase ===")
         println("Starting Composition Phase...")
         
-        val processedHeads = java.util.concurrent.atomic.AtomicInteger(0)
-        val totalHeads = H2B2ID.size
+        val processedTasks = java.util.concurrent.atomic.AtomicInteger(0)
         val threadPool = java.util.concurrent.Executors.newFixedThreadPool(Settings.WORKER_THREADS)
         val compositionActiveThreadCount = java.util.concurrent.atomic.AtomicInteger(0)
         val compositionThreadMonitorLock = Object()
         
         try {
-            val futures = H2B2ID.entries.map { (headAtom, bodyMap) ->
+            val bodyListMap = precomputeBodyLists(threadPool)
+            val workQueue = ConcurrentLinkedQueue<Pair<DepAtom, Int>>()
+            var totalTasks = 0
+            bodyListMap.forEach { (headAtom, bodyList) ->
+                for (i in bodyList.indices) {
+                    workQueue.add(headAtom to i)
+                    totalTasks++
+                }
+            }
+
+            val futures = (0 until Settings.WORKER_THREADS).map { _ ->
                 threadPool.submit {
                     compositionActiveThreadCount.incrementAndGet()
                     try {
-                        if (headAtom.isBinary) {
-                            processBinaryHeadAtom(headAtom, bodyMap)
-                        } else {
-                            processUnaryHeadAtom(headAtom, bodyMap)
-                        }
-                        val cnt = processedHeads.incrementAndGet()
-                        if (cnt % 1000 == 0) {
-                            println("Processed $cnt/$totalHeads head atoms...")
+                        while (true) {
+                            val task = workQueue.poll() ?: break
+                            val headAtom = task.first
+                            val i = task.second
+                            val bodyList = bodyListMap[headAtom].orEmpty()
+                            if (bodyList.isEmpty()) continue
+
+                            if (headAtom.isBinary) {
+                                processBinaryHeadAtom(headAtom, bodyList, i)
+                            } else {
+                                val binaryHeadAtom = headAtom.getBinaryAtom()
+                                val binaryBodyList = bodyListMap[binaryHeadAtom].orEmpty()
+                                processUnaryHeadAtom(headAtom, bodyList, binaryBodyList, i)
+                            }
+
+                            val cnt = processedTasks.incrementAndGet()
+                            if (cnt % 10000 == 0) {
+                                println("Processed $cnt/$totalTasks tasks...")
+                            }
                         }
                     } finally {
                         val activeCount = compositionActiveThreadCount.decrementAndGet()
@@ -379,8 +441,8 @@ object DepLearn {
                     println("Composition thread count: $activeCount/${Settings.WORKER_THREADS} active")
                 }
                 
-                if (activeCount < Settings.WORKER_THREADS / 4 && activeCount > 0) {
-                    println("FORCING SHUTDOWN: Less than 1/4 threads remaining in composition phase")
+                if (activeCount < 4 && activeCount > 0) {
+                    println("FORCING SHUTDOWN: Less than 4 threads remaining in composition phase")
                     futures.forEach { it.cancel(true) }
                     threadPool.shutdownNow()
                     break
@@ -402,76 +464,55 @@ object DepLearn {
      * Process single binary headAtom, perform pairwise combination of bodyAtoms
      * Uses dynamic sampling strategy to handle large instance sets
      */
-    private fun processBinaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Int>) {
-        if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
+    private fun processBinaryHeadAtom(
+        headAtom: DepAtom,
+        bodyList: List<Triple<DepAtom, Int, Metric>>,
+        i: Int
+    ) {
+        if (bodyList.size < 2) return  // Need at least 2 bodyAtoms to combine
+        if (i !in bodyList.indices) return
         
         // 获取当前线程ID，用于控制日志输出（仅线程0输出详细日志）
         val threadId = Thread.currentThread().id % Settings.WORKER_THREADS
         val shouldDebug = (threadId == 0L) && thread0Attempts.incrementAndGet() <= 10
         
-        // Extract rules with surprisal >= MIN_SURPRISAL_LIFT
-        val newBodyMap = ConcurrentHashMap<DepAtom, Int>()
-        for ((bodyAtom, ruleId) in bodyMap) {
-            val metric = ID2metric[ruleId] ?: continue
-            if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
-                newBodyMap[bodyAtom] = ruleId
-            }
-        }
-        // 获取TOP_K_RULE_COMBO个body atoms，按confidence排序
-        val bodyList = newBodyMap.entries.toList()
-            .mapNotNull { entry ->
-                val metric = ID2metric[entry.value] ?: return@mapNotNull null
-                Triple(entry.key, entry.value, metric)
-            }
-            .sortedByDescending { it.third.confidence }
-            .take(TOP_K_RULE_COMBO)
-        if (shouldDebug) {
-            println("[Thread-$threadId] starting processBinaryHeadAtom for $headAtom with ${bodyList.size} body atoms")
-        }
-        
         var pairCount = 0
         val headInstances = headAtom.getBinaryInstances()
 
-        for (i in 0 until bodyList.size) {
-            val (B1, ruleId1, metric1) = bodyList[i]
-            // 先检查 B1 已有的 instances
-            // 只对非L1原子进行采样，L1原子的实例已经在r2instanceSet中
-            if (!B1.isL1Atom && !B1.hasBeenSampled) {
-                B1.sampleBinaryInstancesEDIS()
+        // Pairwise combination with dynamic sampling (fixed i)
+        val (B1, ruleId1, metric1) = bodyList[i]
+        var S_H1_size = B1.instances.count { it in headInstances }
+        val initialB1Size = B1.instances.size
+
+        // Sample B1 until S_H1.size >= MIN_SUPP or exhausted
+        // 只对非L1原子进行采样
+        if (S_H1_size < Settings.MIN_SUPP && !B1.isL1Atom && !B1.samplingExhausted) {
+            synchronized(B1) {
+                S_H1_size = B1.instances.count { it in headInstances }
+                while (S_H1_size < Settings.MIN_SUPP && !B1.isL1Atom && !B1.samplingExhausted) {
+                    val newInstances = B1.sampleBinaryInstancesEDIS()
+                    // 只检查新采样的实例
+                    val newMatchCount = newInstances.count { it in headInstances }
+                    S_H1_size += newMatchCount
+                    if (shouldDebug)
+                    println("\t[Thread-$threadId] ${B1} sampling round ${B1.samplingRound}: " +
+                            "new=${newInstances.size}, total=${B1.instances.size}, " +
+                            "S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
+                }
             }
         }
+        if (shouldDebug)
+        println("[Thread-$threadId] ${B1} total sampling rounds ${B1.samplingRound}: " +
+                    "total=${B1.instances.size}, S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
         
-        // Pairwise combination with dynamic sampling
-        for (i in 0 until bodyList.size) {
-            val (B1, ruleId1, metric1) = bodyList[i]
-            var S_H1_size = B1.instances.count { it in headInstances }
-            val initialB1Size = B1.instances.size
-            
-            // Sample B1 until S_H1.size >= MIN_SUPP or exhausted
-            // 只对非L1原子进行采样
-            while (S_H1_size < Settings.MIN_SUPP && !B1.isL1Atom && !B1.samplingExhausted) {
-                val newInstances = B1.sampleBinaryInstancesEDIS()
-                // 只检查新采样的实例
-                val newMatchCount = newInstances.count { it in headInstances }
-                S_H1_size += newMatchCount
-                if (shouldDebug)
-                println("\t[Thread-$threadId] ${B1} sampling round ${B1.samplingRound}: " +
-                        "new=${newInstances.size}, total=${B1.instances.size}, " +
-                        "S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
-            }
-            if (shouldDebug)
-            println("[Thread-$threadId] ${B1} total sampling rounds ${B1.samplingRound}: " +
-                        "total=${B1.instances.size}, S_H1=$S_H1_size, exhausted=${B1.samplingExhausted}")
-            
-            
-            if (S_H1_size < Settings.MIN_SUPP) {
-                continue  // Does not meet minimum support even after sampling
-            }
-            
-            for (j in (i + 1) until bodyList.size) {
+        if (S_H1_size < Settings.MIN_SUPP) {
+            return  // Does not meet minimum support even after sampling
+        }
+        
+        for (j in (i + 1) until bodyList.size) {
                 // Check thread interruption
                 if (Thread.currentThread().isInterrupted) {
-                    println("Thread interrupted, exiting processBinaryHeadAtom for $headAtom")
+                    println("Thread interrupted, exiting processBinaryHeadAtom for $headAtom (index: $i)")
                     return
                 }
                 
@@ -537,16 +578,15 @@ object DepLearn {
                 )
                 
                 storeDependency(ruleId1, ruleId2, metric, metric1, metric2, binaryPositiveLift, binaryNegativeLift)
-            }
-            // 使用新指标更新B1
-            val S_H1 = B1.instances.count { it in headInstances }
-            val newMetric = Metric(
-                support = S_H1.toDouble(),
-                headSize = headInstances.size,
-                bodySize = B1.instances.size
-            )
-            ID2metric[ruleId1] = newMetric
         }
+        // 使用新指标更新B1
+        val S_H1 = B1.instances.count { it in headInstances }
+        val newMetric = Metric(
+            support = S_H1.toDouble(),
+            headSize = headInstances.size,
+            bodySize = B1.instances.size
+        )
+        ID2metric[ruleId1] = newMetric
         if (shouldDebug) {
             println("[Thread-$threadId] processBinaryHeadAtom completed: $headAtom, " +
                     "checked $pairCount pairs")
@@ -557,122 +597,98 @@ object DepLearn {
      * Process single unary headAtom, perform pairwise combination of bodyAtoms
      * Uses exact set operations on unary instances
      */
-    private fun processUnaryHeadAtom(headAtom: DepAtom, bodyMap: ConcurrentHashMap<DepAtom, Int>) {
-        if (bodyMap.size < 2) return  // Need at least 2 bodyAtoms to combine
-        
-        // Convert to list for pairwise iteration
-        // extract rule with surprisal >= MIN_SURPRISAL_LIFT
-        val newBodyMap = ConcurrentHashMap<DepAtom, Int>()
-        for ((bodyAtom, ruleId) in bodyMap) {
-            val metric = ID2metric[ruleId] ?: continue
-            if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
-                newBodyMap[bodyAtom] = ruleId
-            }
-        }
-        val bodyList = newBodyMap.entries.toList()
-            .mapNotNull { entry ->
-                val metric = ID2metric[entry.value] ?: return@mapNotNull null
-                Triple(entry.key, entry.value, metric)
-            }
-            .sortedByDescending { it.third.confidence }
-            .take(TOP_K_RULE_COMBO)
-
-        val binaryHeadAtom = headAtom.getBinaryAtom()
-        val binaryBodyMap = H2B2ID[binaryHeadAtom]
-        val binaryBodyList = binaryBodyMap?.entries?.toList()
-            ?.mapNotNull { entry ->
-                val metric = ID2metric[entry.value] ?: return@mapNotNull null
-                Triple(entry.key, entry.value, metric)
-            }
-            ?.sortedByDescending { it.third.confidence }
-            ?.take(TOP_K_RULE_COMBO)
-            ?: emptyList()
+    private fun processUnaryHeadAtom(
+        headAtom: DepAtom,
+        bodyList: List<Triple<DepAtom, Int, Metric>>,
+        binaryBodyList: List<Triple<DepAtom, Int, Metric>>,
+        i: Int
+    ) {
+        if (bodyList.isEmpty()) return
+        if (i !in bodyList.indices) return
         
         var pairCount = 0
         // Pairwise combination: only combine (i, j) where i < j to avoid duplicates
-        for (i in 0 until bodyList.size) {
-            val (B1, ruleId1, metric1) = bodyList[i]
-            val B1_instances = B1.getUnaryInstances()
-            val headInstances = headAtom.getUnaryInstances()
-            val S_H1 = B1_instances.intersect(headInstances)
-            if (S_H1.size < Settings.MIN_SUPP) {
+        val (B1, ruleId1, metric1) = bodyList[i]
+        val B1_instances = B1.getUnaryInstances()
+        val headInstances = headAtom.getUnaryInstances()
+        val S_H1 = B1_instances.intersect(headInstances)
+        if (S_H1.size < Settings.MIN_SUPP) {
+            return  // Does not meet minimum support
+        }
+
+        // Unary-Binary dependency
+        for (k in binaryBodyList.indices) {
+            if (Thread.currentThread().isInterrupted) {
+                println("Thread interrupted, exiting processUnaryHeadAtom for $headAtom (index: $i)")
+                return
+            }
+
+            val (B2, ruleId2, metric2) = binaryBodyList[k]
+            if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
+                continue
+            }
+
+            var S_H12_size = 0
+            for (h in S_H1) {
+                val instance = if (B1.isInverseRelation)  packBinaryInstance(B1.entityId, h)
+                else packBinaryInstance(h, B1.entityId)
+                if (B2.hasBinaryInstance(instance)) S_H12_size++
+            }
+
+            if (S_H12_size < Settings.MIN_SUPP) {
                 continue  // Does not meet minimum support
             }
 
-            // Unary-Binary dependency
-            for (k in binaryBodyList.indices) {
-                if (Thread.currentThread().isInterrupted) {
-                    println("Thread interrupted, exiting processHeadAtom for $headAtom")
-                    return
-                }
-
-                val (B2, ruleId2, metric2) = binaryBodyList[k]
-                if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
-                    continue
-                }
-
-                var S_H12_size = 0
-                for (h in S_H1) {
-                    val instance = if (B1.isInverseRelation)  packBinaryInstance(B1.entityId, h)
-                    else packBinaryInstance(h, B1.entityId)
-                    if (B2.hasBinaryInstance(instance)) S_H12_size++
-                }
-
-                if (S_H12_size < Settings.MIN_SUPP) {
-                    continue  // Does not meet minimum support
-                }
-
-                var S_12_size = 0
-                for (h in B1_instances) {
-                    val instance = if (B1.isInverseRelation) packBinaryInstance(B1.entityId, h)
-                    else packBinaryInstance(h, B1.entityId)
-                    if (B2.hasBinaryInstance(instance)) S_12_size++
-                }
-
-                val metric = Metric(
-                    support = S_H12_size.toDouble(),
-                    headSize = headInstances.size,
-                    bodySize = S_12_size
-                )
-
-                storeDependency(ruleId1, ruleId2, metric, metric1, metric2, mixPositiveLift, mixNegativeLift)
+            var S_12_size = 0
+            for (h in B1_instances) {
+                val instance = if (B1.isInverseRelation) packBinaryInstance(B1.entityId, h)
+                else packBinaryInstance(h, B1.entityId)
+                if (B2.hasBinaryInstance(instance)) S_12_size++
             }
 
-            for (j in (i + 1) until bodyList.size) {
-                // === 响应线程中断 ===
-                if (Thread.currentThread().isInterrupted) {
-                    println("Thread interrupted, exiting processHeadAtom for $headAtom")
-                    return
-                }
+            val metric = Metric(
+                support = S_H12_size.toDouble(),
+                headSize = headInstances.size,
+                bodySize = S_12_size
+            )
 
-                val (B2, ruleId2, metric2) = bodyList[j]
-                if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
-                    println("Skipping pair with high combined surprisal: ${metric1.surprisal} + ${metric2.surprisal}")
-                    continue
-                }
+            storeDependency(ruleId1, ruleId2, metric, metric1, metric2, mixPositiveLift, mixNegativeLift)
+        }
 
-                pairCount++
-
-                val B2_instances = B2.getUnaryInstances()
-                var S_H12_size = S_H1.intersect(B2_instances).size
-                
-                if (S_H12_size < Settings.MIN_SUPP) {
-                    continue  // Does not meet minimum support
-                }
-                
-                // Calculate common evidence: intersection of two bodyAtom instances
-                val S_12_size = B1_instances.intersect(B2_instances).size
-
-                // Create new metric with bodySize = |S_12|
-                val metric = Metric(
-                    support = S_H12_size.toDouble(),
-                    headSize = headInstances.size,
-                    bodySize = S_12_size
-                )
-
-                // Calculate lift
-                storeDependency(ruleId1, ruleId2, metric, metric1, metric2, unaryPositiveLift, unaryNegativeLift)
+        for (j in (i + 1) until bodyList.size) {
+            // === 响应线程中断 ===
+            if (Thread.currentThread().isInterrupted) {
+                println("Thread interrupted, exiting processUnaryHeadAtom for $headAtom (index: $i)")
+                return
             }
+
+            val (B2, ruleId2, metric2) = bodyList[j]
+            if (metric1.surprisal + metric2.surprisal >= Settings.MAX_SURPRISAL) {
+                println("Skipping pair with high combined surprisal: ${metric1.surprisal} + ${metric2.surprisal}")
+                continue
+            }
+
+            pairCount++
+
+            val B2_instances = B2.getUnaryInstances()
+            var S_H12_size = S_H1.intersect(B2_instances).size
+            
+            if (S_H12_size < Settings.MIN_SUPP) {
+                continue  // Does not meet minimum support
+            }
+            
+            // Calculate common evidence: intersection of two bodyAtom instances
+            val S_12_size = B1_instances.intersect(B2_instances).size
+
+            // Create new metric with bodySize = |S_12|
+            val metric = Metric(
+                support = S_H12_size.toDouble(),
+                headSize = headInstances.size,
+                bodySize = S_12_size
+            )
+
+            // Calculate lift
+            storeDependency(ruleId1, ruleId2, metric, metric1, metric2, unaryPositiveLift, unaryNegativeLift)
         }
     }
     
@@ -758,6 +774,10 @@ object DepLearn {
         outputFile.parentFile?.mkdirs()
         println("Saving dependency2metric to ${outputFile.absolutePath}...")
 
+        val jsonOutputPath = outputPath.replace(".txt", ".json")
+        val jsonOutputFile = File(jsonOutputPath)
+        jsonOutputFile.parentFile?.mkdirs()
+
         PrintWriter(outputFile).use { writer ->
             dependency2metric.entries
                 .sortedByDescending { it.value.confidence }
@@ -767,12 +787,35 @@ object DepLearn {
                     val metric2 = ID2metric[id2]
                     val conf1 = metric1?.confidence ?: 0.0
                     val conf2 = metric2?.confidence ?: 0.0
+                    val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
                     val line = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(metric.confidence)}\t${format5(metric.lift)}\t${format5(conf1)}\t${format5(conf2)}\t$id1\t$id2"
                     writer.println(line)
                 }
         }
 
+        val relation2deps = mutableMapOf<String, MutableList<String>>()
+        dependency2metric.entries.forEach { (idPair, metric) ->
+            val (id1, id2) = idPair
+            val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
+            val relationName = if (headRelationId == -1L) "UNKNOWN" else IdManager.getRelationString(headRelationId)
+            val list = relation2deps.getOrPut(relationName) { mutableListOf() }
+            list.add("[${id1}, ${id2}, ${format5(metric.lift)}]")
+        }
+
+        PrintWriter(jsonOutputFile).use { writer ->
+            writer.println("{")
+            val entries = relation2deps.entries.toList()
+            entries.forEachIndexed { index, entry ->
+                val relationName = escapeJson(entry.key)
+                val deps = entry.value.joinToString(", ")
+                val comma = if (index < entries.size - 1) "," else ""
+                writer.println("  \"$relationName\": [$deps]$comma")
+            }
+            writer.println("}")
+        }
+
         println("Successfully saved dependency2metric to ${outputFile.absolutePath}")
+        println("Successfully saved dependency json to ${jsonOutputFile.absolutePath}")
         println("Total dependency entries: ${dependency2metric.size}")
     }
 
