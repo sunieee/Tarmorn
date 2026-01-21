@@ -1,3 +1,4 @@
+import json
 from c_clause import RankingHandler, Loader
 from clause import Options
 
@@ -7,6 +8,17 @@ from clause import TripleSet
 import argparse
 import os
 from datetime import datetime
+
+
+def _summarize_ranking(ranking: dict) -> tuple[int, int, int]:
+    relation_count = len(ranking)
+    query_count = 0
+    candidate_total = 0
+    for queries in ranking.values():
+        query_count += len(queries)
+        for candidates in queries.values():
+            candidate_total += len(candidates)
+    return relation_count, query_count, candidate_total
 
 # *** Example Evaluation ***
 
@@ -18,14 +30,10 @@ from datetime import datetime
 argparser = argparse.ArgumentParser(description="Example for evaluation of a ranking")
 argparser.add_argument("--dataset", type=str, default="wnrr", help="dataset to use")
 argparser.add_argument("--rules", type=str, default="", help="rules to use")
-argparser.add_argument("--dependency", type=str, default="", help="dependency rules to use")
+argparser.add_argument("--applied_rules", type=str, default="", help="rules to use")
 argparser.add_argument("--ranking_file", type=str, default="", help="rules to use")
-argparser.add_argument("--dependency_graph", type=str, default="", help="save dependency graph to file")
+argparser.add_argument("--ranking_dump", type=str, default="", help="dump head/tail ranking to JSON")
 argparser.add_argument("--aggregation_function", type=str, default="noisyor", help="aggregation function to use")
-argparser.add_argument("--xgboost_model", type=str, default="", help="xgboost_model path if aggregation_function=xgboost")
-# New hyperparameters for link prediction and triple classification
-argparser.add_argument("--aggregation_sharpness", type=float, default=0.0, help="τ: aggregation sharpness (noisyor↔maxplus)")
-argparser.add_argument("--dependency_method", type=str, default="none", help="dependency method to use")
 argparser.add_argument("--disable_b", action="store_true", help="whether to disable b rules")
 argparser.add_argument("--disable_combo", action="store_true", help="whether to disable combo rules")
 argparser.add_argument("--disable_u_d", action="store_true", help="whether to disable u_d rules")
@@ -33,6 +41,7 @@ argparser.add_argument("--disable_u_c", action="store_true", help="whether to di
 argparser.add_argument("--disable_zero", action="store_true", help="whether to disable zero rules")
 argparser.add_argument("--disable_u_xxc", action="store_true", help="whether to disable u_xxc rules")
 argparser.add_argument("--disable_u_xxd", action="store_true", help="whether to disable u_xxd rules")
+argparser.add_argument("--valid", action="store_true", help="whether to use valid set for evaluation")
 argparser.add_argument("--debug", action="store_true", help="whether to disable u_xxd rules")
 argparser.add_argument("--b_max_length", type=int, default=-1, help="whether to disable u_xxd rules")
 argparser.add_argument("--num_unseen", type=int, default=5, help="whether to disable u_xxd rules")
@@ -51,8 +60,8 @@ dataset = args.dataset
 
 train = f"data/{dataset}/train.txt"
 
-if args.dependency_graph:
-    filter_set = f"data/{dataset}/test{args.test_valid_split}.txt"
+if args.valid:
+    filter_set = ""
     target = f"data/{dataset}/valid{args.test_valid_split}.txt"
 else:
     filter_set = f"data/{dataset}/valid{args.test_valid_split}.txt"
@@ -64,22 +73,13 @@ ranking_file = args.ranking_file if args.ranking_file else f"local/ranking-{data
 
 options = Options()
 options.set("ranking_handler.aggregation_function", args.aggregation_function)
-options.set("ranking_handler.aggregation_sharpness", args.aggregation_sharpness)
-options.set("ranking_handler.dependency_method", args.dependency_method)
-options.set("ranking_handler.positive_weight", args.positive_weight)
-options.set("ranking_handler.negative_weight", args.negative_weight)
-if args.dependency_graph:
-    options.set("ranking_handler.collect_rules", True)
-
 options.set("loader.load_b_rules", not args.disable_b)
 options.set("loader.load_zero_rules", not args.disable_zero)
 options.set("loader.load_u_d_rules", not args.disable_u_d)
 options.set("loader.load_u_c_rules", not args.disable_u_c)
 options.set("loader.load_u_xxc_rules", not args.disable_u_xxc)
-options.set("loader.load_u_xxd_rules", False)
 options.set("loader.load_u_xxd_rules", not args.disable_u_xxd)
-# 必须不能load_u_xxd_rules，否则会段错误 (核心已转储)
-# IMPORTANT：这个鬼错误让我检查C++程序2h，太恶心了
+
 options.set("loader.b_max_length", args.b_max_length)
 options.set("loader.num_unseen", args.num_unseen)
 options.set("loader.d_weight", args.d_weight)
@@ -87,7 +87,8 @@ options.set("loader.d_weight", args.d_weight)
 # *** 关键：设置线程数 ***
 options.set("ranking_handler.num_threads", args.ranking_threads)  
 options.set("loader.num_threads", args.loader_threads)           # 指定4个线程用于规则加载
-
+if args.applied_rules:
+    options.set("ranking_handler.collect_rules", True)
 
 #### Calculate a ranking
 loader = Loader(options=options.get("loader"))
@@ -97,25 +98,46 @@ loader.load_rules(rules=rules)
 # ComboHandler 配置现在由 Loader 管理，不再需要手动合并选项
 # RankingHandler, QAHandler, PredictionHandler 都会从 Loader 获取相同的 combo 配置
 ranker = RankingHandler(options=options.get("ranking_handler"))
-if args.aggregation_function == "xgboost":
-    ranker.load_xgboost_model(args.xgboost_model)
-
-if args.dependency:
-    loader.load_dependency(args.dependency)
-
 ranker.calculate_ranking(loader=loader)
 headRanking = ranker.get_ranking(direction="head", as_string=True)
 tailRanking = ranker.get_ranking(direction="tail", as_string=True)
 
+head_rel, head_query, head_cand = _summarize_ranking(headRanking)
+tail_rel, tail_query, tail_cand = _summarize_ranking(tailRanking)
+print(
+    "Head ranking: relations={0}, queries={1}, candidates={2}".format(
+        head_rel, head_query, head_cand
+    )
+)
+print(
+    "Tail ranking: relations={0}, queries={1}, candidates={2}".format(
+        tail_rel, tail_query, tail_cand
+    )
+)
+
+# 保存 ranking 到文件（可用于与 eval_base_ranker 对比）
+if args.ranking_dump:
+    dump_obj = {"head": headRanking, "tail": tailRanking}
+    with open(args.ranking_dump, "w", encoding="utf-8") as f:
+        json.dump(dump_obj, f, ensure_ascii=False)
+
+
+# 保存applied_rules到文件
+if args.applied_rules:
+    headRules = ranker.get_applied_rules(direction="head")
+    tailRules = ranker.get_applied_rules(direction="tail")
+    output = json.dumps({"head": headRules, "tail": tailRules}, ensure_ascii=False, indent=2)
+    with open(args.applied_rules, 'w', encoding='utf-8') as f:
+        f.write(output)
+
+
 testset = TripleSet(target)
 ranking = Ranking(k=100)
-
 # process the handler ranking which is defined on queries and not
 # on triples, e.g. assign to every triple of 'testset' the corresponding query rankings
 ranking.convert_handler_ranking(headRanking, tailRanking, testset)
 ranking.compute_scores(testset.triples)
-if args.dependency_graph:
-    ranker.save_dependency_graph(args.dependency_graph) 
+
 
 print("*** EVALUATION RESULTS ****")
 print("Num triples: " + str(len(testset.triples)))
