@@ -1,5 +1,7 @@
 package tarmorn
 
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
 import tarmorn.data.IdManager
 import tarmorn.data.RelationPath
 import tarmorn.data.TripleSet
@@ -15,8 +17,11 @@ import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.io.PrintWriter
 import java.nio.charset.StandardCharsets
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * DepLearn - Dependency-based learning algorithm
@@ -55,7 +60,7 @@ object DepLearn {
     // Rule metric structure: head -> body -> ruleId
     val H2B2ID = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Int>>()
     val ID2metric = ConcurrentHashMap<Int, Metric>()
-    val dependency2metric = ConcurrentHashMap<Pair<Int, Int>, Metric>()
+    val depAdj2metric = ConcurrentHashMap<Int, ConcurrentHashMap<Int, Metric>>()
     val ruleId2HeadRelationId = ConcurrentHashMap<Int, Long>()
     
     // Statistics variables
@@ -71,7 +76,66 @@ object DepLearn {
     
     // Constants from TLearn
     const val MIN_SURPRISAL_LIFT = 0.05
-    const val TOP_K_RULE_COMBO = 400
+    const val TOP_K_RULE_COMBO = 300
+    private val FEATURE_KEYS = listOf(
+        "num_rules",
+        "w_1",
+        "w_2",
+        "w_3",
+        "w_4",
+        "w_5",
+        "w25",
+        "w50",
+        "w75",
+        "w_std",
+        "num_neg_edges",
+        "num_rules_with_neg_incoming",
+        "num_rules_with_neg_outgoing",
+        "max_neg_indegree",
+        "mean_neg_indegree",
+        "max_neg_outdegree",
+        "num_neg_components",
+        "num_neg_component",
+        "largest_neg_component_size",
+        "num_pos_edges",
+        "num_rules_with_pos_edges",
+        "num_pos_components",
+        "largest_pos_component_size",
+        "max_neg_outdegree_minus_indegree",
+        "max_pos_outdegree",
+        "outdegree_of_top_rule",
+        "indegree_of_top_rule",
+        "score_noisyor",
+        "score_maxplus",
+        "score_expdecay_tau_0.25",
+        "score_expdecay_tau_0.5",
+        "score_expdecay_tau_1",
+        "score_expdecay_tau_2",
+        "score_expdecay_tau_4",
+        "num_lift_pos_gt_1",
+        "num_lift_neg_gt_0.5",
+        "max_lift_neg",
+        "max_lift_pos",
+        "sum_lift_pos",
+        "sum_lift_neg",
+        "sum_top3_lift_pos",
+        "sum_top3_lift_neg",
+    )
+
+    data class TripleKey(val head: String, val relation: String, val tail: String)
+    data class AppliedItem(
+        val ifHead: Int,
+        val relation: String,
+        val constant: String,
+        val candidate: String,
+        val ruleIds: IntArray
+    )
+
+    data class QueryKey(
+        val ifHead: Int,
+        val relation: String,
+        val constant: String
+    )
 
     private fun format5(value: Double): String {
         val formatted = String.format(java.util.Locale.US, "%.5f", value)
@@ -93,12 +157,32 @@ object DepLearn {
     ) {
         val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
         val maxSurprisal = maxOf(metric1.surprisal, metric2.surprisal)
-        if (lift > 0 || metric.surprisal < maxSurprisal) {
-            metric.lift = if (lift > 0) lift else metric.surprisal - maxSurprisal
-            dependency2metric[ruleId1 to ruleId2] = metric
-            if (metric.lift > 0) positiveCounter.incrementAndGet()
-            else negativeCounter.incrementAndGet()
+        if (lift <= 0 && metric.surprisal >= maxSurprisal) {
+            return
         }
+
+        val conf1 = metric1.adjustedConfidence
+        val conf2 = metric2.adjustedConfidence
+        if (conf1 == conf2) {
+            return
+        }
+
+        val srcId: Int
+        val dstId: Int
+        if (conf1 > conf2) {
+            srcId = ruleId1
+            dstId = ruleId2
+        } else {
+            srcId = ruleId2
+            dstId = ruleId1
+        }
+
+        metric.lift = if (lift > 0) lift else metric.surprisal - maxSurprisal
+        val inner = depAdj2metric.computeIfAbsent(srcId) { ConcurrentHashMap() }
+        inner[dstId] = metric
+
+        if (metric.lift > 0) positiveCounter.incrementAndGet()
+        else negativeCounter.incrementAndGet()
     }
 
     private fun escapeJson(value: String): String {
@@ -109,7 +193,8 @@ object DepLearn {
         return bodyMap.entries
             .mapNotNull { entry ->
                 val metric = ID2metric[entry.value] ?: return@mapNotNull null
-                if (metric.surprisal >= MIN_SURPRISAL_LIFT && metric.surprisal < Settings.MAX_SURPRISAL) {
+                // metric.surprisal >= MIN_SURPRISAL_LIFT &&  不限制最小值
+                if (metric.surprisal < Settings.MAX_SURPRISAL && metric.support >= Settings.MIN_SUPP) {
                     Triple(entry.key, entry.value, metric)
                 } else null
             }
@@ -123,6 +208,11 @@ object DepLearn {
         val bodyListMap = ConcurrentHashMap<DepAtom, List<Triple<DepAtom, Int, Metric>>>()
         val futures = H2B2ID.entries.map { (headAtom, bodyMap) ->
             threadPool.submit {
+                val headSupport = getAtomSize(headAtom)
+                if (headSupport < Settings.MIN_SUPP) {
+                    bodyListMap[headAtom] = emptyList()
+                    return@submit
+                }
                 val bodyList = buildBodyList(bodyMap)
                 bodyListMap[headAtom] = bodyList
 
@@ -160,12 +250,12 @@ object DepLearn {
 
         readRules(Settings.PATH_RULES)
 
-        saveMetricToJson(
-            metricMap = H2B2ID,
-            outputPath = Settings.PATH_H2B2metric,
-            appendMode = false,
-            isFormulaMap = false
-        )
+        // saveMetricToJson(
+        //     metricMap = H2B2ID,
+        //     outputPath = Settings.PATH_H2B2metric,
+        //     appendMode = false,
+        //     isFormulaMap = false
+        // )
 
         try {
             compositionPhase()
@@ -176,6 +266,8 @@ object DepLearn {
         printStatistics()
 
         saveDependencyToFile(Settings.PATH_DEPENDENCY)
+        buildDependencyGraphFromAppliedRules(Settings.PATH_APPLIED_RULES, Settings.PATH_DEPENDENCY_GRAPH, Settings.PATH_TEST)
+        buildDependencyGraphFromAppliedRules(Settings.PATH_APPLIED_RULES_VALID, Settings.PATH_DEPENDENCY_GRAPH_VALID, Settings.PATH_VALID)
 
         val endTime = System.currentTimeMillis()
         val elapsedSeconds = (endTime - startTime) / 1000.0
@@ -333,6 +425,9 @@ object DepLearn {
         val metric = Metric(support, headSize, bodySize)
 
         if (bodyAtom != null) {
+            require(headAtom.isBinary == bodyAtom.isBinary) {
+                "Head/body arity mismatch: head=$headAtom, body=$bodyAtom"
+            }
             setH2B2ID(headAtom, bodyAtom, ruleId, metric)
             ruleId2HeadRelationId[ruleId] = headAtom.relationId
         }
@@ -371,6 +466,8 @@ object DepLearn {
         println("Starting Composition Phase...")
         
         val processedTasks = java.util.concurrent.atomic.AtomicInteger(0)
+        val polledTasks = java.util.concurrent.atomic.AtomicInteger(0)
+        val taskErrors = java.util.concurrent.atomic.AtomicInteger(0)
         val threadPool = java.util.concurrent.Executors.newFixedThreadPool(Settings.WORKER_THREADS)
         val compositionActiveThreadCount = java.util.concurrent.atomic.AtomicInteger(0)
         val compositionThreadMonitorLock = Object()
@@ -385,6 +482,7 @@ object DepLearn {
                     totalTasks++
                 }
             }
+            println("Composition tasks queued: $totalTasks")
 
             val futures = (0 until Settings.WORKER_THREADS).map { _ ->
                 threadPool.submit {
@@ -392,17 +490,29 @@ object DepLearn {
                     try {
                         while (true) {
                             val task = workQueue.poll() ?: break
+                            polledTasks.incrementAndGet()
                             val headAtom = task.first
                             val i = task.second
                             val bodyList = bodyListMap[headAtom].orEmpty()
                             if (bodyList.isEmpty()) continue
 
-                            if (headAtom.isBinary) {
-                                processBinaryHeadAtom(headAtom, bodyList, i)
-                            } else {
-                                val binaryHeadAtom = headAtom.getBinaryAtom()
-                                val binaryBodyList = bodyListMap[binaryHeadAtom].orEmpty()
-                                processUnaryHeadAtom(headAtom, bodyList, binaryBodyList, i)
+                            try {
+                                if (headAtom.isBinary) {
+                                    processBinaryHeadAtom(headAtom, bodyList, i)
+                                } else {
+                                    val binaryHeadAtom = headAtom.getBinaryAtom()
+                                    val binaryBodyList = bodyListMap[binaryHeadAtom].orEmpty()
+                                    processUnaryHeadAtom(headAtom, bodyList, binaryBodyList, i)
+                                }
+                            } catch (e: Exception) {
+                                val errCnt = taskErrors.incrementAndGet()
+                                if (errCnt <= 10) {
+                                    synchronized(System.out) {
+                                        println("Composition task error (#$errCnt): ${e.message}")
+                                        println("  headAtom=$headAtom, index=$i, bodyListSize=${bodyList.size}")
+                                    }
+                                }
+                                continue
                             }
 
                             val cnt = processedTasks.incrementAndGet()
@@ -457,7 +567,464 @@ object DepLearn {
             threadPool.awaitTermination(1, java.util.concurrent.TimeUnit.HOURS)
         }
         
-        println("Composition Phase completed. Total dependencies: ${dependency2metric.size}")
+        println("Composition Phase completed. Total dependencies: ${depAdj2metric.values.sumOf { it.size }}")
+        println("Composition tasks polled: ${polledTasks.get()}, processed: ${processedTasks.get()}, errors: ${taskErrors.get()}")
+    }
+
+    private fun buildDependencyGraphFromAppliedRules(
+        appliedRulesPath: String,
+        outputPath: String,
+        labelPath: String
+    ) {
+        val appliedRulesFile = File(appliedRulesPath)
+        if (!appliedRulesFile.exists()) {
+            println("Skip dependency_graph.csv: applied_rules not found: $appliedRulesPath")
+            return
+        }
+
+        println("\n=== Dependency Graph Feature Extraction ===")
+        println("Reading applied_rules: $appliedRulesPath")
+        println("Output CSV: $outputPath")
+
+        val gson = Gson()
+        val type = object : TypeToken<Map<String, Any>>() {}.type
+        val root: Map<String, Any> = appliedRulesFile.reader().use { reader ->
+            gson.fromJson(reader, type)
+        }
+
+        val items = parseAppliedRules(root)
+        println("Total applied rule entries: ${items.size}")
+
+        val testSet = loadTestSet(labelPath)
+        println("Loaded label set: ${testSet.size} triples")
+
+        val depAdj = depAdj2metric
+
+        val outputFile = File(outputPath)
+        outputFile.parentFile?.mkdirs()
+        PrintWriter(outputFile, StandardCharsets.UTF_8).use { writer ->
+            writer.println(csvHeader())
+
+            val pool = Executors.newFixedThreadPool(Settings.WORKER_THREADS)
+            val lock = Any()
+            val processed = AtomicInteger(0)
+
+            val itemsByQuery = items.groupBy { QueryKey(it.ifHead, it.relation, it.constant) }
+            val queryEntries = itemsByQuery.entries.toList()
+
+            try {
+                val chunkSize = 200
+                queryEntries.chunked(chunkSize)
+                    .forEach { chunk ->
+                        pool.submit {
+                            val localBuilder = StringBuilder()
+                            for ((_, groupItems) in chunk) {
+                                val scoredItems = groupItems.map { item ->
+                                    item to computeScoreNoisyor(item.ruleIds)
+                                }
+                                val topK = scoredItems
+                                    .sortedByDescending { it.second }
+                                    // .take(Settings.CANDIDATE_TOPK)
+
+                                for ((item, _) in topK) {
+                                    val label = if (item.ifHead == 1) {
+                                        testSet.contains(TripleKey(item.candidate, item.relation, item.constant))
+                                    } else {
+                                        testSet.contains(TripleKey(item.constant, item.relation, item.candidate))
+                                    }
+
+                                    val features = computeFeatures(item.ruleIds, depAdj)
+                                    val line = buildCsvLine(item, label, features)
+                                    localBuilder.append(line).append('\n')
+
+                                    val count = processed.incrementAndGet()
+                                    if (count % 10000 == 0) {
+                                        println("Processed $count/${items.size} applied entries...")
+                                    }
+                                }
+                            }
+                            synchronized(lock) {
+                                writer.print(localBuilder.toString())
+                            }
+                        }
+                    }
+            } finally {
+                pool.shutdown()
+                while (!pool.isTerminated) {
+                    Thread.sleep(200)
+                }
+            }
+        }
+
+        println("Dependency graph CSV saved: $outputPath")
+    }
+
+    private fun parseAppliedRules(root: Map<String, Any>): List<AppliedItem> {
+        val items = mutableListOf<AppliedItem>()
+        val sections = listOf("head" to 1, "tail" to 0)
+        for ((sectionKey, ifHead) in sections) {
+            val section = root[sectionKey] as? Map<*, *> ?: continue
+            for ((relationKey, constantObj) in section) {
+                val relation = relationKey?.toString() ?: continue
+                val constantMap = constantObj as? Map<*, *> ?: continue
+                for ((constantKey, candidateObj) in constantMap) {
+                    val constant = constantKey?.toString() ?: continue
+                    val candidateMap = candidateObj as? Map<*, *> ?: continue
+                    for ((candidateKey, ruleObj) in candidateMap) {
+                        val candidate = candidateKey?.toString() ?: continue
+                        val ruleList = ruleObj as? List<*> ?: emptyList<Any>()
+                        val ruleIds = ruleList.mapNotNull { rid ->
+                            when (rid) {
+                                is Number -> rid.toInt()
+                                is String -> rid.toIntOrNull()
+                                else -> null
+                            }
+                        }.toIntArray()
+                        items.add(AppliedItem(ifHead, relation, constant, candidate, ruleIds))
+                    }
+                }
+            }
+        }
+        return items
+    }
+
+    private fun loadTestSet(path: String): HashSet<TripleKey> {
+        val set = HashSet<TripleKey>()
+        val file = File(path)
+        if (!file.exists()) return set
+        BufferedReader(InputStreamReader(FileInputStream(file), StandardCharsets.UTF_8)).use { reader ->
+            reader.forEachLine { line ->
+                val trimmed = line.trim()
+                if (trimmed.isEmpty()) return@forEachLine
+                val parts = trimmed.split("\t", " ")
+                    .filter { it.isNotEmpty() }
+                if (parts.size < 3) return@forEachLine
+                set.add(TripleKey(parts[0], parts[1], parts[2]))
+            }
+        }
+        return set
+    }
+
+    private fun computeScoreNoisyor(ruleIds: IntArray): Double {
+        val validRuleIds = ruleIds.filter { ID2metric.containsKey(it) }
+        if (validRuleIds.isEmpty()) return 0.0
+
+        val numUnseen = Settings.UNSEEN_NEGATIVE_EXAMPLES.toDouble()
+        var sumSurprisal = 0.0
+        for (rid in validRuleIds) {
+            val metric = ID2metric[rid] ?: continue
+            val bodySize = metric.bodySize.toDouble()
+            val denom = metric.support + numUnseen
+            val ratio = if (denom > 0) bodySize / denom else 0.0
+            val clipped = when {
+                ratio <= 0.0 -> 0.0
+                ratio >= 1.0 -> 1.0 - 1e-12
+                else -> ratio
+            }
+            val surprisal = if (clipped <= 0.0) 0.0 else -kotlin.math.ln(1.0 - clipped)
+            sumSurprisal += surprisal
+        }
+        return if (sumSurprisal > 0) 1.0 - kotlin.math.exp(-sumSurprisal) else 0.0
+    }
+
+
+    private fun computeFeatures(ruleIds: IntArray, depAdj: Map<Int, Map<Int, Metric>>): Map<String, Any> {
+        val validRuleIds = ruleIds.filter { ID2metric.containsKey(it) }
+        if (validRuleIds.isEmpty()) {
+            return emptyFeatureMap()
+        }
+
+        val numUnseen = Settings.UNSEEN_NEGATIVE_EXAMPLES.toDouble()
+        val surprisalList = validRuleIds.mapNotNull { rid ->
+            val metric = ID2metric[rid] ?: return@mapNotNull null
+            val bodySize = metric.bodySize.toDouble()
+            val denom = metric.support + numUnseen
+            val ratio = if (denom > 0) bodySize / denom else 0.0
+            val clipped = when {
+                ratio <= 0.0 -> 0.0
+                ratio >= 1.0 -> 1.0 - 1e-12
+                else -> ratio
+            }
+            val surprisal = if (clipped <= 0.0) 0.0 else -kotlin.math.ln(1.0 - clipped)
+            rid to surprisal
+        }.sortedByDescending { it.second }
+
+        val sortedSurprisals = surprisalList.map { it.second }
+        val wValues = (sortedSurprisals + List(5) { 0.0 }).take(5)
+        val w1 = wValues[0]
+        val w2 = wValues[1]
+        val w3 = wValues[2]
+        val w4 = wValues[3]
+        val w5 = wValues[4]
+
+        val w25 = percentile(sortedSurprisals, 0.25)
+        val w50 = percentile(sortedSurprisals, 0.50)
+        val w75 = percentile(sortedSurprisals, 0.75)
+        val wStd = stdDev(sortedSurprisals)
+
+        val ruleSet = validRuleIds.toSet()
+        val negEdges = mutableListOf<Pair<Int, Int>>()
+        val posEdges = mutableListOf<Pair<Int, Int>>()
+        val negIn = HashMap<Int, Int>()
+        val negOut = HashMap<Int, Int>()
+        val posIn = HashMap<Int, Int>()
+        val posOut = HashMap<Int, Int>()
+        val posLifts = mutableListOf<Double>()
+        val negLifts = mutableListOf<Double>()
+
+        for (rid in ruleSet) {
+            negIn[rid] = 0
+            negOut[rid] = 0
+            posIn[rid] = 0
+            posOut[rid] = 0
+        }
+
+        for (src in ruleSet) {
+            val dstMap = depAdj[src] ?: continue
+            for ((dst, metric) in dstMap) {
+                if (!ruleSet.contains(dst)) continue
+                val lift = metric.lift
+                if (lift < 0) {
+                    negEdges.add(src to dst)
+                    negOut[src] = (negOut[src] ?: 0) + 1
+                    negIn[dst] = (negIn[dst] ?: 0) + 1
+                    negLifts.add(lift)
+                } else {
+                    posEdges.add(src to dst)
+                    posOut[src] = (posOut[src] ?: 0) + 1
+                    posIn[dst] = (posIn[dst] ?: 0) + 1
+                    posLifts.add(lift)
+                }
+            }
+        }
+
+        val numNegEdges = negEdges.size
+        val numPosEdges = posEdges.size
+        val numRulesWithNegIncoming = negIn.values.count { it > 0 }
+        val numRulesWithNegOutgoing = negOut.values.count { it > 0 }
+        val maxNegIndegree = negIn.values.maxOrNull() ?: 0
+        val meanNegIndegree = if (negIn.isNotEmpty()) negIn.values.sum().toDouble() / negIn.size else 0.0
+        val maxNegOutdegree = negOut.values.maxOrNull() ?: 0
+        val numRulesWithPosEdges = ruleSet.count { (posIn[it] ?: 0) + (posOut[it] ?: 0) > 0 }
+
+        val negNodes = negEdges.flatMap { listOf(it.first, it.second) }.toSet()
+        val posNodes = posEdges.flatMap { listOf(it.first, it.second) }.toSet()
+        val negComponents = buildComponents(negNodes, negEdges)
+        val posComponents = buildComponents(posNodes, posEdges)
+
+        val maxNegOutdegreeMinusIndegree = ruleSet.maxOfOrNull { (negOut[it] ?: 0) - (negIn[it] ?: 0) } ?: 0
+        val maxPosOutdegree = posOut.values.maxOrNull() ?: 0
+
+        val topRuleId = surprisalList.first().first
+        val outdegreeTopRule = (posOut[topRuleId] ?: 0) + (negOut[topRuleId] ?: 0)
+        val indegreeTopRule = (posIn[topRuleId] ?: 0) + (negIn[topRuleId] ?: 0)
+
+        val sumSurprisal = sortedSurprisals.sum()
+        val scoreNoisyor = if (sumSurprisal > 0) 1.0 - kotlin.math.exp(-sumSurprisal) else 0.0
+        val scoreMaxplus = w1
+
+        fun expDecayScore(tau: Double): Double {
+            return sortedSurprisals.mapIndexed { idx, s -> s * kotlin.math.exp(-tau * idx) }.sum()
+        }
+
+        val scoreTau025 = expDecayScore(0.25)
+        val scoreTau05 = expDecayScore(0.5)
+        val scoreTau1 = expDecayScore(1.0)
+        val scoreTau2 = expDecayScore(2.0)
+        val scoreTau4 = expDecayScore(4.0)
+
+        val numLiftPosGt1 = posLifts.count { kotlin.math.abs(it) >= 1.0 }
+        val numLiftNegGt05 = negLifts.count { kotlin.math.abs(it) >= 0.5 }
+        val maxLiftPos = posLifts.maxOrNull() ?: 0.0
+        val maxLiftNeg = negLifts.maxOfOrNull { kotlin.math.abs(it) } ?: 0.0
+        val sumLiftPos = posLifts.sum()
+        val sumLiftNeg = negLifts.sum()
+        val sumTop3LiftPos = posLifts.sortedDescending().take(3).sum()
+        val sumTop3LiftNeg = negLifts.map { kotlin.math.abs(it) }.sortedDescending().take(3).sum()
+
+        return mapOf(
+            "num_rules" to validRuleIds.size,
+            "w_1" to w1,
+            "w_2" to w2,
+            "w_3" to w3,
+            "w_4" to w4,
+            "w_5" to w5,
+            "w25" to w25,
+            "w50" to w50,
+            "w75" to w75,
+            "w_std" to wStd,
+            "num_neg_edges" to numNegEdges,
+            "num_rules_with_neg_incoming" to numRulesWithNegIncoming,
+            "num_rules_with_neg_outgoing" to numRulesWithNegOutgoing,
+            "max_neg_indegree" to maxNegIndegree,
+            "mean_neg_indegree" to meanNegIndegree,
+            "max_neg_outdegree" to maxNegOutdegree,
+            "num_neg_components" to negComponents.first,
+            "num_neg_component" to negComponents.first,
+            "largest_neg_component_size" to negComponents.second,
+            "num_pos_edges" to numPosEdges,
+            "num_rules_with_pos_edges" to numRulesWithPosEdges,
+            "num_pos_components" to posComponents.first,
+            "largest_pos_component_size" to posComponents.second,
+            "max_neg_outdegree_minus_indegree" to maxNegOutdegreeMinusIndegree,
+            "max_pos_outdegree" to maxPosOutdegree,
+            "outdegree_of_top_rule" to outdegreeTopRule,
+            "indegree_of_top_rule" to indegreeTopRule,
+            "score_noisyor" to scoreNoisyor,
+            "score_maxplus" to scoreMaxplus,
+            "score_expdecay_tau_0.25" to scoreTau025,
+            "score_expdecay_tau_0.5" to scoreTau05,
+            "score_expdecay_tau_1" to scoreTau1,
+            "score_expdecay_tau_2" to scoreTau2,
+            "score_expdecay_tau_4" to scoreTau4,
+            "num_lift_pos_gt_1" to numLiftPosGt1,
+            "num_lift_neg_gt_0.5" to numLiftNegGt05,
+            "max_lift_neg" to maxLiftNeg,
+            "max_lift_pos" to maxLiftPos,
+            "sum_lift_pos" to sumLiftPos,
+            "sum_lift_neg" to sumLiftNeg,
+            "sum_top3_lift_pos" to sumTop3LiftPos,
+            "sum_top3_lift_neg" to sumTop3LiftNeg,
+        )
+    }
+
+    private fun emptyFeatureMap(): Map<String, Any> {
+        return mapOf(
+            "num_rules" to 0,
+            "w_1" to 0.0,
+            "w_2" to 0.0,
+            "w_3" to 0.0,
+            "w_4" to 0.0,
+            "w_5" to 0.0,
+            "w25" to 0.0,
+            "w50" to 0.0,
+            "w75" to 0.0,
+            "w_std" to 0.0,
+            "num_neg_edges" to 0,
+            "num_rules_with_neg_incoming" to 0,
+            "num_rules_with_neg_outgoing" to 0,
+            "max_neg_indegree" to 0,
+            "mean_neg_indegree" to 0.0,
+            "max_neg_outdegree" to 0,
+            "num_neg_components" to 0,
+            "num_neg_component" to 0,
+            "largest_neg_component_size" to 0,
+            "num_pos_edges" to 0,
+            "num_rules_with_pos_edges" to 0,
+            "num_pos_components" to 0,
+            "largest_pos_component_size" to 0,
+            "max_neg_outdegree_minus_indegree" to 0,
+            "max_pos_outdegree" to 0,
+            "outdegree_of_top_rule" to 0,
+            "indegree_of_top_rule" to 0,
+            "score_noisyor" to 0.0,
+            "score_maxplus" to 0.0,
+            "score_expdecay_tau_0.25" to 0.0,
+            "score_expdecay_tau_0.5" to 0.0,
+            "score_expdecay_tau_1" to 0.0,
+            "score_expdecay_tau_2" to 0.0,
+            "score_expdecay_tau_4" to 0.0,
+            "num_lift_pos_gt_1" to 0,
+            "num_lift_neg_gt_0.5" to 0,
+            "max_lift_neg" to 0.0,
+            "max_lift_pos" to 0.0,
+            "sum_lift_pos" to 0.0,
+            "sum_lift_neg" to 0.0,
+            "sum_top3_lift_pos" to 0.0,
+            "sum_top3_lift_neg" to 0.0,
+        )
+    }
+
+    private fun percentile(values: List<Double>, p: Double): Double {
+        if (values.isEmpty()) return 0.0
+        val idx = ((values.size - 1) * p).toInt()
+        return values[idx]
+    }
+
+    private fun stdDev(values: List<Double>): Double {
+        if (values.size <= 1) return 0.0
+        val mean = values.sum() / values.size
+        val variance = values.sumOf { (it - mean) * (it - mean) } / values.size
+        return kotlin.math.sqrt(variance)
+    }
+
+    private fun buildComponents(nodes: Set<Int>, edges: List<Pair<Int, Int>>): Pair<Int, Int> {
+        if (edges.isEmpty()) return 0 to 0
+        val adj = HashMap<Int, MutableSet<Int>>()
+        for (n in nodes) {
+            adj[n] = mutableSetOf()
+        }
+        for ((u, v) in edges) {
+            adj.getOrPut(u) { mutableSetOf() }.add(v)
+            adj.getOrPut(v) { mutableSetOf() }.add(u)
+        }
+        val visited = HashSet<Int>()
+        var numComponents = 0
+        var largestSize = 0
+        for (n in adj.keys) {
+            if (visited.contains(n)) continue
+            val stack = ArrayDeque<Int>()
+            stack.add(n)
+            visited.add(n)
+            var size = 0
+            while (stack.isNotEmpty()) {
+                val cur = stack.removeLast()
+                size++
+                for (next in adj[cur].orEmpty()) {
+                    if (!visited.contains(next)) {
+                        visited.add(next)
+                        stack.add(next)
+                    }
+                }
+            }
+            numComponents++
+            if (size > largestSize) largestSize = size
+        }
+        return numComponents to largestSize
+    }
+
+    private fun csvHeader(): String {
+        return listOf(
+            "relation",
+            "constant",
+            "candidate",
+            "label",
+            "if_head",
+        ).plus(FEATURE_KEYS).joinToString(",")
+    }
+
+    private fun buildCsvLine(item: AppliedItem, label: Boolean, features: Map<String, Any>): String {
+        val values = mutableListOf<String>()
+        values.add(escapeCsv(item.relation))
+        values.add(escapeCsv(item.constant))
+        values.add(escapeCsv(item.candidate))
+        values.add(if (label) "1" else "0")
+        values.add(item.ifHead.toString())
+
+        for (key in FEATURE_KEYS) {
+            val value = features[key]
+            values.add(formatCsvValue(value))
+        }
+        return values.joinToString(",")
+    }
+
+    private fun formatCsvValue(value: Any?): String {
+        return when (value) {
+            null -> "0"
+            is Int -> value.toString()
+            is Long -> value.toString()
+            is Double -> String.format(Locale.US, "%.6f", value)
+            is Float -> String.format(Locale.US, "%.6f", value.toDouble())
+            is Boolean -> if (value) "1" else "0"
+            else -> escapeCsv(value.toString())
+        }
+    }
+
+    private fun escapeCsv(value: String): String {
+        val needsQuotes = value.contains(",") || value.contains("\n") || value.contains("\"")
+        if (!needsQuotes) return value
+        val escaped = value.replace("\"", "\"\"")
+        return "\"$escaped\""
     }
     
     /**
@@ -772,35 +1339,35 @@ object DepLearn {
     private fun saveDependencyToFile(outputPath: String) {
         val outputFile = File(outputPath)
         outputFile.parentFile?.mkdirs()
-        println("Saving dependency2metric to ${outputFile.absolutePath}...")
+        println("Saving depAdj2metric to ${outputFile.absolutePath}...")
 
         val jsonOutputPath = outputPath.replace(".txt", ".json")
         val jsonOutputFile = File(jsonOutputPath)
         jsonOutputFile.parentFile?.mkdirs()
 
         PrintWriter(outputFile).use { writer ->
-            dependency2metric.entries
-                .sortedByDescending { it.value.confidence }
-                .forEach { (idPair, metric) ->
-                    val (id1, id2) = idPair
+            depAdj2metric.entries
+                .flatMap { (src, dstMap) -> dstMap.entries.map { Triple(src, it.key, it.value) } }
+                .sortedByDescending { it.third.confidence }
+                .forEach { (id1, id2, metric) ->
                     val metric1 = ID2metric[id1]
                     val metric2 = ID2metric[id2]
-                    val conf1 = metric1?.confidence ?: 0.0
-                    val conf2 = metric2?.confidence ?: 0.0
-                    val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
-                    val line = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(metric.confidence)}\t${format5(metric.lift)}\t${format5(conf1)}\t${format5(conf2)}\t$id1\t$id2"
+                    val conf1 = metric1?.adjustedConfidence ?: 0.0
+                    val conf2 = metric2?.adjustedConfidence ?: 0.0
+                    val line = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(metric.lift)}\t$id1\t$id2"
                     writer.println(line)
                 }
         }
 
         val relation2deps = mutableMapOf<String, MutableList<String>>()
-        dependency2metric.entries.forEach { (idPair, metric) ->
-            val (id1, id2) = idPair
-            val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
-            val relationName = if (headRelationId == -1L) "UNKNOWN" else IdManager.getRelationString(headRelationId)
-            val list = relation2deps.getOrPut(relationName) { mutableListOf() }
-            list.add("[${id1}, ${id2}, ${format5(metric.lift)}]")
-        }
+        depAdj2metric.entries
+            .flatMap { (src, dstMap) -> dstMap.entries.map { Triple(src, it.key, it.value) } }
+            .forEach { (id1, id2, metric) ->
+                val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
+                val relationName = if (headRelationId == -1L) "UNKNOWN" else IdManager.getRelationString(headRelationId)
+                val list = relation2deps.getOrPut(relationName) { mutableListOf() }
+                list.add("[${id1}, ${id2}, ${format5(metric.lift)}]")
+            }
 
         PrintWriter(jsonOutputFile).use { writer ->
             writer.println("{")
@@ -814,9 +1381,9 @@ object DepLearn {
             writer.println("}")
         }
 
-        println("Successfully saved dependency2metric to ${outputFile.absolutePath}")
+        println("Successfully saved depAdj2metric to ${outputFile.absolutePath}")
         println("Successfully saved dependency json to ${jsonOutputFile.absolutePath}")
-        println("Total dependency entries: ${dependency2metric.size}")
+        println("Total dependency entries: ${depAdj2metric.values.sumOf { it.size }}")
     }
 
     /**
@@ -828,7 +1395,7 @@ object DepLearn {
         
         val totalHeads = H2B2ID.size
         val totalBodyAtoms = H2B2ID.values.sumOf { it.size }
-        val totalFormulas = dependency2metric.size
+        val totalFormulas = depAdj2metric.values.sumOf { it.size }
         val avgBodyPerHead = if (totalHeads > 0) totalBodyAtoms.toDouble() / totalHeads else 0.0
         
         println("Total head atoms: $totalHeads")

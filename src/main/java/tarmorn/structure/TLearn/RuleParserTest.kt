@@ -71,7 +71,7 @@ object RuleParserTest {
         // 注册测试用的关系
         val testRelations = listOf(
             "P37", "P530", "P19", "P27", "P551",
-            "playsFor", "isAffiliatedTo",
+            "playsFor", "isAffiliatedTo", "isConnectedTo",
             "/award/award_category/winners./award/award_honor/ceremony",
             "/award/award_category/winners./award/award_honor/award_winner",
             "/award/award_ceremony/awards_presented./award/award_honor/award_winner",
@@ -105,7 +105,8 @@ object RuleParserTest {
             "/m/02_fj", "/m/01ck6v", "/m/07z31v", "/m/0b90_r", "/m/07ylj",
             "/m/06by7", "/m/02gsvk", "/m/0l2vz",
             "Tom_Kelly_(footballer,born_1964)", "Shaun_Taylor",
-            "Scott_Brown(footballer,born_May_1985)", "Danny_Welbeck"
+            "Scott_Brown(footballer,born_May_1985)", "Danny_Welbeck",
+            "Evenes", "Trondheim_Airport,_Værnes",
         )
         
         testEntities.forEach { entity ->
@@ -176,6 +177,8 @@ object RuleParserTest {
 
             "/film/film/country(X,Y) <= /media_common/netflix_genre/titles(Y,X)",
             "/location/location/contains(/m/0l2vz,Y) <= /location/hud_county_place/place(me_myself_i,Y)",
+            "isConnectedTo(X,Evenes) <= isConnectedTo(Trondheim_Airport,_Værnes,X)",
+            "isConnectedTo(Trondheim_Airport,_Værnes,X) <= isConnectedTo(X,Evenes)"
         )
         
         // 测试每条规则

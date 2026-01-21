@@ -9,52 +9,10 @@ from sklearn.metrics import accuracy_score, recall_score, roc_auc_score
 from xgboost import XGBRanker
 
 
-FEATURE_COLUMNS = [
-    "num_rules",
-    "w_max",
-    "w_second_max",
-    "w_top1_top2_gap",
-    "w_std",
-    "w_top3_sum",
-    "w_top5_sum",
-    "num_neg_edges",
-    "num_rules_with_neg_incoming",
-    "num_rules_with_neg_outgoing",
-    "max_neg_indegree",
-    "mean_neg_indegree",
-    "max_neg_outdegree",
-    "num_neg_components",
-    "num_rules_neg_dedup",
-    "num_neg_component",
-    "largest_neg_component_size",
-    "num_pos_edges",
-    "num_rules_with_pos_edges",
-    "num_pos_components",
-    "largest_pos_component_size",
-    "max_neg_outdegree_minus_indegree",
-    "max_pos_outdegree",
-    "outdegree_of_top_rule",
-    "indegree_of_top_rule",
-    "score_noisyor",
-    "score_maxplus",
-    "score_expdecay_tau_0.25",
-    "score_expdecay_tau_0.5",
-    "score_expdecay_tau_1",
-    "score_expdecay_tau_2",
-    "score_expdecay_tau_4",
-    "num_lift_pos_gt_1",
-    "num_lift_neg_gt_0.5",
-    "max_lift_neg",
-    "max_lift_pos",
-    "sum_lift_pos",
-    "sum_lift_neg",
-    "sum_top3_lift_pos",
-    "sum_top3_lift_neg",
-]
+BASE_COLUMNS = ["relation", "constant", "candidate", "label", "if_head"]
 
 PARAM_GRID = {
     "max_depth": [4, 6, 8],
-    "learning_rate": [0.05, 0.1],
     "n_estimators": [200, 400, 600],
 }
 
@@ -126,26 +84,44 @@ def _iter_grid(grid: dict) -> list[dict]:
 
 def main() -> None:
     args = _parse_args()
-    csv_path = Path(f"out/{args.dataset}/dependency_graph.csv")
-    model_path = csv_path.with_suffix(".json")
+    csv_path = Path(f"out/{args.dataset}/dependency_graph_valid.csv")
+    model_path = Path(f"out/{args.dataset}/xgb_ranker.json")
     params_path = csv_path.with_name("xgb_ranker_best_params.json")
     if not csv_path.exists():
         raise FileNotFoundError(f"CSV not found: {csv_path}")
 
     df = pd.read_csv(csv_path)
-    required_cols = {"query", "candidate", "label"} | set(FEATURE_COLUMNS)
+    required_cols = set(BASE_COLUMNS)
     missing_cols = required_cols - set(df.columns)
     if missing_cols:
         raise ValueError(f"Missing columns in CSV: {sorted(missing_cols)}")
 
+    if "if_head" not in df.columns:
+        raise ValueError("Missing 'if_head' column in CSV")
+
+    if_head_idx = list(df.columns).index("if_head")
+    feature_columns = list(df.columns)[if_head_idx:]
+    if not feature_columns:
+        raise ValueError("No feature columns found after 'if_head'")
+
     # Keep only rows with valid labels and numeric features
     df = df.copy()
     df["label"] = pd.to_numeric(df["label"], errors="coerce").fillna(0).astype(int)
+    df[feature_columns] = df[feature_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+
+    # Query is defined by (relation, constant, if_head)
+    df["query"] = (
+        df["relation"].astype(str)
+        + "\t"
+        + df["constant"].astype(str)
+        + "\t"
+        + df["if_head"].astype(str)
+    )
 
     # Sort by query so group sizes align with training API
     df = df.sort_values("query").reset_index(drop=True)
 
-    X = df[FEATURE_COLUMNS]
+    X = df[feature_columns]
     y = df["label"].values
     group_sizes = df.groupby("query").size().values
 
@@ -181,11 +157,11 @@ def main() -> None:
                     aucs.append(np.nan)
                     continue
 
-                X_train = df_train[FEATURE_COLUMNS]
+                X_train = df_train[feature_columns]
                 y_train = df_train["label"].values
                 train_groups = df_train.groupby("query").size().values
 
-                X_val = df_val[FEATURE_COLUMNS]
+                X_val = df_val[feature_columns]
                 y_val = df_val["label"].values
                 val_groups = df_val.groupby("query").size().values
 

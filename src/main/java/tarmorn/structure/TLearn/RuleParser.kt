@@ -93,7 +93,25 @@ object RuleParser {
      * 只在顶层逗号处分割，尊重嵌套括号
      */
     private fun preprocessArguments(argsString: String): String {
-        val args = smartSplit(argsString)
+        // 直接按逗号拆分，若出现多于一个逗号，说明某一实体名中包含逗号/括号
+        // 一元/二元规则：依据变量位置合并
+        var args = argsString.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        if (args.size > 2) {
+            args = when {
+                isVariable(args.first()) && !isVariable(args[1]) -> {
+                    val mergedSecond = args.drop(1).joinToString(",").trim()
+                    listOf(args.first().trim(), mergedSecond)
+                }
+                isVariable(args.last()) -> {
+                    val mergedFirst = args.dropLast(1).joinToString(",").trim()
+                    listOf(mergedFirst, args.last().trim())
+                }
+                else -> {
+                    val mergedFirst = args.dropLast(1).joinToString(",").trim()
+                    listOf(mergedFirst, args.last().trim())
+                }
+            }
+        }
         val processedArgs = args.map { arg ->
             val trimmedArg = arg.trim()
             // 如果参数包含特殊字符且不是变量，替换为占位符

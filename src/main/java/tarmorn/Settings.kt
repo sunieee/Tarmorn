@@ -43,6 +43,16 @@ object Settings {
     @JvmField
     var PATH_DEPENDENCY: String = "out/{DATASET}/dependency.txt"
     @JvmField
+    var PATH_APPLIED_RULES: String = "out/{DATASET}/applied_rules.json"
+    @JvmField
+    var PATH_DEPENDENCY_GRAPH: String = "out/{DATASET}/dependency_graph.csv"
+    @JvmField
+    var PATH_APPLIED_RULES_VALID: String = "out/{DATASET}/applied_rules_valid.json"
+    @JvmField
+    var PATH_DEPENDENCY_GRAPH_VALID: String = "out/{DATASET}/dependency_graph_valid.csv"
+    @JvmField
+    var CANDIDATE_TOPK: Int = 50
+    @JvmField
     var PATH_H2B2metric: String = "out/{DATASET}/H2B2metric.json"
     @JvmField
     var PATH_RULES_TXT: String = "out/{DATASET}/rule.txt"
@@ -403,5 +413,9 @@ object Settings {
         PATH_RULES_TXT = PATH_RULES_TXT.replace("{DATASET}", DATASET)
         PATH_H2F2metric = PATH_H2F2metric.replace("{DATASET}", DATASET)
         PATH_DEPENDENCY = PATH_DEPENDENCY.replace("{DATASET}", DATASET)
+        PATH_APPLIED_RULES = PATH_APPLIED_RULES.replace("{DATASET}", DATASET)
+        PATH_DEPENDENCY_GRAPH = PATH_DEPENDENCY_GRAPH.replace("{DATASET}", DATASET)
+        PATH_APPLIED_RULES_VALID = PATH_APPLIED_RULES_VALID.replace("{DATASET}", DATASET)
+        PATH_DEPENDENCY_GRAPH_VALID = PATH_DEPENDENCY_GRAPH_VALID.replace("{DATASET}", DATASET)
     }
 }

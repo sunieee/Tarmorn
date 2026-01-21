@@ -16,22 +16,24 @@ for dataset in "${datasets[@]}"; do
     
     # Create output directory for this dataset
     mkdir -p "out/${dataset}"
-    
-    # Set JVM memory settings for Maven
-    export MAVEN_OPTS="-Xms240g -Xmx240g -XX:MaxMetaspaceSize=2g"
-    
-    # Run Maven build and execution
-    echo "Running Maven compile and exec for ${dataset}..."
-    # mvn clean compile exec:java > "out/${dataset}/run.log" 2>&1
+    rm -rf out/${dataset}/eval-*.log
     
     echo "Running validation evaluation for ${dataset} to generate dependency graph..."
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --dependency_graph "out/${dataset}/dependency_graph.csv" > "out/${dataset}/eval-valid.log"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --ranking_file "out/${dataset}/eval.txt" --applied_rules "out/${dataset}/applied_rules.json" > "out/${dataset}/eval.log"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --ranking_file "out/${dataset}/eval.txt" --aggregation_function maxplus > "out/${dataset}/eval-maxplus.log"
+    python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --ranking_file "out/${dataset}/eval.txt" --applied_rules "out/${dataset}/applied_rules_valid.json" --valid > "out/${dataset}/eval_valid.log"
     
+
+    # Run Maven build and execution
+    echo "Running Maven compile and exec for ${dataset}..."
+    export MAVEN_OPTS="-Xms240g -Xmx240g -XX:MaxMetaspaceSize=2g"
+    mvn clean compile exec:java > "out/${dataset}/run.log"
+
     echo "Learn XGBoost ranker for ${dataset}..."
-    python train_xgboost.py --dataset "${dataset}" > "out/${dataset}/train_xgboost.log" 2>&1
+    python train_xgb_pairwise.py --dataset "${dataset}" > "out/${dataset}/train_xgboost.log"
 
     echo "Running evaluations for ${dataset}..."
-    python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --dependency "out/${dataset}/dependency.txt" --ranking_file "out/${dataset}/eval.txt" --aggregation_function xgboost --xgboost_model "out/${dataset}/dependency_graph.json" > "out/${dataset}/eval-xgboost.log"
+    python eval_xgb_ranker.py --dataset "${dataset}" > "out/${dataset}/eval-xgboost.log"
 
 done
 
