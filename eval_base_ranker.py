@@ -270,7 +270,7 @@ def _init_worker(rule_surprisal_map, rule_weight_map, dep_graph, entity_freq, ti
     _AGGREGATION = aggregation
 
 
-def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[tuple[str, float]], int, int, int]:
+def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[tuple[str, float]], list[tuple[str, float]] | None, int, int, int]:
     relation, constant, candidate_dict, direction = item
     rule_surprisal_map = _RULE_SURPRISAL_MAP or {}
     rule_weight_map = _RULE_WEIGHT_MAP or {}
@@ -282,9 +282,17 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
     noisyor_dep_k = parse_noisyor_dep_k(aggregation)
     noisyor_depm_k = parse_noisyor_depm_k(aggregation)
 
+    want_base = (
+        aggregation.startswith("noisyor+dep")
+        or aggregation.startswith("noisyor+depm")
+        or aggregation.startswith("maxplus+dep")
+    )
     pairs: list[tuple[str, float]] = []
+    base_pairs: list[tuple[str, float]] | None = [] if want_base else None
     maxplus_dep_keys: dict[str, tuple] | None = {} if dep_k is not None else None
-    maxplus_keys: dict[str, tuple] | None = {} if aggregation == "maxplus" else None
+    maxplus_keys: dict[str, tuple] | None = (
+        {} if aggregation == "maxplus" or aggregation.startswith("maxplus+dep") else None
+    )
     for candidate, rule_ids in candidate_dict.items():
         surprisal_list: list[float] = []
         rule_list: list[tuple[int, float]] = []
@@ -296,6 +304,7 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
             surprisal_list.append(weight * rule_surprisal_map.get(rule_id, 0.0))
             rule_list.append((rule_id, weight * rule_surprisal_map.get(rule_id, 0.0)))
         agg_score = aggregate_surprisals(surprisal_list, aggregation)
+        base_score = float(agg_score)
         if noisyor_depm_k is not None:
             rule_ids_set = {rid for rid, _ in rule_list}
             edges = []
@@ -320,6 +329,8 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
             if selected:
                 agg_score = Decimal(str(float(agg_score) + sum(selected)))
         pairs.append((str(candidate), float(agg_score)))
+        if base_pairs is not None:
+            base_pairs.append((str(candidate), base_score))
         if maxplus_keys is not None:
             sorted_vals = [c for _, c in sorted(rule_list, key=lambda x: (-x[1], x[0]))]
             maxplus_keys[str(candidate)] = tuple(sorted_vals)
@@ -377,7 +388,25 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
         else:
             pairs.sort(key=lambda x: (-x[1], x[0]))
 
-    return direction, relation, constant, pairs, tie_total, tie_dep_used, tie_unresolved
+    if base_pairs is not None:
+        if aggregation.startswith("maxplus+dep") and maxplus_keys is not None:
+            if tie_handling == "frequency" and entity_freq is not None:
+                base_pairs.sort(
+                    key=lambda x: (
+                        tuple(-v for v in maxplus_keys.get(x[0], ())),
+                        -entity_freq.get(x[0], 0),
+                        x[0],
+                    )
+                )
+            else:
+                base_pairs.sort(key=lambda x: (tuple(-v for v in maxplus_keys.get(x[0], ())), x[0]))
+        else:
+            if tie_handling == "frequency" and entity_freq is not None:
+                base_pairs.sort(key=lambda x: (-x[1], -entity_freq.get(x[0], 0), x[0]))
+            else:
+                base_pairs.sort(key=lambda x: (-x[1], x[0]))
+
+    return direction, relation, constant, pairs, base_pairs, tie_total, tie_dep_used, tie_unresolved
 
 
 def build_scores_parallel(
@@ -391,9 +420,16 @@ def build_scores_parallel(
     aggregation: str,
     workers: int,
     chunksize: int,
-) -> tuple[dict, dict]:
+) -> tuple[dict, dict, dict | None, dict | None]:
     head_result: dict = {}
     tail_result: dict = {}
+    want_base = (
+        aggregation.startswith("noisyor+dep")
+        or aggregation.startswith("noisyor+depm")
+        or aggregation.startswith("maxplus+dep")
+    )
+    base_head: dict | None = {} if want_base else None
+    base_tail: dict | None = {} if want_base else None
     rule_weight_map = rule_weight_map or {}
     dep_graph = dep_graph or {}
     if workers == 0:
@@ -420,7 +456,7 @@ def build_scores_parallel(
         initializer=_init_worker,
         initargs=(rule_surprisal_map, rule_weight_map, dep_graph, entity_freq, tie_handling, aggregation),
     ) as pool:
-        for idx, (direction, relation, constant, pairs, t_total, t_used, t_unres) in enumerate(
+        for idx, (direction, relation, constant, pairs, base_pairs, t_total, t_used, t_unres) in enumerate(
             pool.imap_unordered(
             _score_query,
             itertools.chain(tasks, tasks_tail),
@@ -430,8 +466,12 @@ def build_scores_parallel(
         ):
             if direction == "head":
                 head_result.setdefault(relation, {})[constant] = pairs
+                if base_head is not None and base_pairs is not None:
+                    base_head.setdefault(relation, {})[constant] = base_pairs
             else:
                 tail_result.setdefault(relation, {})[constant] = pairs
+                if base_tail is not None and base_pairs is not None:
+                    base_tail.setdefault(relation, {})[constant] = base_pairs
             tie_total += t_total
             tie_dep_used += t_used
             tie_unresolved += t_unres
@@ -443,7 +483,7 @@ def build_scores_parallel(
         print(
             f"[STAT] maxplus+dep{dep_k} tie queries: {tie_total}, dependency used: {tie_dep_used}, unresolved: {tie_unresolved}"
         )
-    return head_result, tail_result
+    return head_result, tail_result, base_head, base_tail
 
 
 def load_entity_freq(train_path: Path) -> dict[str, int]:
@@ -519,6 +559,69 @@ def compare_rankings(
         diff_count += 1
         if diff_count >= diff_limit:
             break
+
+
+def _get_rank(ranking: dict, relation: str, constant: str, target: str) -> int | None:
+    const_bucket = ranking.get(relation, {})
+    candidates = const_bucket.get(constant)
+    if not candidates:
+        return None
+    for idx, (cand, _) in enumerate(candidates, 1):
+        if cand == target:
+            return idx
+    return None
+
+
+def load_triples_from_file(path: str) -> list[tuple[str, str, str]]:
+    triples: list[tuple[str, str, str]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            h, r, t = parts[0], parts[1], parts[2]
+            triples.append((h, r, t))
+    return triples
+
+
+def compute_rank_change_stats(
+    triples: list[tuple[str, str, str]],
+    base_head: dict,
+    base_tail: dict,
+    lift_head: dict,
+    lift_tail: dict,
+) -> tuple[int, int, int, int]:
+    changed = 0
+    improved = 0
+    worsened = 0
+    total = 0
+    for h, r, t in triples:
+        # head prediction: (relation, tail) -> head
+        r_base = _get_rank(base_head, r, t, h)
+        r_lift = _get_rank(lift_head, r, t, h)
+        if r_base is not None and r_lift is not None:
+            total += 1
+            if r_lift != r_base:
+                changed += 1
+                if r_lift < r_base:
+                    improved += 1
+                elif r_lift > r_base:
+                    worsened += 1
+        # tail prediction: (relation, head) -> tail
+        r_base = _get_rank(base_tail, r, h, t)
+        r_lift = _get_rank(lift_tail, r, h, t)
+        if r_base is not None and r_lift is not None:
+            total += 1
+            if r_lift != r_base:
+                changed += 1
+                if r_lift < r_base:
+                    improved += 1
+                elif r_lift > r_base:
+                    worsened += 1
+    return total, changed, improved, worsened
 
 
 argparser = argparse.ArgumentParser(description="Base ranker evaluation using applied_rules")
@@ -603,7 +706,7 @@ head_applied = applied_data.get("head", {})
 tail_applied = applied_data.get("tail", {})
 
 log_step("Building rankings (head+tail)...")
-headRanking, tailRanking = build_scores_parallel(
+headRanking, tailRanking, baseHeadRanking, baseTailRanking = build_scores_parallel(
     head_applied,
     tail_applied,
     rule_surprisal_map,
@@ -638,6 +741,20 @@ if args.compare_eval_ranking:
 
 log_step(f"Loading testset: {target}")
 testset = TripleSet(target)
+if baseHeadRanking is not None and baseTailRanking is not None:
+    triples = load_triples_from_file(target)
+    total, changed, improved, worsened = compute_rank_change_stats(
+        triples,
+        baseHeadRanking,
+        baseTailRanking,
+        headRanking,
+        tailRanking,
+    )
+    print("[STAT] rank change vs base ranker")
+    print(f"[STAT] total={total}")
+    print(f"[STAT] changed={changed}")
+    print(f"[STAT] improved={improved}")
+    print(f"[STAT] worsened={worsened}")
 log_step("Scoring rankings...")
 ranking = Ranking(k=100)
 ranking.convert_handler_ranking(headRanking, tailRanking, testset)
