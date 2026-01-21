@@ -67,6 +67,14 @@ def is_z_rule(rule_str: str) -> bool:
     return parts[1].strip() == ""
 
 
+def is_b_rule(rule_str: str) -> bool:
+    parts = rule_str.split("<=", 1)
+    if len(parts) != 2:
+        return False
+    head = parts[0].strip()
+    return "(X,Y)" in head
+
+
 def load_rule_surprisals(
     rules_path: Path,
     num_unseen: int,
@@ -102,8 +110,25 @@ def load_rule_surprisals(
     return rule_surprisal_map
 
 
+def load_rule_type_sets(rules_path: Path) -> tuple[set[int], set[int]]:
+    b_rules: set[int] = set()
+    d_rules: set[int] = set()
+    with open(rules_path, "r", encoding="utf-8") as f:
+        for line_num, line in enumerate(f, 1):
+            parsed = parse_rule_line(line.strip())
+            if not parsed:
+                continue
+            rule = parsed["rule"]
+            if is_d_rule(rule):
+                d_rules.add(line_num)
+            if is_b_rule(rule):
+                b_rules.add(line_num)
+    return b_rules, d_rules
+
+
 def load_dependency_graph(
     dep_path: Path, dep_threshold: float
+    , disabled_rule_ids: set[int] | None = None
 ) -> tuple[dict[int, dict[int, float]], dict[int, dict[int, float]]]:
     with open(dep_path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -118,6 +143,8 @@ def load_dependency_graph(
             src = int(k1)
         except (TypeError, ValueError):
             continue
+        if disabled_rule_ids and src in disabled_rule_ids:
+            continue
         dsts_pos: dict[int, float] = {}
         dsts_neg: dict[int, float] = {}
         for k2, lift in v.items():
@@ -125,6 +152,8 @@ def load_dependency_graph(
                 dst = int(k2)
                 lift_val = float(lift)
             except (TypeError, ValueError):
+                continue
+            if disabled_rule_ids and dst in disabled_rule_ids:
                 continue
             if lift_val > dep_threshold:
                 dsts_pos[dst] = lift_val
@@ -212,6 +241,15 @@ def parse_noisyor_dep_minus_k(aggregation: str) -> int | None:
     return int(digits)
 
 
+def parse_noisyor_dep_minus_m_k(aggregation: str) -> int | None:
+    if not aggregation.startswith("noisyor-depm"):
+        return None
+    digits = aggregation[len("noisyor-depm"):]
+    if not digits.isdigit() or digits == "":
+        return None
+    return int(digits)
+
+
 def aggregate_surprisals(values: list[float], aggregation: str) -> Decimal:
     if not values:
         return Decimal(0)
@@ -222,6 +260,8 @@ def aggregate_surprisals(values: list[float], aggregation: str) -> Decimal:
     if aggregation.startswith("noisyor+dep"):
         aggregation = "noisyor"
     if aggregation.startswith("noisyor-dep"):
+        aggregation = "noisyor"
+    if aggregation.startswith("noisyor-depm"):
         aggregation = "noisyor"
     sorted_vals = sorted(values, reverse=True)
     if aggregation == "max":
@@ -304,12 +344,14 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
     noisyor_dep_k = parse_noisyor_dep_k(aggregation)
     noisyor_depm_k = parse_noisyor_depm_k(aggregation)
     noisyor_dep_minus_k = parse_noisyor_dep_minus_k(aggregation)
+    noisyor_dep_minus_m_k = parse_noisyor_dep_minus_m_k(aggregation)
 
     want_base = (
         aggregation.startswith("noisyor+dep")
         or aggregation.startswith("noisyor+depm")
         or aggregation.startswith("maxplus+dep")
         or aggregation.startswith("noisyor-dep")
+        or aggregation.startswith("noisyor-depm")
     )
     pairs: list[tuple[str, float]] = []
     base_pairs: list[tuple[str, float]] | None = [] if want_base else None
@@ -354,27 +396,65 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
                 agg_score = Decimal(str(float(agg_score) + sum(selected)))
         if noisyor_dep_minus_k is not None:
             rule_ids_set = {rid for rid, _ in rule_list}
-            neg_in = set()
+            incoming: dict[int, list[int]] = {}
             # limit to top 100 rules to reduce computation
             for u in list(rule_ids_set)[:100]:
                 for v in dep_graph_neg.get(u, {}).keys():
-                    if v in rule_ids_set:
-                        neg_in.add(v)
+                    if v in rule_ids_set and v != u:
+                        incoming.setdefault(v, []).append(u)
             rule_sorted = sorted(rule_list, key=lambda x: (-x[1], x[0]))
+            score_map = {rid: score for rid, score in rule_sorted}
             k = noisyor_dep_minus_k
             if k == 0:
                 k = -1
-            excluded = 0
-            adjusted = 0.0
+            suppressed = 0
+            blocked_sources = set()
+            suppressed_sum = 0.0
             for idx, (rid, score) in enumerate(rule_sorted):
                 if idx == 0:
-                    adjusted += score
                     continue
-                if rid in neg_in and (k < 0 or excluded < k):
-                    excluded += 1
+                if k > 0 and suppressed >= k:
+                    break
+                candidates = [u for u in incoming.get(rid, []) if u not in blocked_sources]
+                if not candidates:
                     continue
-                adjusted += score
-            agg_score = Decimal(str(float(adjusted)))
+                # choose highest-surprisal incoming node
+                _ = max(candidates, key=lambda u: score_map.get(u, 0.0))
+                blocked_sources.add(rid)
+                suppressed += 1
+                suppressed_sum += score
+            total_score = sum(score_map.values())
+            agg_score = Decimal(str(float(total_score - suppressed_sum)))
+        if noisyor_dep_minus_m_k is not None:
+            rule_ids_set = {rid for rid, _ in rule_list}
+            edges: list[tuple[int, int, float]] = []
+            # limit to top 100 rules to reduce computation
+            for u in list(rule_ids_set)[:100]:
+                for v, lift in dep_graph_neg.get(u, {}).items():
+                    if v in rule_ids_set and v != u:
+                        edges.append((u, v, abs(lift)))
+            edges.sort(key=lambda x: x[2], reverse=True)
+            rule_sorted = sorted(rule_list, key=lambda x: (-x[1], x[0]))
+            score_map = {rid: score for rid, score in rule_sorted}
+            k = noisyor_dep_minus_m_k
+            if k == 0:
+                k = -1
+            suppressed = 0
+            used_nodes = set()
+            suppressed_sum = 0.0
+            for u, v, _ in edges:
+                if k > 0 and suppressed >= k:
+                    break
+                if u in used_nodes or v in used_nodes:
+                    continue
+                if v not in score_map:
+                    continue
+                used_nodes.add(u)
+                used_nodes.add(v)
+                suppressed += 1
+                suppressed_sum += score_map.get(v, 0.0)
+            total_score = sum(score_map.values())
+            agg_score = Decimal(str(float(total_score - suppressed_sum)))
         pairs.append((str(candidate), float(agg_score)))
         if base_pairs is not None:
             base_pairs.append((str(candidate), base_score))
@@ -476,6 +556,8 @@ def build_scores_parallel(
         or aggregation.startswith("noisyor+depm")
         or aggregation.startswith("maxplus+dep")
         or aggregation.startswith("noisyor-dep")
+        or aggregation.startswith("noisyor-depm")
+        or aggregation.startswith("noisyor-depm")
     )
     base_head: dict | None = {} if want_base else None
     base_tail: dict | None = {} if want_base else None
@@ -771,10 +853,16 @@ argparser.add_argument("--tie_handling", type=str, default="frequency", help="ti
 argparser.add_argument("--dependency_json", type=str, default="", help="dependency.json path for rule weights")
 argparser.add_argument("--dep_threshold", type=float, default=0.0, help="|lift| threshold for dependency edges")
 argparser.add_argument(
+    "--dep_disable",
+    type=str,
+    default="d",
+    help="disable dependency edges with rule types in set (b,c,d). default: d",
+)
+argparser.add_argument(
     "--aggregation",
     type=str,
     default="noisyor",
-    help="aggregation: max|maxplus|maxplus+depK|noisyor|noisyor+depK|noisyor-depK|decayXX",
+    help="aggregation: max|maxplus|maxplus+depK|noisyor|noisyor+depK|noisyor-depK|noisyor-depmK|decayXX",
 )
 argparser.add_argument("--workers", type=int, default=0, help="num processes for ranking build, 0 for cpu count")
 argparser.add_argument("--chunksize", type=int, default=64, help="chunk size for multiprocessing")
@@ -812,6 +900,20 @@ rule_surprisal_map = load_rule_surprisals(
 )
 log_step(f"Loaded rule surprisals: {len(rule_surprisal_map)}")
 
+disable_types = {c for c in args.dep_disable.lower() if c in {"b", "c", "d"}}
+disabled_rule_ids: set[int] = set()
+if disable_types:
+    b_rules, d_rules = load_rule_type_sets(rules_path)
+    if "b" in disable_types:
+        disabled_rule_ids.update(b_rules)
+    if "d" in disable_types:
+        disabled_rule_ids.update(d_rules)
+    # "c" means rules that are neither b nor d
+    if "c" in disable_types:
+        disabled_rule_ids.update(
+            rid for rid in rule_surprisal_map.keys() if rid not in b_rules and rid not in d_rules
+        )
+
 rule_weight_map = {}
 dep_graph_pos = {}
 dep_graph_neg = {}
@@ -820,7 +922,11 @@ if dep_k is not None and not args.dependency_json:
     log_step("Warning: maxplus+depK selected but dependency_json not provided")
 if args.dependency_json:
     log_step(f"Loading dependency graph: {args.dependency_json}")
-    dep_graph_pos, dep_graph_neg = load_dependency_graph(Path(args.dependency_json), args.dep_threshold)
+    dep_graph_pos, dep_graph_neg = load_dependency_graph(
+        Path(args.dependency_json),
+        args.dep_threshold,
+        disabled_rule_ids if disable_types else None,
+    )
     log_step(f"Loaded dependency graph: pos={len(dep_graph_pos)}, neg={len(dep_graph_neg)}")
 else:
     log_step(f"Dependency json not found: {args.dependency_json} (skip)")
