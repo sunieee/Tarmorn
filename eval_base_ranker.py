@@ -102,12 +102,15 @@ def load_rule_surprisals(
     return rule_surprisal_map
 
 
-def load_dependency_graph(dep_path: Path, dep_threshold: float) -> dict[int, dict[int, float]]:
+def load_dependency_graph(
+    dep_path: Path, dep_threshold: float
+) -> tuple[dict[int, dict[int, float]], dict[int, dict[int, float]]]:
     with open(dep_path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    graph: dict[int, dict[int, float]] = {}
+    graph_pos: dict[int, dict[int, float]] = {}
+    graph_neg: dict[int, dict[int, float]] = {}
     if not isinstance(data, dict):
-        return graph
+        return graph_pos, graph_neg
     for k1, v in data.items():
         if not isinstance(v, dict):
             continue
@@ -115,18 +118,23 @@ def load_dependency_graph(dep_path: Path, dep_threshold: float) -> dict[int, dic
             src = int(k1)
         except (TypeError, ValueError):
             continue
-        dsts: dict[int, float] = {}
+        dsts_pos: dict[int, float] = {}
+        dsts_neg: dict[int, float] = {}
         for k2, lift in v.items():
             try:
                 dst = int(k2)
                 lift_val = float(lift)
             except (TypeError, ValueError):
                 continue
-            if abs(lift_val) > dep_threshold:
-                dsts[dst] = lift_val
-        if dsts:
-            graph[src] = dsts
-    return graph
+            if lift_val > dep_threshold:
+                dsts_pos[dst] = lift_val
+            elif lift_val < -dep_threshold:
+                dsts_neg[dst] = lift_val
+        if dsts_pos:
+            graph_pos[src] = dsts_pos
+        if dsts_neg:
+            graph_neg[src] = dsts_neg
+    return graph_pos, graph_neg
 
 
 def _summarize_ranking(ranking: dict) -> tuple[int, int, int]:
@@ -195,6 +203,15 @@ def parse_noisyor_depm_k(aggregation: str) -> int | None:
     return int(digits)
 
 
+def parse_noisyor_dep_minus_k(aggregation: str) -> int | None:
+    if not aggregation.startswith("noisyor-dep"):
+        return None
+    digits = aggregation[len("noisyor-dep"):]
+    if not digits.isdigit() or digits == "":
+        return None
+    return int(digits)
+
+
 def aggregate_surprisals(values: list[float], aggregation: str) -> Decimal:
     if not values:
         return Decimal(0)
@@ -203,6 +220,8 @@ def aggregate_surprisals(values: list[float], aggregation: str) -> Decimal:
     if aggregation.startswith("noisyor+depm"):
         aggregation = "noisyor"
     if aggregation.startswith("noisyor+dep"):
+        aggregation = "noisyor"
+    if aggregation.startswith("noisyor-dep"):
         aggregation = "noisyor"
     sorted_vals = sorted(values, reverse=True)
     if aggregation == "max":
@@ -229,7 +248,8 @@ def aggregate_surprisals(values: list[float], aggregation: str) -> Decimal:
 
 _RULE_SURPRISAL_MAP: dict[int, float] | None = None
 _RULE_WEIGHT_MAP: dict[int, float] | None = None
-_DEP_GRAPH: dict[int, dict[int, float]] | None = None
+_DEP_GRAPH_POS: dict[int, dict[int, float]] | None = None
+_DEP_GRAPH_NEG: dict[int, dict[int, float]] | None = None
 _ENTITY_FREQ: dict[str, int] | None = None
 _TIE_HANDLING: str | None = None
 _AGGREGATION: str | None = None
@@ -260,11 +280,12 @@ def select_noisyor_dep_lifts(
     return selected
 
 
-def _init_worker(rule_surprisal_map, rule_weight_map, dep_graph, entity_freq, tie_handling, aggregation):
-    global _RULE_SURPRISAL_MAP, _RULE_WEIGHT_MAP, _DEP_GRAPH, _ENTITY_FREQ, _TIE_HANDLING, _AGGREGATION
+def _init_worker(rule_surprisal_map, rule_weight_map, dep_graph_pos, dep_graph_neg, entity_freq, tie_handling, aggregation):
+    global _RULE_SURPRISAL_MAP, _RULE_WEIGHT_MAP, _DEP_GRAPH_POS, _DEP_GRAPH_NEG, _ENTITY_FREQ, _TIE_HANDLING, _AGGREGATION
     _RULE_SURPRISAL_MAP = rule_surprisal_map
     _RULE_WEIGHT_MAP = rule_weight_map
-    _DEP_GRAPH = dep_graph
+    _DEP_GRAPH_POS = dep_graph_pos
+    _DEP_GRAPH_NEG = dep_graph_neg
     _ENTITY_FREQ = entity_freq
     _TIE_HANDLING = tie_handling
     _AGGREGATION = aggregation
@@ -274,18 +295,21 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
     relation, constant, candidate_dict, direction = item
     rule_surprisal_map = _RULE_SURPRISAL_MAP or {}
     rule_weight_map = _RULE_WEIGHT_MAP or {}
-    dep_graph = _DEP_GRAPH or {}
+    dep_graph_pos = _DEP_GRAPH_POS or {}
+    dep_graph_neg = _DEP_GRAPH_NEG or {}
     entity_freq = _ENTITY_FREQ
     tie_handling = _TIE_HANDLING or "frequency"
     aggregation = _AGGREGATION or "noisyor"
     dep_k = parse_maxplus_dep_k(aggregation)
     noisyor_dep_k = parse_noisyor_dep_k(aggregation)
     noisyor_depm_k = parse_noisyor_depm_k(aggregation)
+    noisyor_dep_minus_k = parse_noisyor_dep_minus_k(aggregation)
 
     want_base = (
         aggregation.startswith("noisyor+dep")
         or aggregation.startswith("noisyor+depm")
         or aggregation.startswith("maxplus+dep")
+        or aggregation.startswith("noisyor-dep")
     )
     pairs: list[tuple[str, float]] = []
     base_pairs: list[tuple[str, float]] | None = [] if want_base else None
@@ -310,7 +334,7 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
             edges = []
             # limit to top 100 rules to reduce computation
             for u in list(rule_ids_set)[:100]:
-                for v, lift in dep_graph.get(u, {}).items():
+                for v, lift in dep_graph_pos.get(u, {}).items():
                     if v in rule_ids_set:
                         edges.append((u, v, lift))
             edges.sort(key=lambda x: x[2], reverse=True)
@@ -325,9 +349,32 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
             k = noisyor_dep_k
             if k == 0:
                 k = -1
-            selected = select_noisyor_dep_lifts(rule_sorted, dep_graph, k)
+            selected = select_noisyor_dep_lifts(rule_sorted, dep_graph_pos, k)
             if selected:
                 agg_score = Decimal(str(float(agg_score) + sum(selected)))
+        if noisyor_dep_minus_k is not None:
+            rule_ids_set = {rid for rid, _ in rule_list}
+            neg_in = set()
+            # limit to top 100 rules to reduce computation
+            for u in list(rule_ids_set)[:100]:
+                for v in dep_graph_neg.get(u, {}).keys():
+                    if v in rule_ids_set:
+                        neg_in.add(v)
+            rule_sorted = sorted(rule_list, key=lambda x: (-x[1], x[0]))
+            k = noisyor_dep_minus_k
+            if k == 0:
+                k = -1
+            excluded = 0
+            adjusted = 0.0
+            for idx, (rid, score) in enumerate(rule_sorted):
+                if idx == 0:
+                    adjusted += score
+                    continue
+                if rid in neg_in and (k < 0 or excluded < k):
+                    excluded += 1
+                    continue
+                adjusted += score
+            agg_score = Decimal(str(float(adjusted)))
         pairs.append((str(candidate), float(agg_score)))
         if base_pairs is not None:
             base_pairs.append((str(candidate), base_score))
@@ -340,7 +387,7 @@ def _score_query(item: tuple[str, str, dict, str]) -> tuple[str, str, str, list[
             w1 = rule_sorted[0][1] if rule_sorted else 0.0
             dep_vals = []
             if v1 is not None:
-                lifts = dep_graph.get(v1, {})
+                lifts = dep_graph_pos.get(v1, {})
                 w_map = {rid: w for rid, w in rule_sorted}
                 lift_scores = []
                 for rid, lift in lifts.items():
@@ -414,7 +461,8 @@ def build_scores_parallel(
     tail_applied: dict,
     rule_surprisal_map: dict[int, float],
     rule_weight_map: dict[int, float] | None,
-    dep_graph: dict[int, dict[int, float]] | None,
+    dep_graph_pos: dict[int, dict[int, float]] | None,
+    dep_graph_neg: dict[int, dict[int, float]] | None,
     entity_freq: dict[str, int] | None,
     tie_handling: str,
     aggregation: str,
@@ -427,11 +475,13 @@ def build_scores_parallel(
         aggregation.startswith("noisyor+dep")
         or aggregation.startswith("noisyor+depm")
         or aggregation.startswith("maxplus+dep")
+        or aggregation.startswith("noisyor-dep")
     )
     base_head: dict | None = {} if want_base else None
     base_tail: dict | None = {} if want_base else None
     rule_weight_map = rule_weight_map or {}
-    dep_graph = dep_graph or {}
+    dep_graph_pos = dep_graph_pos or {}
+    dep_graph_neg = dep_graph_neg or {}
     if workers == 0:
         workers = os.cpu_count() or 1
 
@@ -454,7 +504,7 @@ def build_scores_parallel(
     with mp.Pool(
         processes=workers,
         initializer=_init_worker,
-        initargs=(rule_surprisal_map, rule_weight_map, dep_graph, entity_freq, tie_handling, aggregation),
+        initargs=(rule_surprisal_map, rule_weight_map, dep_graph_pos, dep_graph_neg, entity_freq, tie_handling, aggregation),
     ) as pool:
         for idx, (direction, relation, constant, pairs, base_pairs, t_total, t_used, t_unres) in enumerate(
             pool.imap_unordered(
@@ -587,41 +637,123 @@ def load_triples_from_file(path: str) -> list[tuple[str, str, str]]:
     return triples
 
 
+def _bucket_label(rule_count: int) -> str | None:
+    if rule_count <= 5:
+        return "≤5"
+    if rule_count <= 10:
+        return "≤10"
+    if rule_count <= 20:
+        return "≤20"
+    if rule_count <= 40:
+        return "≤40"
+    if rule_count <= 80:
+        return "≤80"
+    if rule_count <= 120:
+        return "≤120"
+    return "120+"
+
+
+def _get_query_rule_count(applied: dict, relation: str, constant: str) -> int:
+    candidate_map = applied.get(relation, {}).get(constant)
+    if not isinstance(candidate_map, dict):
+        return 0
+    rule_set = set()
+    for rule_ids in candidate_map.values():
+        if rule_ids is None:
+            continue
+        try:
+            for rid in rule_ids:
+                rule_set.add(rid)
+        except TypeError:
+            continue
+    return len(rule_set)
+
+
 def compute_rank_change_stats(
     triples: list[tuple[str, str, str]],
     base_head: dict,
     base_tail: dict,
     lift_head: dict,
     lift_tail: dict,
-) -> tuple[int, int, int, int]:
+    head_applied: dict,
+    tail_applied: dict,
+    enable_buckets: bool = True,
+) -> tuple[int, int, int, int, float, dict[str, dict[str, float]] | None]:
     changed = 0
     improved = 0
     worsened = 0
     total = 0
+    delta_mrr_sum = 0.0
+    buckets = {"≤5": {}, "≤10": {}, "≤20": {}, "≤40": {}, "≤80": {}, "≤120": {}, "120+": {}}
+    for stats in buckets.values():
+        stats["improved"] = 0
+        stats["worsened"] = 0
+        stats["delta_pos"] = 0.0
+        stats["delta_neg"] = 0.0
+
     for h, r, t in triples:
-        # head prediction: (relation, tail) -> head
+        # head prediction
         r_base = _get_rank(base_head, r, t, h)
         r_lift = _get_rank(lift_head, r, t, h)
         if r_base is not None and r_lift is not None:
             total += 1
+            delta = (1.0 / r_lift) - (1.0 / r_base)
+            delta_mrr_sum += delta
             if r_lift != r_base:
                 changed += 1
                 if r_lift < r_base:
                     improved += 1
                 elif r_lift > r_base:
                     worsened += 1
-        # tail prediction: (relation, head) -> tail
+            if enable_buckets:
+                rc = _get_query_rule_count(head_applied, r, t)
+                label = _bucket_label(rc)
+                if label is not None:
+                    if delta > 0:
+                        buckets[label]["delta_pos"] += delta
+                    elif delta < 0:
+                        buckets[label]["delta_neg"] += delta
+                    if r_lift < r_base:
+                        buckets[label]["improved"] += 1
+                    elif r_lift > r_base:
+                        buckets[label]["worsened"] += 1
+
+        # tail prediction
         r_base = _get_rank(base_tail, r, h, t)
         r_lift = _get_rank(lift_tail, r, h, t)
         if r_base is not None and r_lift is not None:
             total += 1
+            delta = (1.0 / r_lift) - (1.0 / r_base)
+            delta_mrr_sum += delta
             if r_lift != r_base:
                 changed += 1
                 if r_lift < r_base:
                     improved += 1
                 elif r_lift > r_base:
                     worsened += 1
-    return total, changed, improved, worsened
+            if enable_buckets:
+                rc = _get_query_rule_count(tail_applied, r, h)
+                label = _bucket_label(rc)
+                if label is not None:
+                    if delta > 0:
+                        buckets[label]["delta_pos"] += delta
+                    elif delta < 0:
+                        buckets[label]["delta_neg"] += delta
+                    if r_lift < r_base:
+                        buckets[label]["improved"] += 1
+                    elif r_lift > r_base:
+                        buckets[label]["worsened"] += 1
+    return total, changed, improved, worsened, delta_mrr_sum, (buckets if enable_buckets else None)
+
+
+def get_num_entities(testset: TripleSet) -> int | None:
+    for attr in ("entities", "entity_ids", "entity2id", "id2entity", "entity_dict"):
+        if hasattr(testset, attr):
+            try:
+                return len(getattr(testset, attr))
+            except TypeError:
+                continue
+    return None
 
 
 argparser = argparse.ArgumentParser(description="Base ranker evaluation using applied_rules")
@@ -642,7 +774,7 @@ argparser.add_argument(
     "--aggregation",
     type=str,
     default="noisyor",
-    help="aggregation: max|maxplus|maxplus+depK|noisyor|noisyor+depK|decayXX",
+    help="aggregation: max|maxplus|maxplus+depK|noisyor|noisyor+depK|noisyor-depK|decayXX",
 )
 argparser.add_argument("--workers", type=int, default=0, help="num processes for ranking build, 0 for cpu count")
 argparser.add_argument("--chunksize", type=int, default=64, help="chunk size for multiprocessing")
@@ -681,14 +813,15 @@ rule_surprisal_map = load_rule_surprisals(
 log_step(f"Loaded rule surprisals: {len(rule_surprisal_map)}")
 
 rule_weight_map = {}
-dep_graph = {}
+dep_graph_pos = {}
+dep_graph_neg = {}
 dep_k = parse_maxplus_dep_k(args.aggregation)
 if dep_k is not None and not args.dependency_json:
     log_step("Warning: maxplus+depK selected but dependency_json not provided")
 if args.dependency_json:
     log_step(f"Loading dependency graph: {args.dependency_json}")
-    dep_graph = load_dependency_graph(Path(args.dependency_json), args.dep_threshold)
-    log_step(f"Loaded dependency graph: {len(dep_graph)}")
+    dep_graph_pos, dep_graph_neg = load_dependency_graph(Path(args.dependency_json), args.dep_threshold)
+    log_step(f"Loaded dependency graph: pos={len(dep_graph_pos)}, neg={len(dep_graph_neg)}")
 else:
     log_step(f"Dependency json not found: {args.dependency_json} (skip)")
 
@@ -711,7 +844,8 @@ headRanking, tailRanking, baseHeadRanking, baseTailRanking = build_scores_parall
     tail_applied,
     rule_surprisal_map,
     rule_weight_map,
-    dep_graph,
+    dep_graph_pos,
+    dep_graph_neg,
     entity_freq,
     args.tie_handling,
     args.aggregation,
@@ -743,18 +877,34 @@ log_step(f"Loading testset: {target}")
 testset = TripleSet(target)
 if baseHeadRanking is not None and baseTailRanking is not None:
     triples = load_triples_from_file(target)
-    total, changed, improved, worsened = compute_rank_change_stats(
+    total, changed, improved, worsened, delta_mrr_sum, bucket_stats = compute_rank_change_stats(
         triples,
         baseHeadRanking,
         baseTailRanking,
         headRanking,
         tailRanking,
+        head_applied,
+        tail_applied,
     )
     print("[STAT] rank change vs base ranker")
     print(f"[STAT] total={total}")
     print(f"[STAT] changed={changed}")
     print(f"[STAT] improved={improved}")
     print(f"[STAT] worsened={worsened}")
+    print(f"[STAT] delta_mrr_sum={delta_mrr_sum:.6f}")
+    if bucket_stats is not None:
+        print("[STAT] bucket stats by GT rule count")
+        for label in ("≤5", "≤10", "≤20", "≤40", "≤80", "≤120", "120+"):
+            stats = bucket_stats[label]
+            print(
+                "[STAT] bucket={0} improved={1} worsened={2} delta_pos={3:.6f} delta_neg={4:.6f}".format(
+                    label,
+                    int(stats["improved"]),
+                    int(stats["worsened"]),
+                    stats["delta_pos"],
+                    stats["delta_neg"],
+                )
+            )
 log_step("Scoring rankings...")
 ranking = Ranking(k=100)
 ranking.convert_handler_ranking(headRanking, tailRanking, testset)
@@ -763,6 +913,7 @@ ranking.compute_scores(testset.triples)
 print("*** EVALUATION RESULTS ****")
 print("Num triples: " + str(len(testset.triples)))
 print("MRR     " + "{0:.6f}".format(ranking.hits.get_mrr()))
+num_entities = get_num_entities(testset)
 print("hits@1  " + "{0:.6f}".format(ranking.hits.get_hits_at_k(1)))
 print("hits@3  " + "{0:.6f}".format(ranking.hits.get_hits_at_k(3)))
 print("hits@10 " + "{0:.6f}".format(ranking.hits.get_hits_at_k(10)))
