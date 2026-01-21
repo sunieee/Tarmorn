@@ -55,7 +55,7 @@ object DepLearn {
     // Rule metric structure: head -> body -> ruleId
     val H2B2ID = ConcurrentHashMap<DepAtom, ConcurrentHashMap<DepAtom, Int>>()
     val ID2metric = ConcurrentHashMap<Int, Metric>()
-    val dependency2metric = ConcurrentHashMap<Pair<Int, Int>, Metric>()
+    val depAdj2metric = ConcurrentHashMap<Int, ConcurrentHashMap<Int, Metric>>()
     val ruleId2HeadRelationId = ConcurrentHashMap<Int, Long>()
     
     // Statistics variables
@@ -71,7 +71,7 @@ object DepLearn {
     
     // Constants from TLearn
     const val MIN_SURPRISAL_LIFT = 0.05
-    const val TOP_K_RULE_COMBO = 400
+    const val TOP_K_RULE_COMBO = 300
 
     private fun format5(value: Double): String {
         val formatted = String.format(java.util.Locale.US, "%.5f", value)
@@ -91,11 +91,30 @@ object DepLearn {
         positiveCounter: java.util.concurrent.atomic.AtomicInteger,
         negativeCounter: java.util.concurrent.atomic.AtomicInteger
     ) {
-        val lift = metric.surprisal - metric1.surprisal - metric2.surprisal
-        val maxSurprisal = maxOf(metric1.surprisal, metric2.surprisal)
+        var id1 = ruleId1
+        var id2 = ruleId2
+        var m1 = metric1
+        var m2 = metric2
+        var conf1 = m1.confidence
+        var conf2 = m2.confidence
+        if (conf1 < conf2) {
+            val tmpId = id1
+            id1 = id2
+            id2 = tmpId
+            val tmpMetric = m1
+            m1 = m2
+            m2 = tmpMetric
+            val tmpConf = conf1
+            conf1 = conf2
+            conf2 = tmpConf
+        }
+
+        val lift = metric.surprisal - m1.surprisal - m2.surprisal
+        val maxSurprisal = maxOf(m1.surprisal, m2.surprisal)
         if (lift > 0 || metric.surprisal < maxSurprisal) {
             metric.lift = if (lift > 0) lift else metric.surprisal - maxSurprisal
-            dependency2metric[ruleId1 to ruleId2] = metric
+            val inner = depAdj2metric.computeIfAbsent(id1) { ConcurrentHashMap() }
+            inner[id2] = metric
             if (metric.lift > 0) positiveCounter.incrementAndGet()
             else negativeCounter.incrementAndGet()
         }
@@ -457,7 +476,8 @@ object DepLearn {
             threadPool.awaitTermination(1, java.util.concurrent.TimeUnit.HOURS)
         }
         
-        println("Composition Phase completed. Total dependencies: ${dependency2metric.size}")
+        val totalDeps = depAdj2metric.values.sumOf { it.size }
+        println("Composition Phase completed. Total dependencies: $totalDeps")
     }
     
     /**
@@ -772,51 +792,46 @@ object DepLearn {
     private fun saveDependencyToFile(outputPath: String) {
         val outputFile = File(outputPath)
         outputFile.parentFile?.mkdirs()
-        println("Saving dependency2metric to ${outputFile.absolutePath}...")
+        println("Saving depAdj2metric to ${outputFile.absolutePath}...")
 
         val jsonOutputPath = outputPath.replace(".txt", ".json")
         val jsonOutputFile = File(jsonOutputPath)
         jsonOutputFile.parentFile?.mkdirs()
 
         PrintWriter(outputFile).use { writer ->
-            dependency2metric.entries
-                .sortedByDescending { it.value.confidence }
-                .forEach { (idPair, metric) ->
-                    val (id1, id2) = idPair
+            depAdj2metric.entries
+                .flatMap { (id1, inner) -> inner.entries.map { id1 to it } }
+                .sortedByDescending { it.second.value.confidence }
+                .forEach { (id1, entry) ->
+                    val id2 = entry.key
+                    val metric = entry.value
                     val metric1 = ID2metric[id1]
                     val metric2 = ID2metric[id2]
                     val conf1 = metric1?.confidence ?: 0.0
                     val conf2 = metric2?.confidence ?: 0.0
-                    val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
-                    val line = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(metric.confidence)}\t${format5(metric.lift)}\t${format5(conf1)}\t${format5(conf2)}\t$id1\t$id2"
+                    val line = "${metric.bodySize}\t${metric.support.toInt()}\t${format5(metric.lift)}\t$id1\t$id2"
                     writer.println(line)
                 }
         }
 
-        val relation2deps = mutableMapOf<String, MutableList<String>>()
-        dependency2metric.entries.forEach { (idPair, metric) ->
-            val (id1, id2) = idPair
-            val headRelationId = ruleId2HeadRelationId[id1] ?: -1L
-            val relationName = if (headRelationId == -1L) "UNKNOWN" else IdManager.getRelationString(headRelationId)
-            val list = relation2deps.getOrPut(relationName) { mutableListOf() }
-            list.add("[${id1}, ${id2}, ${format5(metric.lift)}]")
-        }
-
         PrintWriter(jsonOutputFile).use { writer ->
             writer.println("{")
-            val entries = relation2deps.entries.toList()
-            entries.forEachIndexed { index, entry ->
-                val relationName = escapeJson(entry.key)
-                val deps = entry.value.joinToString(", ")
-                val comma = if (index < entries.size - 1) "," else ""
-                writer.println("  \"$relationName\": [$deps]$comma")
+            val entries = depAdj2metric.entries.toList()
+            entries.forEachIndexed { idx, (id1, innerMap) ->
+                val inner = innerMap.entries
+                    .joinToString(", ") { (id2, metric) ->
+                        "\"$id2\": ${format5(metric.lift)}"
+                    }
+                val comma = if (idx < entries.size - 1) "," else ""
+                writer.println("  \"$id1\": { $inner }$comma")
             }
             writer.println("}")
         }
 
-        println("Successfully saved dependency2metric to ${outputFile.absolutePath}")
+        println("Successfully saved depAdj2metric to ${outputFile.absolutePath}")
         println("Successfully saved dependency json to ${jsonOutputFile.absolutePath}")
-        println("Total dependency entries: ${dependency2metric.size}")
+        val totalDeps = depAdj2metric.values.sumOf { it.size }
+        println("Total dependency entries: $totalDeps")
     }
 
     /**
@@ -828,7 +843,7 @@ object DepLearn {
         
         val totalHeads = H2B2ID.size
         val totalBodyAtoms = H2B2ID.values.sumOf { it.size }
-        val totalFormulas = dependency2metric.size
+        val totalFormulas = depAdj2metric.values.sumOf { it.size }
         val avgBodyPerHead = if (totalHeads > 0) totalBodyAtoms.toDouble() / totalHeads else 0.0
         
         println("Total head atoms: $totalHeads")

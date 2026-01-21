@@ -14,8 +14,7 @@ echo "Log file: out/${dataset}/run.log"
 # JVM memory settings for Maven
 export MAVEN_OPTS="-Xms256g -Xmx256g -XX:MaxMetaspaceSize=2g"
 
-mvn clean compile
-mvn exec:java -Dexec.mainClass="tarmorn.TLearn" > "out/${dataset}/run.log" 2>&1
+mvn clean compile exec:java > "out/${dataset}/run.log" 2>&1
 
 # python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/eval.txt" --disable_combo > "out/${dataset}/eval.log"
 # python script/compare_rules.py --dataset "${dataset}"
@@ -41,7 +40,12 @@ python eval.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --rankin
 # python evaltc.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/evaltc.txt" --aggregation_function noisyor --noisyor_negative_method cluster > "out/${dataset}/evaltc-noisyor-cluster.log"
 # python evaltc.py --dataset "${dataset}" --rules "out/${dataset}/rule.txt" --ranking_file "out/${dataset}/evaltc.txt" --aggregation_function noisyor --noisyor_negative_method prune --noisyor_positive_method mst > "out/${dataset}/evaltc-noisyor-prune+mst.log"
 
+export ruleset="rules-100-3"
 
 python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --ranking_file "out/${dataset}/eval.txt" --applied_rules "out/${dataset}/applied_rules.json" --ranking_dump "out/${dataset}/ranking_dump.json"
 
+python eval.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}" --aggregation_function maxplus --ranking_dump "out/${dataset}/ranking_dump_maxplus.json"
+
 python eval_base_ranker.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}"  --applied_rules "out/${dataset}/applied_rules.json" --compare_eval_ranking  "out/${dataset}/ranking_dump.json"
+
+python eval_base_ranker.py --dataset "${dataset}" --rules "out/${dataset}/${ruleset}"  --applied_rules "out/${dataset}/applied_rules.json" --dependency_json "out/${dataset}/dependency.json"
